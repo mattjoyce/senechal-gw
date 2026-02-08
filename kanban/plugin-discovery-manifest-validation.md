@@ -1,6 +1,6 @@
 ---
 id: 12
-status: todo
+status: done
 priority: High
 blocked_by: [9, 10]
 tags: [sprint-1, mvp, plugins]
@@ -17,4 +17,11 @@ Scan `plugins_dir` for plugins with `manifest.yaml` and validate they are runnab
 - Refuse to load plugins with unsupported `protocol`.
 
 ## Narrative
+- **2026-02-08: Complete.** Implemented `internal/plugin` package with:
+  - `manifest.go`: Manifest and Plugin types, SupportsCommand helper
+  - `discovery.go`: Registry, Discover scanner, trust validation (SPEC §5.5)
+  - `discovery_test.go`: Comprehensive tests for discovery, validation, trust checks (all passing)
+  - Security: Enforces symlink resolution, path traversal prevention, executable check, world-writable rejection
+  - Protocol v1 enforcement: Rejects unsupported protocol versions
+  - Graceful degradation: Invalid plugins logged but don't fail startup
 

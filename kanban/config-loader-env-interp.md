@@ -1,6 +1,6 @@
 ---
 id: 10
-status: todo
+status: done
 priority: High
 blocked_by: [9]
 tags: [sprint-1, mvp, config]
@@ -17,4 +17,10 @@ Implement `config.yaml` parsing and `${ENV_VAR}` interpolation so operators can 
 - Provide clear validation errors (file/field) and fail fast on invalid config.
 
 ## Narrative
+- **2026-02-08: Complete.** Implemented `internal/config` package with:
+  - `types.go`: Complete config types matching SPEC §11, with sensible defaults
+  - `loader.go`: YAML parsing, `${ENV_VAR}` interpolation (regex-based), validation, plugin defaults merging
+  - `loader_test.go`: Table-driven tests for loading, interpolation, interval parsing, validation (all passing)
+  - Security: Fails fast on unresolved env vars in plugin config (prevents secret leakage)
+  - MVP subset: Validates schedule.every against allowed values (5m, 15m, 30m, hourly, 2h, 6h, daily, weekly, monthly)
 
