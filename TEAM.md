@@ -4,26 +4,60 @@
 
 **Team Lead:** Claude (coordination, architecture decisions)
 
-**Agent 1 (Claude):** Config & Plugin System
-- Branch: `feature/config-plugin`
-- Tasks: ID 10, 12, 13
-- Deliverables: Config loader with env interpolation, plugin discovery, protocol v1 codec
+**Agent 1 (Claude):** Configuration & Plugin System
+**Agent 2 (Codex):** State & Queue Management
+**Agent 3 (Gemini):** Observability & Orchestration
 
-**Agent 2 (Codex):** State & Queue
-- Branch: `feature/state-queue`
-- Tasks: ID 11, 14, 17, 18
-- Deliverables: SQLite schema, work queue, plugin state store, PID lock
+## Branch Naming Convention
 
-**Agent 3 (Gemini):** Logging & Scheduler
-- Branch: `feature/logging-scheduler`
-- Tasks: ID 19, 15, 25
-- Deliverables: JSON logging, scheduler tick loop, crash recovery
+**IMPORTANT:** All branches MUST be prefixed with agent codename:
+- Agent 1 (Claude): `claude/*`
+- Agent 2 (Codex): `codex/*`
+- Agent 3 (Gemini): `gemini/*`
 
-## Branching Strategy
+Examples: `claude/dispatch`, `codex/metrics`, `gemini/scheduler-integration`
 
-Per COORDINATION.md: Individual feature branches from `main`, merge via PR when complete.
+## Phase Status
 
-## Status
+### ✅ Phase 0: Complete
+- Crash recovery decision (Option B)
+- Go project skeleton
 
-- Phase 0: ✅ Complete (skeleton + decision)
-- Phase 1: Ready to start (all agents can work in parallel)
+### ✅ Phase 1: Complete (Merged to main)
+
+**Agent 1 (Claude):**
+- ✅ ID 13: Protocol v1 Codec
+- ✅ ID 10: Config Loader + Env Interpolation
+- ✅ ID 12: Plugin Discovery + Manifest Validation
+- Branch: `claude/config-plugin` (merged)
+
+**Agent 2 (Codex):**
+- ✅ ID 11: SQLite Schema Bootstrap
+- ✅ ID 14: SQLite Work Queue
+- ✅ ID 17: Plugin State Store
+- ✅ ID 18: PID Lock
+- Branch: `codex/state-queue` (merged)
+
+**Agent 3 (Gemini):**
+- ✅ ID 19: Structured JSON Logging
+- Branch: `gemini/logging` (merged)
+
+### 🔄 Phase 2: Integration (Current)
+
+**Agent 3 (Gemini):** Scheduler & Orchestration
+- Branch: `gemini/scheduler`
+- 🔲 ID 15: Scheduler Tick Loop + Fuzzy Intervals
+- 🔲 ID 25: Crash Recovery Implementation
+- Deliverable: Scheduler enqueues jobs, handles orphan recovery
+
+**Agent 1 (Claude):** Dispatch Loop
+- Branch: `claude/dispatch`
+- 🔲 ID 16: Dispatch Loop (spawn plugin, protocol I/O, timeouts)
+- Deliverable: Can execute plugins via subprocess
+
+**Agent 2 (Codex):** Integration Support
+- Assists with dispatch integration
+- 🔲 ID 20: Echo Plugin E2E Runbook (validation)
+
+**All Agents:** Sprint Completion
+- 🔲 ID 8: MVP Core Loop Integration Testing

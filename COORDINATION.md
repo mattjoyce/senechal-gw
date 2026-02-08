@@ -49,18 +49,24 @@ dispatch: enforce timeout with SIGTERM → SIGKILL sequence
 
 ### Individual Feature Branches (Recommended)
 
-Each agent works on an isolated feature branch for their component:
+Each agent works on an isolated feature branch for their component.
+
+**Branch naming convention:** `<agent-codename>/<component-or-epic>`
 
 ```
 main (protected)
-├── feature/skeleton          # Agent 1: ID 9 (foundational)
-├── feature/config-loader     # Agent 1: ID 10
-├── feature/state-queue       # Agent 2: ID 11, 14, 17
-├── feature/plugin-protocol   # Agent 3: ID 12, 13
-└── feature/dispatch-scheduler # Integration: ID 15, 16
+├── claude/config-plugin      # Agent 1 (Claude)
+├── codex/state-queue         # Agent 2 (Codex)
+├── gemini/logging            # Agent 3 (Gemini)
+├── gemini/scheduler          # Agent 3 (Gemini) - Phase 2
+├── claude/dispatch           # Agent 1 (Claude) - Phase 2
+└── codex/integration         # Agent 2 (Codex) - Phase 2
 ```
 
-**Branch naming:** `feature/<component-or-epic>`
+**Agent Codenames:**
+- Agent 1: `claude`
+- Agent 2: `codex`
+- Agent 3: `gemini`
 
 **Workflow:**
 1. Create branch from `main`: `git checkout -b feature/config-loader main`
@@ -103,51 +109,68 @@ main
 
 **Why sequential:** Skeleton unblocks everything else. Decision affects implementation.
 
-### Phase 1: Foundation Layer (Parallel, ~4-6 hours)
+### Phase 1: Foundation Layer ✅ COMPLETE
 
-After skeleton is merged to `main`, all agents rebase and split work:
-
-**Agent 1 - Configuration & Plugin System**
-- Branch: `feature/config-plugin`
-- ID 10: Config Loader + Env Interpolation
-- ID 12: Plugin Discovery + Manifest Validation
-- ID 13: Protocol v1 Codec (types in separate package)
+**Agent 1 (Claude) - Configuration & Plugin System**
+- Branch: `claude/config-plugin` ✅ Merged
+- ✅ ID 10: Config Loader + Env Interpolation
+- ✅ ID 12: Plugin Discovery + Manifest Validation
+- ✅ ID 13: Protocol v1 Codec (types in separate package)
 - Deliverable: Can load config, discover plugins, encode/decode protocol v1 JSON
 
-**Agent 2 - State & Queue**
-- Branch: `feature/state-queue`
-- ID 11: SQLite Schema Bootstrap
-- ID 14: SQLite Work Queue (enqueue/dequeue/complete)
-- ID 17: Plugin State Store + Shallow Merge
-- ID 18: PID Lock (small, can bundle with state)
+**Agent 2 (Codex) - State & Queue**
+- Branch: `codex/state-queue` ✅ Merged
+- ✅ ID 11: SQLite Schema Bootstrap
+- ✅ ID 14: SQLite Work Queue (enqueue/dequeue/complete)
+- ✅ ID 17: Plugin State Store + Shallow Merge
+- ✅ ID 18: PID Lock (small, can bundle with state)
 - Deliverable: Can persist jobs and plugin state, single-instance lock
 
-**Agent 3 - Observability & Coordination**
-- Branch: `feature/logging-scheduler`
-- ID 19: Structured JSON Logging (logger utility)
-- ID 15: Scheduler Tick Loop + Fuzzy Intervals
-- ID 25: Crash Recovery Implementation (depends on decision from Phase 0)
-- Deliverable: Scheduler can enqueue jobs on schedule, logging works, crash recovery handles orphans
+**Agent 3 (Gemini) - Observability**
+- Branch: `gemini/logging` ✅ Merged
+- ✅ ID 19: Structured JSON Logging (logger utility)
+- Deliverable: Structured JSON logging available to all components
 
-**Integration Points:**
-- Agent 1's protocol codec is used by Agent 3's scheduler (indirectly via queue)
-- Agent 2's queue is used by Agent 3's scheduler
-- All use Agent 3's logger
+### Phase 2: Integration (In Progress, ~3-4 hours)
 
-**Coordination:**
-- Agents 1 & 2 can work completely independently
-- Agent 3 needs queue interface from Agent 2 (can define interface early, implement against mock)
+**Agent 3 (Gemini) - Scheduler & Orchestration**
+- Branch: `gemini/scheduler`
+- 🔲 ID 15: Scheduler Tick Loop + Fuzzy Intervals
+  - Uses queue from Agent 2
+  - Uses config from Agent 1
+  - Enqueues poll jobs on schedule with jitter
+- 🔲 ID 25: Crash Recovery Implementation
+  - Handles orphaned `running` jobs on startup
+  - Re-queues if under max_attempts per decision from Phase 0
+- Deliverable: Scheduler running, jobs enqueued on schedule
 
-### Phase 2: Integration (Collaborative, ~3-4 hours)
+**Agent 1 (Claude) - Dispatch Loop**
+- Branch: `claude/dispatch`
+- 🔲 ID 16: Dispatch Loop
+  - Dequeues jobs from Agent 2's queue
+  - Spawns plugin subprocess (discovered via Agent 1's plugin registry)
+  - Protocol v1 I/O over stdin/stdout (using Agent 1's codec)
+  - Timeout enforcement (SIGTERM → SIGKILL)
+  - Updates job status and plugin state via Agent 2's state store
+- Deliverable: Can execute plugins end-to-end
 
-**Agent 1 + Agent 2 - Dispatch Loop**
-- Branch: `feature/dispatch` (new branch, both agents collaborate or hand off)
-- ID 16: Dispatch Loop (spawns plugin, uses protocol codec from Agent 1, state from Agent 2)
-- ID 20: Echo Plugin + E2E Runbook (validation)
-- Deliverable: End-to-end loop works
+**Agent 2 (Codex) - Integration & Validation**
+- Branch: `codex/integration`
+- 🔲 ID 20: Echo Plugin + E2E Runbook
+  - Validate full loop: config → scheduler → queue → dispatch → plugin → state
+  - Document happy path and error scenarios
+- Assists Agent 1 with dispatch integration
 
 **All Agents - Sprint Epic**
-- ID 8: Sprint 1 MVP Core Loop (integration testing, final validation)
+- 🔲 ID 8: Sprint 1 MVP Core Loop
+  - Integration testing
+  - Final validation that all components work together
+  - Deliverable: `senechal-gw start` runs MVP loop successfully
+
+**Dependencies:**
+- Agent 3's scheduler depends on Agent 2's queue (already merged ✅)
+- Agent 1's dispatch depends on Agent 3's scheduler (enqueue jobs first)
+- Agent 2's E2E testing depends on Agent 1's dispatch (need execution working)
 
 ## Merge Order
 
