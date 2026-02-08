@@ -81,8 +81,9 @@
 - Fail fast if lock not acquired
 
 ### 8. Crash recovery
-- On startup: find `status = running` jobs, set to `dead` (no retry in MVP)
-- Log each at WARN
+- On startup: find `status = running` jobs, increment `attempt`, re-queue if under `max_attempts`, else `dead`
+- Aligns with SPEC.md operational semantics (at-least-once delivery)
+- Log each orphan at WARN
 
 ### 9. Logging
 - JSON to stdout: `timestamp`, `level`, `component`, `plugin`, `job_id`, `message`
