@@ -140,7 +140,127 @@ RETURNING
 	return &j, nil
 }
 
-// Complete marks a job terminal and appends a row to job_log.
+// FindJobsByStatus retrieves all jobs with the given status.
+func (q *Queue) FindJobsByStatus(ctx context.Context, status Status) ([]*Job, error) {
+	rows, err := q.db.QueryContext(ctx, `
+SELECT
+  id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
+  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id
+FROM job_queue
+WHERE status = ?;
+`, status)
+	if err != nil {
+		return nil, fmt.Errorf("query jobs by status: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*Job
+	for rows.Next() {
+		var (
+			j             Job
+			payload       sql.NullString
+			dedupeKey     sql.NullString
+			createdAtS    string
+			startedAtS    sql.NullString
+			completedAtS  sql.NullString
+			nextRetryAtS  sql.NullString
+			lastError     sql.NullString
+			parentJobID   sql.NullString
+			sourceEventID sql.NullString
+			statusS       string
+		)
+		if err := rows.Scan(
+			&j.ID, &j.Plugin, &j.Command, &payload, &statusS, &j.Attempt, &j.MaxAttempts, &j.SubmittedBy, &dedupeKey,
+			&createdAtS, &startedAtS, &completedAtS, &nextRetryAtS, &lastError, &parentJobID, &sourceEventID,
+		); err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+
+		j.Status = Status(statusS)
+		if payload.Valid {
+			j.Payload = []byte(payload.String)
+		}
+		if dedupeKey.Valid {
+			j.DedupeKey = &dedupeKey.String
+		}
+		if t, err := time.Parse(time.RFC3339Nano, createdAtS); err == nil {
+			j.CreatedAt = t
+		}
+		if startedAtS.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, startedAtS.String); err == nil {
+				j.StartedAt = &t
+			}
+		}
+		if completedAtS.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, completedAtS.String); err == nil {
+				j.CompletedAt = &t
+			}
+		}
+		if nextRetryAtS.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, nextRetryAtS.String); err == nil {
+				j.NextRetryAt = &t
+			}
+		}
+		if lastError.Valid {
+			j.LastError = &lastError.String
+		}
+		if parentJobID.Valid {
+			j.ParentJobID = &parentJobID.String
+		}
+		if sourceEventID.Valid {
+			j.SourceEventID = &sourceEventID.String
+		}
+		jobs = append(jobs, &j)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job rows: %w", err)
+	}
+
+	return jobs, nil
+}
+
+// UpdateJobForRecovery updates a job's status, attempt count, next retry time, and last error.
+// This is used for crash recovery to re-queue jobs with backoff or mark them as dead.
+func (q *Queue) UpdateJobForRecovery(ctx context.Context, jobID string, newStatus Status, newAttempt int, nextRetryAt *time.Time, lastError string) error {
+	var nextRetryAtS *string
+	if nextRetryAt != nil {
+		s := nextRetryAt.Format(time.RFC3339Nano)
+		nextRetryAtS = &s
+	}
+
+	var lastErrorS *string
+	if lastError != "" {
+		lastErrorS = &lastError
+	}
+
+	_, err := q.db.ExecContext(ctx, `
+UPDATE job_queue
+SET status = ?, attempt = ?, next_retry_at = ?, last_error = ?
+WHERE id = ?;
+`, newStatus, newAttempt, nextRetryAtS, lastErrorS, jobID)
+	if err != nil {
+		return fmt.Errorf("update job %s for recovery: %w", jobID, err)
+	}
+	return nil
+}
+
+// PruneJobLogs deletes job log entries older than the specified retention duration.
+func (q *Queue) PruneJobLogs(ctx context.Context, retention time.Duration) error {
+	if retention <= 0 {
+		return nil // No retention, do nothing
+	}
+
+	cutoff := time.Now().UTC().Add(-retention)
+	_, err := q.db.ExecContext(ctx, `
+DELETE FROM job_log
+WHERE completed_at < ?;
+`, cutoff.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("prune job logs: %w", err)
+	}
+	return nil
+}
 func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID is empty")
