@@ -1,0 +1,47 @@
+# Binaries
+senechal-gw
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build artifacts
+/bin/
+/dist/
+
+# State and data
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.lock
+
+# Environment files
+.env
+.env.local
+*.secret
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code local settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
