@@ -1,0 +1,15 @@
+name: echo
+version: 0.1.0
+protocol: 1
+description: Test plugin that echoes config and updates state with timestamp
+
+entrypoint: ./run.sh
+
+commands:
+  poll:
+    description: Echo config and return timestamp in state
+  health:
+    description: Always return ok
+
+config_keys:
+  - message  # Optional message to include in logs

@@ -1,0 +1,37 @@
+# Senechal Gateway Configuration
+# See SPEC.md §11 for full reference
+
+service:
+  tick_interval: 60s           # Scheduler heartbeat
+  dedupe_ttl: 24h              # Deduplication window
+  job_log_retention: 168h      # 7 days
+  state_db: ./senechal.db      # SQLite database path
+  pid_lock: ./senechal.pid     # PID lock file
+
+plugins:
+  echo:
+    enabled: true
+    schedule:
+      every: 5m                # Supported: 5m, 15m, 30m, hourly, 2h, 6h, daily, weekly, monthly
+      jitter: 30s              # Randomization to avoid thundering herd
+    timeout: 30s
+    max_attempts: 3
+    circuit_breaker:
+      threshold: 3             # Consecutive failures before blocking scheduler
+      reset_after: 5m
+    config:
+      # Plugin-specific config goes here
+      # Example: message: "Hello from echo plugin"
+
+# Routes: event-driven plugin chaining (not in MVP)
+# routes:
+#   - from: plugin_a
+#     event_type: data_ready
+#     to: plugin_b
+
+# Webhooks: HTTP listener endpoints (not in MVP)
+# webhooks:
+#   github:
+#     path: /webhook/github
+#     secret: ${GITHUB_WEBHOOK_SECRET}
+#     route_to: github_handler
