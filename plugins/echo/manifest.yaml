@@ -1,15 +1,9 @@
 name: echo
 version: 0.1.0
 protocol: 1
-description: Test plugin that echoes config and updates state with timestamp
-
-entrypoint: ./run.sh
-
-commands:
-  poll:
-    description: Echo config and return timestamp in state
-  health:
-    description: Always return ok
-
+entrypoint: run.sh
+description: "Reads protocol v1 request on stdin; returns logs + state_updates with last_run timestamp"
+commands: [poll, health]
 config_keys:
-  - message  # Optional message to include in logs
+  required: []
+  optional: [message, mode]
