@@ -1,5 +1,5 @@
 # Binaries
-senechal-gw
+/senechal-gw
 *.exe
 *.exe~
 *.dll
