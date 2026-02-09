@@ -2,11 +2,17 @@
 # See SPEC.md §11 for full reference
 
 service:
+  name: senechal-gw
   tick_interval: 60s           # Scheduler heartbeat
+  log_level: info              # debug, info, warn, error
+  log_format: json             # json
   dedupe_ttl: 24h              # Deduplication window
   job_log_retention: 168h      # 7 days
-  state_db: ./senechal.db      # SQLite database path
-  pid_lock: ./senechal.pid     # PID lock file
+
+state:
+  path: ./senechal.db          # SQLite database path (PID lock derived from this)
+
+plugins_dir: ./plugins         # Plugin directory
 
 plugins:
   echo:

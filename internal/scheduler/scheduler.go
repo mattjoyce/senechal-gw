@@ -12,6 +12,14 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/queue" // Keep for queue.EnqueueRequest and queue.Job types
 )
 
+// QueueService defines the interface for queue operations needed by the scheduler.
+type QueueService interface {
+	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
+	FindJobsByStatus(ctx context.Context, status queue.Status) ([]*queue.Job, error)
+	UpdateJobForRecovery(ctx context.Context, jobID string, status queue.Status, attempt int, nextRetryAt *time.Time, lastError string) error
+	PruneJobLogs(ctx context.Context, olderThan time.Duration) error
+}
+
 // Scheduler manages the scheduling and recovery of plugin jobs.
 type Scheduler struct {
 	cfg    *config.Config
