@@ -1,8 +1,8 @@
 ---
 id: 14
-status: todo
+status: done
 priority: High
-blocked_by: [9, 11]
+blocked_by: []
 tags: [sprint-1, mvp, queue]
 ---
 
@@ -17,4 +17,4 @@ Implement a SQLite-backed work queue so jobs survive process restarts and can be
 - MVP behavior: failures are recorded; retry/backoff is out of scope unless explicitly pulled in.
 
 ## Narrative
-
+- 2026-02-08: Implemented SQLite work queue in `internal/queue/queue.go` with `Enqueue()` (inserts queued jobs with UUID, deduplication support), `Dequeue()` (atomic FIFO selection using `ORDER BY id` with status transition to running), `Complete()` (marks succeeded/failed with timestamps and error messages), and helper methods for crash recovery (`FindJobsByStatus`, `UpdateJobForRecovery`). Includes `PruneJobLogs()` for retention management. FIFO ordering and atomicity verified in tests. Merged via PR #1. (by @codex)

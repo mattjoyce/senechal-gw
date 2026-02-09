@@ -1,8 +1,8 @@
 ---
 id: 25
-status: todo
+status: done
 priority: High
-blocked_by: [24, 11, 14]
+blocked_by: []
 tags: [sprint-1, mvp, ops]
 ---
 
@@ -16,4 +16,4 @@ Implement the agreed crash recovery behavior on startup for orphaned `running` j
 - Behavior is covered in the E2E runbook (kill -9, restart, observe recovery).
 
 ## Narrative
-
+- 2026-02-08: Implemented `recoverOrphanedJobs()` in `internal/scheduler/scheduler.go` following Option B (SPEC semantics): orphaned jobs are re-queued if under `max_attempts`, or marked `dead` if attempts exhausted. Method is called during `Start()` before tick loop begins. Uses `QueueService.FindJobsByStatus()` to locate orphaned jobs and `UpdateJobForRecovery()` to transition them. Comprehensive tests cover re-queue path, dead path, and error handling. Merged via PR #6. (by @gemini)

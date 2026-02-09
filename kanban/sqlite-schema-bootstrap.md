@@ -1,8 +1,8 @@
 ---
 id: 11
-status: todo
+status: done
 priority: High
-blocked_by: [9]
+blocked_by: []
 tags: [sprint-1, mvp, sqlite]
 ---
 
@@ -16,4 +16,4 @@ Create/open the SQLite database and ensure required tables exist so queue/state 
 - DB open/close lifecycle is well-defined and errors are surfaced clearly.
 
 ## Narrative
-
+- 2026-02-08: Implemented SQLite schema bootstrap in `internal/storage/sqlite.go` with `OpenSQLite()` creating three tables: `plugin_state` (JSON blob storage), `job_queue` (work queue with status state machine), and `job_log` (completed job history). Schema includes all required fields from SPEC with proper indexes for queue operations. Bootstrap is idempotent using `CREATE TABLE IF NOT EXISTS`. Tests verify table creation. Merged via PR #1. (by @codex)
