@@ -472,9 +472,124 @@ When the router creates a downstream job from an event:
 
 ---
 
-## 8. Webhooks
+## 8. API Endpoints
 
-### 8.1 Listener
+The HTTP API allows external systems (LLMs, scripts, other services) to programmatically trigger plugin execution and retrieve job results.
+
+### 8.1 Configuration
+
+```yaml
+api:
+  enabled: true
+  listen: "localhost:8080"
+  auth:
+    api_key: ${API_KEY}  # Bearer token for authentication
+```
+
+### 8.2 POST /trigger/{plugin}/{command}
+
+Enqueues a job for the specified plugin and command. Returns immediately with a job ID (fire-and-forget, asynchronous execution).
+
+**Request:**
+- URL params: `{plugin}` - plugin name, `{command}` - command name (e.g., "poll")
+- Header: `Authorization: Bearer <api_key>`
+- Body: Optional JSON payload (passed to plugin as `config` override or additional parameters)
+
+**Response (202 Accepted):**
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "queued",
+  "plugin": "plugin_name",
+  "command": "command_name"
+}
+```
+
+**Error Responses:**
+- `401 Unauthorized` - Missing or invalid API key
+- `400 Bad Request` - Plugin not found or command not supported
+- `500 Internal Server Error` - Failed to enqueue job
+
+**Example:**
+```bash
+curl -X POST http://localhost:8080/trigger/echo/poll \
+  -H "Authorization: Bearer my-api-key-123" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### 8.3 GET /job/{job_id}
+
+Retrieves the status and results of a previously triggered job.
+
+**Request:**
+- URL param: `{job_id}` - UUID returned from POST /trigger
+- Header: `Authorization: Bearer <api_key>`
+
+**Response (200 OK - queued):**
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "queued",
+  "plugin": "plugin_name",
+  "command": "command_name",
+  "created_at": "2026-02-09T10:00:00Z"
+}
+```
+
+**Response (200 OK - running):**
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "running",
+  "plugin": "plugin_name",
+  "command": "command_name",
+  "started_at": "2026-02-09T10:00:05Z"
+}
+```
+
+**Response (200 OK - completed):**
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "completed",
+  "plugin": "plugin_name",
+  "command": "command_name",
+  "result": {
+    "status": "ok",
+    "state_updates": {"last_run": "2026-02-09T10:00:10Z"},
+    "logs": [{"level": "info", "message": "Plugin executed successfully"}]
+  },
+  "started_at": "2026-02-09T10:00:05Z",
+  "completed_at": "2026-02-09T10:00:10Z"
+}
+```
+
+**Error Responses:**
+- `401 Unauthorized` - Missing or invalid API key
+- `404 Not Found` - Job ID not found
+
+### 8.4 Authentication
+
+Simple bearer token authentication. Single API key configured via `api.auth.api_key` in config.yaml.
+
+- Key should be stored in environment variable and interpolated: `${API_KEY}`
+- All API requests must include `Authorization: Bearer <api_key>` header
+- Invalid or missing key returns `401 Unauthorized`
+- No key rotation mechanism in MVP (manual config update + reload)
+
+### 8.5 Use Cases
+
+- **LLM Tool Calling:** LLM agents can curl /trigger to execute actions (e.g., "check my calendar", "sync Withings data")
+- **External Automation:** Scripts, cron jobs, or other services can trigger plugins programmatically
+- **Result Polling:** External systems can poll /job/{id} to wait for async plugin execution completion
+- **Manual Testing:** Developers can trigger plugins via curl without waiting for scheduler
+
+---
+
+## 9. Webhooks
+
+### 9.1 Listener
 
 ```yaml
 webhooks:
@@ -487,7 +602,7 @@ webhooks:
       max_body_size: 1MB
 ```
 
-### 8.2 Security
+### 9.2 Security
 
 HMAC-SHA256 signature verification is **mandatory** for all webhook endpoints.
 
@@ -499,7 +614,7 @@ HMAC-SHA256 signature verification is **mandatory** for all webhook endpoints.
 
 No replay protection in V1. No rate limiting in V1 (proxy responsibility if fronted by reverse proxy).
 
-### 8.3 Health Endpoint
+### 9.3 Health Endpoint
 
 `/healthz` on the webhook listener port:
 
@@ -517,9 +632,9 @@ No authentication. Localhost only. Useful for systemd watchdog and operator chec
 
 ---
 
-## 9. Operations
+## 10. Operations
 
-### 9.1 Single-Instance Lock
+### 10.1 Single-Instance Lock
 
 PID file with `flock(LOCK_EX | LOCK_NB)`:
 
@@ -528,7 +643,7 @@ PID file with `flock(LOCK_EX | LOCK_NB)`:
 3. Write current PID.
 4. Lock held for process lifetime. Kernel releases on crash/exit.
 
-### 9.2 Crash Recovery
+### 10.2 Crash Recovery
 
 On startup:
 
@@ -539,7 +654,7 @@ On startup:
 5. Log each recovered job at WARN level.
 6. Resume normal dispatch.
 
-### 9.3 Config Reload
+### 10.3 Config Reload
 
 `senechal-gw reload` sends `SIGHUP` to the running process (found via PID file).
 
@@ -553,7 +668,7 @@ On SIGHUP:
 6. Newly added plugins discovered → `init` runs.
 7. Removed/disabled plugins → queued jobs cancelled (status → `dead`), no new jobs enqueued.
 
-### 9.4 Logging
+### 10.4 Logging
 
 **Core logs:** JSON to stdout.
 
@@ -565,7 +680,7 @@ Fields: `timestamp`, `level`, `component`, `plugin` (when relevant), `job_id` (w
 
 **Redaction:** Not in V1. Don't log secrets. Fix the plugin, don't bandage the core.
 
-### 9.5 Job Log Retention
+### 10.5 Job Log Retention
 
 Pruned on every scheduler tick:
 
@@ -575,7 +690,7 @@ DELETE FROM job_log WHERE completed_at < datetime('now', '-30 days')
 
 Default 30 days. Configurable via `service.job_log_retention`.
 
-### 9.6 CLI
+### 10.6 CLI
 
 ```
 senechal-gw start              # run the service (foreground)
@@ -590,7 +705,7 @@ senechal-gw queue              # show pending/active jobs
 
 ---
 
-## 10. Database Schema
+## 11. Database Schema
 
 ### 10.1 Tables
 
@@ -641,7 +756,7 @@ job_log (
 
 ---
 
-## 11. Configuration Reference
+## 12. Configuration Reference
 
 Complete `config.yaml` with all supported fields and defaults:
 
@@ -713,9 +828,9 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never stored in 
 
 ---
 
-## 12. Deployment
+## 13. Deployment
 
-### 12.1 Systemd Unit
+### 13.1 Systemd Unit
 
 ```ini
 [Unit]
@@ -734,13 +849,13 @@ Group=senechal
 WantedBy=multi-user.target
 ```
 
-### 12.2 Development
+### 13.2 Development
 
 Run `senechal-gw start` directly. No systemd required.
 
 ---
 
-## 13. Project Layout
+## 14. Project Layout
 
 ```
 senechal-gw/
@@ -754,6 +869,7 @@ senechal-gw/
 │   ├── dispatch/
 │   ├── plugin/
 │   ├── state/
+│   ├── api/
 │   ├── webhook/
 │   └── router/
 ├── plugins/
@@ -768,20 +884,24 @@ senechal-gw/
 
 ---
 
-## 14. Implementation Phases
+## 15. Implementation Phases
 
-| Phase | Scope |
-|-------|-------|
-| 1. Skeleton | Go scaffold, CLI, config loader, SQLite state, plugin discovery |
-| 2. Core Loop | Work queue, heartbeat scheduler with fuzzy intervals, dispatch loop, plugin protocol |
-| 3. Routing | Config-declared event routing, downstream enqueuing, event_id traceability |
-| 4. Webhooks | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins |
-| 5. CLI & Ops | Status/run/reload/reset/plugins/queue/logs commands, systemd unit, structured logging |
-| 6. First Plugins | Port Withings & Garmin from existing Senechal, notify plugin |
+| Phase | Sprint | Scope | Status |
+|-------|--------|-------|--------|
+| 1. Skeleton | 0 | Go scaffold, CLI, config loader, SQLite state, plugin discovery | ✅ Complete |
+| 2. Core Loop | 1 | Work queue, heartbeat scheduler with fuzzy intervals, dispatch loop, plugin protocol, crash recovery | ✅ Complete |
+| 3. API Triggers | 2 | HTTP server with chi router, POST /trigger and GET /job endpoints, Bearer token auth, job result storage | 🔄 In Progress |
+| 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | Planned |
+| 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | Planned |
+| 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | Planned |
+| 7. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | Planned |
+| 8. First Plugins | 6 | Port Withings & Garmin from existing Senechal, notify plugin | Planned |
+
+**Note:** Phase 3 (API Triggers) was prioritized before Routing and Webhooks to enable LLM-driven automation via curl-based triggers. This allows external systems to programmatically enqueue jobs and retrieve results immediately, accelerating the path to production use cases.
 
 ---
 
-## 15. Deferred Decisions
+## 16. Deferred Decisions
 
 | Topic | Rationale |
 |-------|-----------|
