@@ -263,7 +263,15 @@ WHERE completed_at < ?;
 	return nil
 }
 
-func (q *Queue) Complete(ctx context.Context, jobID string, status Status, result json.RawMessage, lastError, stderr *string) error {
+// Complete marks a job complete and writes a log row. This signature is kept
+// stable since other sprint work may call it directly.
+func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {
+	return q.CompleteWithResult(ctx, jobID, status, nil, lastError, stderr)
+}
+
+// CompleteWithResult is like Complete but also stores the raw protocol response
+// (plugin stdout JSON) in job_log.result for audit/debugging and API retrieval.
+func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Status, result json.RawMessage, lastError, stderr *string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID is empty")
 	}
@@ -374,10 +382,10 @@ WHERE q.id = ?;
 		lastErr = &lastErrS.String
 	}
 
-	var startedAt time.Time
+	var startedAt *time.Time
 	if startedAtS.Valid {
 		if t, err := time.Parse(time.RFC3339Nano, startedAtS.String); err == nil {
-			startedAt = t
+			startedAt = &t
 		}
 	}
 

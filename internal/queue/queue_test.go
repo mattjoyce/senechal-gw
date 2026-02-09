@@ -90,7 +90,7 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 	stderr := "hello stderr"
 	lastErr := "boom"
 	result := json.RawMessage(`{"status":"error","error":"boom"}`)
-	if err := q.Complete(context.Background(), id, StatusFailed, result, &lastErr, &stderr); err != nil {
+	if err := q.CompleteWithResult(context.Background(), id, StatusFailed, result, &lastErr, &stderr); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestGetJobByID(t *testing.T) {
 	}
 
 	result := json.RawMessage(`{"status":"ok","logs":[]}`)
-	if err := q.Complete(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -147,6 +147,9 @@ func TestGetJobByID(t *testing.T) {
 	}
 	if string(got.Result) != string(result) {
 		t.Fatalf("Result: got %s want %s", string(got.Result), string(result))
+	}
+	if got.StartedAt == nil {
+		t.Fatalf("expected StartedAt to be set")
 	}
 	if got.CompletedAt == nil {
 		t.Fatalf("expected CompletedAt to be set")

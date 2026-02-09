@@ -56,6 +56,6 @@ type JobResult struct {
 	Command     string
 	Result      json.RawMessage
 	LastError   *string
-	StartedAt   time.Time
+	StartedAt   *time.Time
 	CompletedAt *time.Time
 }

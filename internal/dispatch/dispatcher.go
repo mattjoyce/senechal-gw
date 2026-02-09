@@ -376,7 +376,7 @@ func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string)
 
 // completeJob marks a job as complete with the given status.
 func (d *Dispatcher) completeJob(ctx context.Context, jobID string, status queue.Status, result json.RawMessage, lastError, stderr *string) {
-	if err := d.queue.Complete(ctx, jobID, status, result, lastError, stderr); err != nil {
+	if err := d.queue.CompleteWithResult(ctx, jobID, status, result, lastError, stderr); err != nil {
 		d.logger.Error("failed to complete job", "job_id", jobID, "error", err)
 	}
 }
