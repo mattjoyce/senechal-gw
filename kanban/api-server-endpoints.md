@@ -1,6 +1,6 @@
 ---
 id: 28
-status: todo
+status: done
 priority: High
 blocked_by: []
 assignee: "@claude"
