@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -261,7 +262,8 @@ WHERE completed_at < ?;
 	}
 	return nil
 }
-func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {
+
+func (q *Queue) Complete(ctx context.Context, jobID string, status Status, result json.RawMessage, lastError, stderr *string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID is empty")
 	}
@@ -304,6 +306,13 @@ WHERE id = ?;
 	}
 
 	logID := fmt.Sprintf("%s-%d", jobID, attempt)
+
+	var resultVal any
+	if len(result) > 0 {
+		// Store JSON as a string blob to keep it queryable/debuggable in SQLite.
+		resultVal = string(result)
+	}
+
 	var stderrVal any
 	if stderr != nil {
 		s := *stderr
@@ -315,10 +324,10 @@ WHERE id = ?;
 
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO job_log(
-  id, plugin, command, status, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id
+  id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id
 )
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-`, logID, plugin, command, status, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, logID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID)
 	if err != nil {
 		return fmt.Errorf("insert job_log: %w", err)
 	}
@@ -327,4 +336,71 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 		return fmt.Errorf("commit tx: %w", err)
 	}
 	return nil
+}
+
+func (q *Queue) GetJobByID(ctx context.Context, jobID string) (*JobResult, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("jobID is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT
+  q.id, q.status, q.plugin, q.command, q.last_error, q.started_at, q.completed_at,
+  l.result
+FROM job_queue q
+LEFT JOIN job_log l ON l.id = (q.id || '-' || q.attempt)
+WHERE q.id = ?;
+`, jobID)
+
+	var (
+		id          string
+		statusS     string
+		plugin      string
+		command     string
+		lastErrS    sql.NullString
+		startedAtS  sql.NullString
+		completedAt sql.NullString
+		resultS     sql.NullString
+	)
+	if err := row.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrJobNotFound
+		}
+		return nil, fmt.Errorf("get job by id: %w", err)
+	}
+
+	var lastErr *string
+	if lastErrS.Valid {
+		lastErr = &lastErrS.String
+	}
+
+	var startedAt time.Time
+	if startedAtS.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, startedAtS.String); err == nil {
+			startedAt = t
+		}
+	}
+
+	var completedAtT *time.Time
+	if completedAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, completedAt.String); err == nil {
+			completedAtT = &t
+		}
+	}
+
+	var result json.RawMessage
+	if resultS.Valid {
+		result = json.RawMessage(resultS.String)
+	}
+
+	return &JobResult{
+		JobID:       id,
+		Status:      Status(statusS),
+		Plugin:      plugin,
+		Command:     command,
+		Result:      result,
+		LastError:   lastErr,
+		StartedAt:   startedAt,
+		CompletedAt: completedAtT,
+	}, nil
 }

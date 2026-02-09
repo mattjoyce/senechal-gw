@@ -8,18 +8,29 @@ type Config struct {
 	State      StateConfig           `yaml:"state"`
 	PluginsDir string                `yaml:"plugins_dir"`
 	Plugins    map[string]PluginConf `yaml:"plugins"`
-	Routes     []RouteConfig         `yaml:"routes,omitempty"`     // Not in MVP
-	Webhooks   *WebhooksConfig       `yaml:"webhooks,omitempty"`   // Not in MVP
+	API        APIConfig             `yaml:"api,omitempty"`
+	Routes     []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
+	Webhooks   *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
+}
+
+type APIConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	Listen  string        `yaml:"listen"`
+	Auth    APIAuthConfig `yaml:"auth"`
+}
+
+type APIAuthConfig struct {
+	APIKey string `yaml:"api_key"`
 }
 
 // ServiceConfig defines core service settings.
 type ServiceConfig struct {
-	Name              string        `yaml:"name"`
-	TickInterval      time.Duration `yaml:"tick_interval"`
-	LogLevel          string        `yaml:"log_level"`
-	LogFormat         string        `yaml:"log_format"`
-	DedupeTTL         time.Duration `yaml:"dedupe_ttl"`
-	JobLogRetention   time.Duration `yaml:"job_log_retention"`
+	Name            string        `yaml:"name"`
+	TickInterval    time.Duration `yaml:"tick_interval"`
+	LogLevel        string        `yaml:"log_level"`
+	LogFormat       string        `yaml:"log_format"`
+	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
+	JobLogRetention time.Duration `yaml:"job_log_retention"`
 }
 
 // StateConfig defines state storage settings.
@@ -29,20 +40,20 @@ type StateConfig struct {
 
 // PluginConf defines configuration for a single plugin.
 type PluginConf struct {
-	Enabled              bool                   `yaml:"enabled"`
-	Schedule             *ScheduleConfig        `yaml:"schedule,omitempty"`
-	Config               map[string]interface{} `yaml:"config,omitempty"`
-	Retry                *RetryConfig           `yaml:"retry,omitempty"`
-	Timeouts             *TimeoutsConfig        `yaml:"timeouts,omitempty"`
-	CircuitBreaker       *CircuitBreakerConfig  `yaml:"circuit_breaker,omitempty"`
-	MaxOutstandingPolls  int                    `yaml:"max_outstanding_polls,omitempty"`
+	Enabled             bool                   `yaml:"enabled"`
+	Schedule            *ScheduleConfig        `yaml:"schedule,omitempty"`
+	Config              map[string]interface{} `yaml:"config,omitempty"`
+	Retry               *RetryConfig           `yaml:"retry,omitempty"`
+	Timeouts            *TimeoutsConfig        `yaml:"timeouts,omitempty"`
+	CircuitBreaker      *CircuitBreakerConfig  `yaml:"circuit_breaker,omitempty"`
+	MaxOutstandingPolls int                    `yaml:"max_outstanding_polls,omitempty"`
 }
 
 // ScheduleConfig defines when a plugin should be polled.
 type ScheduleConfig struct {
-	Every            string             `yaml:"every"` // e.g., "5m", "hourly", "daily"
-	Jitter           time.Duration      `yaml:"jitter,omitempty"`
-	PreferredWindow  *PreferredWindow   `yaml:"preferred_window,omitempty"` // Not in MVP
+	Every           string           `yaml:"every"` // e.g., "5m", "hourly", "daily"
+	Jitter          time.Duration    `yaml:"jitter,omitempty"`
+	PreferredWindow *PreferredWindow `yaml:"preferred_window,omitempty"` // Not in MVP
 }
 
 // PreferredWindow defines time-of-day constraints for scheduling.
@@ -109,6 +120,10 @@ func Defaults() *Config {
 		},
 		PluginsDir: "./plugins",
 		Plugins:    make(map[string]PluginConf),
+		API: APIConfig{
+			Enabled: false,
+			Listen:  "127.0.0.1:8080",
+		},
 	}
 }
 

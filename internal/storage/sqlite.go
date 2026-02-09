@@ -75,6 +75,7 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
   plugin          TEXT NOT NULL,
   command         TEXT NOT NULL,
   status          TEXT NOT NULL,
+  result          TEXT,
   attempt         INTEGER NOT NULL,
   submitted_by    TEXT NOT NULL,
   created_at      TEXT NOT NULL,
@@ -92,6 +93,50 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("bootstrap sqlite: %w", err)
 		}
+	}
+
+	// Migrations: CREATE TABLE IF NOT EXISTS doesn't add new columns.
+	if err := ensureJobLogResultColumn(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureJobLogResultColumn(ctx context.Context, db *sql.DB) error {
+	cols, err := db.QueryContext(ctx, "PRAGMA table_info(job_log);")
+	if err != nil {
+		return fmt.Errorf("bootstrap sqlite: inspect job_log columns: %w", err)
+	}
+	defer cols.Close()
+
+	hasResult := false
+	for cols.Next() {
+		// cid, name, type, notnull, dflt_value, pk
+		var (
+			cid       int
+			name      string
+			typ       string
+			notnull   int
+			dfltValue any
+			pk        int
+		)
+		if err := cols.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			return fmt.Errorf("bootstrap sqlite: scan job_log columns: %w", err)
+		}
+		if name == "result" {
+			hasResult = true
+			break
+		}
+	}
+	if err := cols.Err(); err != nil {
+		return fmt.Errorf("bootstrap sqlite: iterate job_log columns: %w", err)
+	}
+	if hasResult {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, "ALTER TABLE job_log ADD COLUMN result TEXT;"); err != nil {
+		return fmt.Errorf("bootstrap sqlite: add job_log.result column: %w", err)
 	}
 	return nil
 }
