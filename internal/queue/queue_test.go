@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -88,7 +89,8 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 
 	stderr := "hello stderr"
 	lastErr := "boom"
-	if err := q.Complete(context.Background(), id, StatusFailed, &lastErr, &stderr); err != nil {
+	result := json.RawMessage(`{"status":"error","error":"boom"}`)
+	if err := q.CompleteWithResult(context.Background(), id, StatusFailed, result, &lastErr, &stderr); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 
@@ -98,5 +100,75 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected 1 job_log row, got %d", count)
+	}
+}
+
+func TestGetJobByID(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	result := json.RawMessage(`{"status":"ok","logs":[]}`)
+	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	got, err := q.GetJobByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if got.JobID != id {
+		t.Fatalf("JobID: got %q want %q", got.JobID, id)
+	}
+	if got.Status != StatusSucceeded {
+		t.Fatalf("Status: got %q want %q", got.Status, StatusSucceeded)
+	}
+	if got.Plugin != "echo" || got.Command != "poll" {
+		t.Fatalf("unexpected plugin/command: %#v", got)
+	}
+	if string(got.Result) != string(result) {
+		t.Fatalf("Result: got %s want %s", string(got.Result), string(result))
+	}
+	if got.StartedAt == nil {
+		t.Fatalf("expected StartedAt to be set")
+	}
+	if got.CompletedAt == nil {
+		t.Fatalf("expected CompletedAt to be set")
+	}
+}
+
+func TestGetJobByIDNotFound(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	if _, err := q.GetJobByID(context.Background(), "nope"); err != ErrJobNotFound {
+		t.Fatalf("expected ErrJobNotFound, got %v", err)
 	}
 }

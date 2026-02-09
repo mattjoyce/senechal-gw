@@ -96,7 +96,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if !ok {
 		errMsg := fmt.Sprintf("plugin %q not found in registry", job.Plugin)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, nil)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -104,7 +104,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if !plug.SupportsCommand(job.Command) {
 		errMsg := fmt.Sprintf("plugin %q does not support command %q", job.Plugin, job.Command)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, nil)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -119,7 +119,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get plugin state: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, nil)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -128,7 +128,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err := json.Unmarshal(pluginState, &stateMap); err != nil {
 		errMsg := fmt.Sprintf("failed to unmarshal plugin state: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, nil)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -152,28 +152,28 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := json.Unmarshal(job.Payload, &event); err != nil {
 			errMsg := fmt.Sprintf("failed to unmarshal event payload: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, nil)
+			d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
 			return
 		}
 		req.Event = &event
 	}
 
 	// Spawn plugin and execute
-	resp, stderr, err := d.spawnPlugin(ctx, plug.Entrypoint, req, timeout, jobLogger)
+	resp, rawResp, stderr, err := d.spawnPlugin(ctx, plug.Entrypoint, req, timeout, jobLogger)
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			errMsg := fmt.Sprintf("plugin execution timed out after %v", timeout)
 			jobLogger.Warn(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusTimedOut, &errMsg, &stderr)
+			d.completeJob(ctx, job.ID, queue.StatusTimedOut, nil, &errMsg, &stderr)
 			return
 		}
 
 		// Handle other spawn errors
 		errMsg := fmt.Sprintf("plugin spawn failed: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, &stderr)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
 		return
 	}
 
@@ -181,7 +181,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp == nil {
 		errMsg := "plugin returned nil response"
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, &stderr)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
 		return
 	}
 
@@ -193,7 +193,8 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	// Handle response status
 	if resp.Status == "error" {
 		jobLogger.Warn("plugin returned error", "error", resp.Error)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, &resp.Error, &stderr)
+		errMsg := resp.Error
+		d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
 		// TODO: Handle retry logic based on resp.ShouldRetry() - not in MVP
 		return
 	}
@@ -204,14 +205,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to marshal state updates: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, &stderr)
+			d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 
 		if _, err := d.state.ShallowMerge(ctx, job.Plugin, updatesJSON); err != nil {
 			errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, &errMsg, &stderr)
+			d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 		jobLogger.Debug("applied state updates", "updates", resp.StateUpdates)
@@ -225,7 +226,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Mark job as succeeded
 	jobLogger.Info("job completed successfully")
-	d.completeJob(ctx, job.ID, queue.StatusSucceeded, nil, &stderr)
+	d.completeJob(ctx, job.ID, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -236,7 +237,7 @@ func (d *Dispatcher) spawnPlugin(
 	req *protocol.Request,
 	timeout time.Duration,
 	logger *slog.Logger,
-) (*protocol.Response, string, error) {
+) (*protocol.Response, json.RawMessage, string, error) {
 	// Create timer for timeout enforcement
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
@@ -247,7 +248,7 @@ func (d *Dispatcher) spawnPlugin(
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, "", fmt.Errorf("create stdin pipe: %w", err)
+		return nil, nil, "", fmt.Errorf("create stdin pipe: %w", err)
 	}
 
 	// Capture stdout and stderr
@@ -259,7 +260,7 @@ func (d *Dispatcher) spawnPlugin(
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("start process: %w", err)
+		return nil, nil, "", fmt.Errorf("start process: %w", err)
 	}
 
 	// Write request to stdin in a goroutine
@@ -310,13 +311,13 @@ func (d *Dispatcher) spawnPlugin(
 		}
 
 		stderrStr := truncateStderr(stderr.String())
-		return nil, stderrStr, context.DeadlineExceeded
+		return nil, nil, stderrStr, context.DeadlineExceeded
 
 	case err := <-waitErr:
 		// Process completed
 		if werr := <-writeErr; werr != nil {
 			stderrStr := truncateStderr(stderr.String())
-			return nil, stderrStr, werr
+			return nil, nil, stderrStr, werr
 		}
 
 		stderrStr := truncateStderr(stderr.String())
@@ -326,7 +327,7 @@ func (d *Dispatcher) spawnPlugin(
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				logger.Warn("plugin exited with non-zero status", "exit_code", exitErr.ExitCode())
 			} else {
-				return nil, stderrStr, fmt.Errorf("wait for process: %w", err)
+				return nil, nil, stderrStr, fmt.Errorf("wait for process: %w", err)
 			}
 		}
 
@@ -334,10 +335,10 @@ func (d *Dispatcher) spawnPlugin(
 		resp, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdout.Bytes()))
 		if err != nil {
 			logger.Error("failed to decode plugin response", "error", err, "stdout", string(rawBytes))
-			return nil, stderrStr, fmt.Errorf("decode response: %w", err)
+			return nil, json.RawMessage(rawBytes), stderrStr, fmt.Errorf("decode response: %w", err)
 		}
 
-		return resp, stderrStr, nil
+		return resp, json.RawMessage(rawBytes), stderrStr, nil
 	}
 }
 
@@ -374,8 +375,8 @@ func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string)
 }
 
 // completeJob marks a job as complete with the given status.
-func (d *Dispatcher) completeJob(ctx context.Context, jobID string, status queue.Status, lastError, stderr *string) {
-	if err := d.queue.Complete(ctx, jobID, status, lastError, stderr); err != nil {
+func (d *Dispatcher) completeJob(ctx context.Context, jobID string, status queue.Status, result json.RawMessage, lastError, stderr *string) {
+	if err := d.queue.CompleteWithResult(ctx, jobID, status, result, lastError, stderr); err != nil {
 		d.logger.Error("failed to complete job", "job_id", jobID, "error", err)
 	}
 }

@@ -676,7 +676,7 @@ Fields: `timestamp`, `level`, `component`, `plugin` (when relevant), `job_id` (w
 
 **Plugin stderr:** Captured. Always. Stored in `job_log` (capped at 64 KB). Logged at WARN to core log stream.
 
-**Plugin stdout:** Reserved exclusively for protocol response. Non-JSON on stdout is a protocol error — job fails, stderr + stdout captured for debugging.
+**Plugin stdout:** Reserved exclusively for protocol response. Stored verbatim on completion in `job_log.result` (JSON). Non-JSON on stdout is a protocol error — job fails, stderr + stdout captured for debugging.
 
 **Redaction:** Not in V1. Don't log secrets. Fix the plugin, don't bandage the core.
 
@@ -743,6 +743,7 @@ job_log (
   plugin          TEXT NOT NULL,
   command         TEXT NOT NULL,
   status          TEXT NOT NULL,
+  result          TEXT,                -- protocol response JSON
   attempt         INTEGER NOT NULL,
   submitted_by    TEXT NOT NULL,
   created_at      TEXT NOT NULL,
@@ -768,6 +769,12 @@ service:
   log_format: json
   dedupe_ttl: 24h              # deduplication window
   job_log_retention: 30d       # prune completed jobs older than this
+
+api:
+  enabled: false
+  listen: 127.0.0.1:8080
+  auth:
+    api_key: ${SENECHAL_API_KEY}
 
 state:
   path: ./data/state.db
