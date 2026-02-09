@@ -281,24 +281,8 @@ plugins:
     config:
       credentials_file: ${GOOGLE_CREDS_PATH}
 
-webhooks:
-  listen: 127.0.0.1:8081           # Address and port for the webhook listener.
-  endpoints:                       # List of webhook endpoints
-    - path: /hook/github           # URL path for this endpoint
-      plugin: github-handler       # Plugin to invoke with the 'handle' command
-      secret: ${GITHUB_WEBHOOK_SECRET} # Secret for HMAC-SHA256 verification
-      signature_header: X-Hub-Signature-256 # HTTP header containing the signature
-      max_body_size: 1MB           # Max request body size.
 
-routes:
-  # Define how events emitted by plugins are routed to other plugins
-  - from: withings                 # Source plugin emitting the event
-    event_type: new_health_data    # Type of event to match
-    to: health-analyzer            # Target plugin to receive the event (via 'handle' command)
 
-  - from: health-analyzer
-    event_type: alert
-    to: notify
 ```
 
 #### Environment Variable Interpolation
