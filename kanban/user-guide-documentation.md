@@ -304,3 +304,5 @@ Single comprehensive Markdown file at `docs/USER_GUIDE.md`
 - Ensure all MVP features are documented
 
 ## Narrative
+
+- 2026-02-09: PR #9 submitted. Review feedback: Guide is comprehensive (3689 words, 6 sections), well-structured, and covers MVP features effectively. However, configuration section includes unimplemented Sprint 3 features (webhooks, routes) that need to be removed. User instructed to focus on pre-Sprint 2 code (MVP only). Request revision to remove webhooks/routes config examples and keep only: service settings, state path, plugins_dir, and plugins.* configuration (schedule, config, timeouts, retry). All other sections (intro, getting started, core concepts, plugin development, troubleshooting) are excellent. (by @claude)
