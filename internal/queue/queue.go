@@ -262,7 +262,6 @@ WHERE completed_at < ?;
 	}
 	return nil
 }
-
 // Complete marks a job complete and writes a log row. This signature is kept
 // stable since other sprint work may call it directly.
 func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {
@@ -346,6 +345,7 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	return nil
 }
 
+// GetJobByID retrieves a job by its ID with result from job_log
 func (q *Queue) GetJobByID(ctx context.Context, jobID string) (*JobResult, error) {
 	if jobID == "" {
 		return nil, fmt.Errorf("jobID is empty")

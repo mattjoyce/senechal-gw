@@ -12,6 +12,13 @@ service:
 state:
   path: ./senechal.db          # SQLite database path (PID lock derived from this)
 
+# API Server: HTTP endpoints for external triggers (Sprint 2)
+api:
+  enabled: true                # Enable/disable API server
+  listen: "localhost:8080"     # Listen address
+  auth:
+    api_key: ${API_KEY}        # API key from environment (required if enabled)
+
 plugins_dir: ./plugins         # Plugin directory
 
 plugins:

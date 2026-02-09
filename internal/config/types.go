@@ -6,21 +6,11 @@ import "time"
 type Config struct {
 	Service    ServiceConfig         `yaml:"service"`
 	State      StateConfig           `yaml:"state"`
+	API        APIConfig             `yaml:"api,omitempty"`
 	PluginsDir string                `yaml:"plugins_dir"`
 	Plugins    map[string]PluginConf `yaml:"plugins"`
-	API        APIConfig             `yaml:"api,omitempty"`
 	Routes     []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks   *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
-}
-
-type APIConfig struct {
-	Enabled bool          `yaml:"enabled"`
-	Listen  string        `yaml:"listen"`
-	Auth    APIAuthConfig `yaml:"auth"`
-}
-
-type APIAuthConfig struct {
-	APIKey string `yaml:"api_key"`
 }
 
 // ServiceConfig defines core service settings.
@@ -36,6 +26,18 @@ type ServiceConfig struct {
 // StateConfig defines state storage settings.
 type StateConfig struct {
 	Path string `yaml:"path"`
+}
+
+// APIConfig defines HTTP API server settings.
+type APIConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	Listen  string        `yaml:"listen"`
+	Auth    APIAuthConfig `yaml:"auth"`
+}
+
+// APIAuthConfig defines API authentication settings.
+type APIAuthConfig struct {
+	APIKey string `yaml:"api_key"`
 }
 
 // PluginConf defines configuration for a single plugin.
@@ -118,12 +120,15 @@ func Defaults() *Config {
 		State: StateConfig{
 			Path: "./data/state.db",
 		},
-		PluginsDir: "./plugins",
-		Plugins:    make(map[string]PluginConf),
 		API: APIConfig{
 			Enabled: false,
 			Listen:  "127.0.0.1:8080",
+			Auth: APIAuthConfig{
+				APIKey: "",
+			},
 		},
+		PluginsDir: "./plugins",
+		Plugins:    make(map[string]PluginConf),
 	}
 }
 

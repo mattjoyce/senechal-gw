@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/mattjoyce/senechal-gw/internal/api"
 	"github.com/mattjoyce/senechal-gw/internal/config"
 	"github.com/mattjoyce/senechal-gw/internal/dispatch"
 	"github.com/mattjoyce/senechal-gw/internal/lock"
@@ -140,7 +141,7 @@ func runStart(args []string) int {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start scheduler and dispatcher in goroutines
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 
 	go func() {
 		if err := sched.Start(ctx); err != nil && err != context.Canceled {
@@ -153,6 +154,26 @@ func runStart(args []string) int {
 			errCh <- fmt.Errorf("dispatcher: %w", err)
 		}
 	}()
+
+	// Start API server if enabled
+	if cfg.API.Enabled {
+		if cfg.API.Auth.APIKey == "" {
+			logger.Warn("API server enabled but api_key is empty - this is insecure!")
+		}
+		apiConfig := api.Config{
+			Listen: cfg.API.Listen,
+			APIKey: cfg.API.Auth.APIKey,
+		}
+		apiServer := api.New(apiConfig, q, registry, log.WithComponent("api"))
+		go func() {
+			if err := apiServer.Start(ctx); err != nil && err != context.Canceled {
+				errCh <- fmt.Errorf("api: %w", err)
+			}
+		}()
+		logger.Info("API server enabled", "listen", cfg.API.Listen)
+	} else {
+		logger.Info("API server disabled")
+	}
 
 	logger.Info("senechal-gw running (press Ctrl+C to stop)")
 

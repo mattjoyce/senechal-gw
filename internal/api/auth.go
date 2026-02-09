@@ -4,7 +4,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
-	"strings"
 )
 
 // ValidateAPIKey returns true if providedKey matches configKey.
@@ -21,13 +20,37 @@ func ValidateAPIKey(providedKey string, configKey string) bool {
 
 // ExtractAPIKey extracts an API key from an Authorization: Bearer <key> header.
 func ExtractAPIKey(r *http.Request) (string, error) {
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return "", errors.New("missing or invalid Authorization header")
+	auth := r.Header.Get("Authorization")
+	if auth == "" {
+		return "", errors.New("missing Authorization header")
 	}
-	key := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+
+	const prefix = "Bearer "
+	if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
+		return "", errors.New("invalid Authorization header format")
+	}
+
+	key := auth[len(prefix):]
 	if key == "" {
-		return "", errors.New("missing or invalid Authorization header")
+		return "", errors.New("missing API key")
 	}
 	return key, nil
+}
+
+// authMiddleware validates the API key from Authorization header using Codex's functions
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiKey, err := ExtractAPIKey(r)
+		if err != nil {
+			s.writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+
+		if !ValidateAPIKey(apiKey, s.config.APIKey) {
+			s.writeError(w, http.StatusUnauthorized, "invalid API key")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
