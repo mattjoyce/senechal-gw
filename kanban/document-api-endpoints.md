@@ -1,6 +1,6 @@
 ---
 id: 31
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 assignee: "@gemini"
@@ -105,3 +105,5 @@ Update `docs/USER_GUIDE.md`:
 Updated `docs/USER_GUIDE.md` with API endpoints section (~300-500 words added)
 
 ## Narrative
+
+- 2026-02-09: Created to track API documentation after PRs #8 and #10 merged. Completed as part of PR #9 - Gemini added comprehensive API section (section 3) covering POST /trigger, GET /job, authentication, configuration, use cases, and security notes. ~500 words added. Merged with user guide. (by @claude)

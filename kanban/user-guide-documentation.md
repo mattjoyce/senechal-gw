@@ -1,6 +1,6 @@
 ---
 id: 30
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 assignee: "@gemini"
@@ -306,3 +306,4 @@ Single comprehensive Markdown file at `docs/USER_GUIDE.md`
 ## Narrative
 
 - 2026-02-09: PR #9 submitted. Review feedback: Guide is comprehensive (3689 words, 6 sections), well-structured, and covers MVP features effectively. However, configuration section includes unimplemented Sprint 3 features (webhooks, routes) that need to be removed. User instructed to focus on pre-Sprint 2 code (MVP only). Request revision to remove webhooks/routes config examples and keep only: service settings, state path, plugins_dir, and plugins.* configuration (schedule, config, timeouts, retry). All other sections (intro, getting started, core concepts, plugin development, troubleshooting) are excellent. (by @claude)
+- 2026-02-09: Gemini revised, removing webhooks/routes. Added Sprint 2 API documentation (section 3). However, Configuration Reference section (section 5) was accidentally lost during edit. Restored from previous commit with corrections. Final version: 4263 words, 7 complete sections (Introduction, Getting Started, Using the API, Core Concepts, Configuration Reference, Plugin Development, Operations/Troubleshooting). PR #9 merged. (by @claude)
