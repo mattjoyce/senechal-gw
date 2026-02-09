@@ -1,8 +1,8 @@
 ---
 id: 16
-status: todo
+status: done
 priority: High
-blocked_by: [9, 12, 13, 14, 17, 19]
+blocked_by: []
 tags: [sprint-1, mvp, dispatch]
 ---
 
@@ -20,4 +20,4 @@ Pull jobs from the queue and execute them via a spawn-per-command subprocess usi
 - Ignores `events` in MVP (routing out of scope).
 
 ## Narrative
-
+- 2026-02-08: Implemented dispatcher in `internal/dispatch/dispatcher.go` with `ExecuteJob()` handling plugin subprocess lifecycle: spawns plugin entrypoint, encodes protocol v1 request to stdin, reads response from stdout with context-based timeout, enforces SIGTERM → 5s grace → SIGKILL sequence, captures stderr (capped at 4KB), applies state updates via shallow merge, and records job completion with logs. Supports per-command timeout overrides from config. Comprehensive tests cover success, error, timeout, and protocol error paths using test helper scripts. Merged via PR #4. (by @claude)

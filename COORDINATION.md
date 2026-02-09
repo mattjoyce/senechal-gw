@@ -131,46 +131,56 @@ main
 - ✅ ID 19: Structured JSON Logging (logger utility)
 - Deliverable: Structured JSON logging available to all components
 
-### Phase 2: Integration (In Progress, ~3-4 hours)
+### Phase 2: Integration ✅ COMPLETE
 
 **Agent 3 (Gemini) - Scheduler & Orchestration**
-- Branch: `gemini/scheduler`
-- 🔲 ID 15: Scheduler Tick Loop + Fuzzy Intervals
+- Branch: `gemini/scheduler` ✅ Merged (PR #6)
+- ✅ ID 15: Scheduler Tick Loop + Fuzzy Intervals
   - Uses queue from Agent 2
   - Uses config from Agent 1
   - Enqueues poll jobs on schedule with jitter
-- 🔲 ID 25: Crash Recovery Implementation
+- ✅ ID 25: Crash Recovery Implementation
   - Handles orphaned `running` jobs on startup
   - Re-queues if under max_attempts per decision from Phase 0
-- Deliverable: Scheduler running, jobs enqueued on schedule
+- Deliverable: Scheduler running, jobs enqueued on schedule ✅
 
 **Agent 1 (Claude) - Dispatch Loop**
-- Branch: `claude/dispatch`
-- 🔲 ID 16: Dispatch Loop
+- Branch: `claude/dispatch` ✅ Merged (PR #4)
+- ✅ ID 16: Dispatch Loop
   - Dequeues jobs from Agent 2's queue
   - Spawns plugin subprocess (discovered via Agent 1's plugin registry)
   - Protocol v1 I/O over stdin/stdout (using Agent 1's codec)
   - Timeout enforcement (SIGTERM → SIGKILL)
   - Updates job status and plugin state via Agent 2's state store
-- Deliverable: Can execute plugins end-to-end
+- Deliverable: Can execute plugins end-to-end ✅
 
 **Agent 2 (Codex) - Integration & Validation**
-- Branch: `codex/integration`
-- 🔲 ID 20: Echo Plugin + E2E Runbook
+- Branch: `codex/integration` ✅ Merged (PR #5)
+- ✅ ID 20: Echo Plugin + E2E Runbook
   - Validate full loop: config → scheduler → queue → dispatch → plugin → state
   - Document happy path and error scenarios
-- Assists Agent 1 with dispatch integration
+- E2E tests passing, full integration validated ✅
 
 **All Agents - Sprint Epic**
-- 🔲 ID 8: Sprint 1 MVP Core Loop
-  - Integration testing
-  - Final validation that all components work together
+- 🔄 ID 8: Sprint 1 MVP Core Loop (Status: DOING)
+  - All component integration complete
+  - Full test suite passing (config, dispatch, e2e, queue, scheduler, state, storage)
+  - **Remaining:** Wire components in `cmd/senechal-gw/main.go` to create runnable service
   - Deliverable: `senechal-gw start` runs MVP loop successfully
 
-**Dependencies:**
-- Agent 3's scheduler depends on Agent 2's queue (already merged ✅)
-- Agent 1's dispatch depends on Agent 3's scheduler (enqueue jobs first)
-- Agent 2's E2E testing depends on Agent 1's dispatch (need execution working)
+### Phase 3: Final Integration (Current, ~1-2 hours)
+
+**Agent 1 (Claude) - Main.go Wiring**
+- Branch: `claude/main-wiring`
+- 🔲 ID 26: Wire MVP Components in main.go
+  - Complete runStart() function in `cmd/senechal-gw/main.go`
+  - Load config, acquire PID lock, open database
+  - Initialize queue, state store, plugin registry
+  - Create and start scheduler (with crash recovery)
+  - Create and start dispatcher (blocking loop)
+  - Signal handling (SIGINT/SIGTERM) and graceful shutdown
+  - Deferred cleanup in correct order (LIFO)
+- Deliverable: `senechal-gw start --config config.yaml` runs complete MVP loop
 
 ## Merge Order
 
@@ -332,3 +342,43 @@ Before each agent starts:
 - [ ] Read CLAUDE.md for architecture overview
 - [ ] Check dependency graph (this doc) for your assigned tasks
 - [ ] Create feature branch from latest `main`
+
+## Future Phases (Post-Sprint 4)
+
+### Phase 5+: Evolution Decision Point
+
+After completing Sprint 2-4 (routing, webhooks, reliability), we'll evaluate whether to:
+- **Option A:** Mature as automation tool (focus on stability, plugins, real usage)
+- **Option B:** Evolve toward RFC-003 "Agentic Loop Runtime" vision
+- **Option C:** Hybrid approach (add workflows but not full agent API)
+
+**Key insight:** The scheduler tick IS already an agentic loop (observe → decide → act → record). RFC-003 proposes generalizing this pattern for workflow chains and agent interaction.
+
+**Decision deferred until:** Sprint 4 complete, real usage patterns observed, workflow complexity vs routing simplicity assessed.
+
+**Reference:**
+- RFC-003: `/Volumes/Projects/senechal-gw/RFC-003-Agentic-Loop-Runtime.md`
+- Evaluation card: `kanban/rfc-003-evaluation.md` (ID #27)
+
+### Potential Sprint 5-7 (If RFC-003 Path Chosen)
+
+**Sprint 5: Workflow Engine**
+- YAML workflow definitions
+- Multi-step skill chains
+- Variable passing between steps
+- Conditional logic (if/else)
+
+**Sprint 6: Run Model & Ledger**
+- First-class "run" abstraction (vs job)
+- Execution context and step tracking
+- Append-only ledger for replayability
+- Run history queries
+
+**Sprint 7: Agent API**
+- HTTP API: `POST /run/{workflow}`
+- Agent authentication
+- Capability registry endpoint
+- Programmatic workflow invocation
+
+**Note:** Sprint 2-4 are prerequisites for RFC-003 regardless. No commitment needed until after Sprint 4.
+
