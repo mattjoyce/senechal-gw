@@ -346,7 +346,66 @@ Upon startup, the gateway performs the following steps:
 
 This mechanism guarantees that no job is silently dropped due to a crash, upholding the "at-least-once" delivery guarantee. Plugins are expected to be idempotent or use their state to handle potential re-executions.
 
-## 5. Plugin Development Guide
+## 5. Configuration Reference
+The Senechal Gateway's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings and define plugin behavior.
+
+### Example Configuration
+Below is a comprehensive example `config.yaml` with explanations for each major section and field.
+
+```yaml
+# Senechal Gateway Configuration
+# See SPEC.md for full reference
+
+service:
+  name: senechal-gw                # Name of the service (default: "senechal-gw")
+  tick_interval: 60s               # How often the scheduler checks for due plugins (e.g., 30s, 1m). Default: 60s
+  log_level: info                  # Minimum logging level (debug, info, warn, error). Default: info
+  log_format: json                 # Output format for logs (json). Default: json
+  dedupe_ttl: 24h                  # Time window for job deduplication (e.g., 1h, 7d). Default: 24h
+  job_log_retention: 30d           # How long to retain completed job logs (e.g., 168h, 30d). Default: 30d
+
+state:
+  path: ./data/state.db            # Path to the SQLite database file for state persistence. Default: ./senechal.db
+
+plugins_dir: ./plugins             # Directory where plugin subdirectories are located. Default: ./plugins
+
+plugins:
+  # Configuration for individual plugins
+  withings:
+    enabled: true                  # Whether this plugin is active. Default: true
+    schedule:                      # Scheduling parameters for 'poll' command
+      every: 6h                    # How often to run (e.g., 5m, hourly, daily, 2h).
+      jitter: 30m                  # Random delay added to 'every' to prevent thundering herd.
+      preferred_window:            # Optional: constrain execution to a time window
+        start: "06:00"
+        end: "22:00"
+    config:                        # Plugin-specific static configuration (passed to plugin)
+      client_id: ${WITHINGS_CLIENT_ID}  # Environment variable interpolation supported
+      client_secret: ${WITHINGS_CLIENT_SECRET}
+    retry:                         # Retry policy for failed jobs
+      max_attempts: 4              # Total attempts (1 original + 3 retries). Default: 4
+      backoff_base: 30s            # Base duration for exponential backoff. Default: 30s
+    timeouts:                      # Custom timeouts for plugin commands
+      poll: 60s                    # Default poll timeout: 60s
+      handle: 120s                 # Default handle timeout: 120s
+    circuit_breaker:               # Prevents hammering failing plugins
+      threshold: 3                 # Consecutive failures before opening the circuit. Default: 3
+      reset_after: 30m             # Time after which to attempt closing the circuit. Default: 30m
+    max_outstanding_polls: 1       # Max concurrent 'poll' jobs for this plugin. Default: 1
+
+  google-calendar:                 # Another example plugin configuration
+    enabled: true
+    schedule:
+      every: 15m
+      jitter: 3m
+    config:
+      credentials_file: ${GOOGLE_CREDS_PATH}
+```
+
+#### Environment Variable Interpolation
+The Senechal Gateway supports environment variable interpolation within the `config.yaml` using the `${VAR_NAME}` syntax (e.g., `${API_KEY}`, `${DATABASE_PASSWORD}`). This is particularly useful for injecting sensitive information like API keys and secrets without hardcoding them directly into the configuration file. When the gateway loads the configuration, it will replace these placeholders with the values from the environment.
+
+## 6. Plugin Development Guide
 This section guides developers on how to create their own plugins for the Senechal Gateway.
 
 ### Bash Plugins
