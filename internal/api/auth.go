@@ -31,8 +31,19 @@ func ExtractAPIKey(r *http.Request) (string, error) {
 	}
 
 	key := auth[len(prefix):]
-	if key == "" {
-		return "", errors.New("missing API key")
+	// Trim whitespace and check if empty
+	if len(key) == 0 || len(key) > 0 && key[0] == ' ' {
+		// Check if it's only whitespace
+		trimmed := ""
+		for _, c := range key {
+			if c != ' ' && c != '\t' {
+				trimmed += string(c)
+			}
+		}
+		if trimmed == "" {
+			return "", errors.New("missing API key")
+		}
+		return trimmed, nil
 	}
 	return key, nil
 }
