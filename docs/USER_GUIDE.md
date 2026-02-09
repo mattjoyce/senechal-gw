@@ -5,17 +5,24 @@
 2.  [Getting Started](#getting-started)
     *   [Installation](#installation)
     *   [Basic Usage](#basic-usage)
-3.  [Core Concepts](#core-concepts)
+3.  [Using the API](#using-the-api)
+    *   [API Endpoints Introduction](#api-endpoints-introduction)
+    *   [API Configuration](#api-configuration)
+    *   [POST /trigger/{plugin}/{command}](#post-triggerplugincommand)
+    *   [GET /job/{job_id}](#get-jobjob_id)
+    *   [API Use Cases](#api-use-cases)
+    *   [API Security Notes](#api-security-notes)
+4.  [Core Concepts](#core-concepts)
     *   [Scheduler](#scheduler)
     *   [Plugins](#plugins)
     *   [State Management](#state-management)
     *   [Crash Recovery](#crash-recovery)
-4.  [Configuration Reference](#configuration-reference)
+5.  [Configuration Reference](#configuration-reference)
     *   [Example Configuration](#example-configuration)
-5.  [Plugin Development Guide](#plugin-development-guide)
+6.  [Plugin Development Guide](#plugin-development-guide)
     *   [Bash Plugins](#bash-plugins)
     *   [Python Plugins](#python-plugins)
-6.  [Operations and Troubleshooting](#operations-and-troubleshooting)
+7.  [Operations and Troubleshooting](#operations-and-troubleshooting)
 
 ## 1. Introduction
 The Senechal Gateway is a lightweight, YAML-configured, and modular integration gateway designed for personal automation. It orchestrates various tasks by utilizing polyglot plugins executed via a subprocess protocol. The core idea is to provide a simple, yet extensible platform for handling event-driven workflows, ETL processes, and various integrations without the overhead of larger, more complex integration servers.
@@ -92,8 +99,121 @@ After building the `senechal-gw` executable, you can start the gateway.
     ```
     Press `Ctrl+C` to stop the gateway gracefully.
 
+## 3. Using the API
+The Senechal Gateway provides a simple HTTP API to programmatically trigger plugins and retrieve job results. This is particularly useful for external systems, such as LLM agents or custom scripts, that need to interact with the gateway on-demand rather than relying solely on scheduled tasks.
 
-## 3. Core Concepts
+### API Configuration
+To enable and configure the API, add an `api` section to your `config.yaml`:
+
+```yaml
+# config.yaml excerpt
+api:
+  enabled: true                    # Set to true to enable the HTTP API
+  listen: "localhost:8080"         # Address and port for the API listener
+  auth:
+    api_key: ${API_KEY}            # Bearer token for authentication (use environment variable for secret)
+```
+
+The `api.auth.api_key` should always be provided via an environment variable (e.g., `${API_KEY}`) for security best practices.
+
+### POST /trigger/{plugin}/{command}
+This endpoint allows you to enqueue a job for a specific plugin and command. The API call returns immediately with a job ID, and the plugin execution happens asynchronously.
+
+-   **Purpose:** Enqueue jobs on-demand.
+-   **Authentication:** Requires a Bearer token in the `Authorization` header, matching the configured `api.auth.api_key`.
+-   **URL Parameters:**
+    *   `{plugin}`: The name of the plugin to execute (e.g., `echo`, `my-custom-plugin`).
+    *   `{command}`: The command to execute on the plugin (e.g., `poll`, `handle`).
+-   **Request Body:** An optional JSON payload that will be passed to the plugin as part of its `config` in the request envelope.
+-   **Response (202 Accepted):**
+    ```json
+    {
+      "job_id": "uuid-v4-string",
+      "status": "queued",
+      "plugin": "plugin_name",
+      "command": "command_name"
+    }
+    ```
+-   **Error Responses:**
+    *   `401 Unauthorized`: Missing or invalid API key.
+    *   `400 Bad Request`: Plugin not found, command not supported, or invalid request body.
+    *   `500 Internal Server Error`: Failed to enqueue job.
+
+#### Example: Triggering the `echo` plugin
+```bash
+API_KEY="your_api_key_here" # Replace with your actual API key
+curl -X POST http://localhost:8080/trigger/echo/poll \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Triggered via API"}'
+```
+
+### GET /job/{job_id}
+This endpoint allows you to retrieve the current status and, upon completion, the results of a previously triggered job.
+
+-   **Purpose:** Check job status and retrieve execution results.
+-   **Authentication:** Requires a Bearer token in the `Authorization` header.
+-   **URL Parameters:**
+    *   `{job_id}`: The UUID of the job, as returned by the `POST /trigger` endpoint.
+-   **Response (200 OK):**
+    *   **Queued Job:**
+        ```json
+        {
+          "job_id": "uuid-v4-string",
+          "status": "queued",
+          "plugin": "plugin_name",
+          "command": "command_name",
+          "created_at": "ISO8601-timestamp"
+        }
+        ```
+    *   **Running Job:**
+        ```json
+        {
+          "job_id": "uuid-v4-string",
+          "status": "running",
+          "plugin": "plugin_name",
+          "command": "command_name",
+          "started_at": "ISO8601-timestamp"
+        }
+        ```
+    *   **Completed Job:**
+        ```json
+        {
+          "job_id": "uuid-v4-string",
+          "status": "completed",
+          "plugin": "plugin_name",
+          "command": "command_name",
+          "result": { /* Plugin's JSON response from stdout */ },
+          "started_at": "ISO8601-timestamp",
+          "completed_at": "ISO8601-timestamp"
+        }
+        ```
+-   **Error Responses:**
+    *   `401 Unauthorized`: Missing or invalid API key.
+    *   `404 Not Found`: Job ID not found.
+
+#### Example: Polling for job completion
+```bash
+API_KEY="your_api_key_here" # Replace with your actual API key
+JOB_ID="your_job_id_from_trigger_response" # Replace with actual job ID
+
+# Poll for job status
+curl http://localhost:8080/job/$JOB_ID \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+### API Use Cases
+-   **LLM Tool Calling:** Integrate Senechal Gateway as a tool for Large Language Models (LLMs), allowing them to trigger actions (e.g., "check my calendar," "sync health data") programmatically.
+-   **External Automation Scripts:** Use custom scripts, cron jobs, or other automation tools to interact with Senechal Gateway.
+-   **Manual Testing:** Developers can quickly trigger plugins via `curl` for testing and debugging without waiting for scheduler intervals.
+-   **Webhook-style Triggers:** Other services can send requests to the `/trigger` endpoint to initiate workflows in Senechal Gateway.
+
+### API Security Notes
+-   **API Key Required:** All API requests *must* include a valid API key for authentication.
+-   **Environment Variables:** Always store your API key in an environment variable (e.g., `API_KEY`) and use `${API_KEY}` in your `config.yaml` to prevent sensitive information from being committed to source control.
+-   **Localhost Only by Default:** The `api.listen` address defaults to `localhost:8080`. For external access, it is highly recommended to place the Senechal Gateway behind a reverse proxy (e.g., Nginx, Caddy) that handles TLS termination, rate limiting, and additional security measures.
+
+## 4. Core Concepts
 
 ### Scheduler
 The Senechal Gateway includes a built-in scheduler responsible for orchestrating the periodic execution of configured plugins. It operates on a "tick loop" that runs at a configurable interval (defaulting to `service.tick_interval`, typically 60 seconds).
@@ -102,7 +222,7 @@ For each enabled plugin with a defined `schedule`, the scheduler calculates its 
 
 When a plugin's scheduled time arrives, the scheduler enqueues a `poll` job for that plugin into the system's work queue. This `poll` job initiates the plugin's execution flow. The scheduler also ensures "at-least-once" job execution semantics by utilizing deduplication keys.
 
-The `schedule.every` field supports various named intervals such as `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, and `monthly`.
+The `schedule.every` field supports various named intervals suchs as `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, and `monthly`.
 
 In addition to scheduling, the tick loop is also responsible for pruning completed job logs based on the configured `job_log_retention` policy.
 
@@ -225,69 +345,6 @@ Upon startup, the gateway performs the following steps:
 5.  **Resume Operations:** After processing all orphaned jobs, the gateway resumes normal dispatching and scheduling operations.
 
 This mechanism guarantees that no job is silently dropped due to a crash, upholding the "at-least-once" delivery guarantee. Plugins are expected to be idempotent or use their state to handle potential re-executions.
-
-## 4. Configuration Reference
-The Senechal Gateway's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings, define plugin behavior, and set up advanced features like webhooks and routing.
-
-### Example Configuration
-Below is a comprehensive example `config.yaml` with explanations for each major section and field.
-
-```yaml
-# Senechal Gateway Configuration
-# See SPEC.md for full reference
-
-service:
-  name: senechal-gw                # Name of the service (default: "senechal-gw")
-  tick_interval: 60s               # How often the scheduler checks for due plugins (e.g., 30s, 1m). Default: 60s
-  log_level: info                  # Minimum logging level (debug, info, warn, error). Default: info
-  log_format: json                 # Output format for logs (json). Default: json
-  dedupe_ttl: 24h                  # Time window for job deduplication (e.g., 1h, 7d). Default: 24h
-  job_log_retention: 30d           # How long to retain completed job logs (e.g., 168h, 30d). Default: 30d
-
-state:
-  path: ./data/state.db            # Path to the SQLite database file for state persistence. Default: ./senechal.db
-
-plugins_dir: ./plugins             # Directory where plugin subdirectories are located. Default: ./plugins
-
-plugins:
-  # Configuration for individual plugins
-  withings:
-    enabled: true                  # Whether this plugin is active. Default: true
-    schedule:                      # Scheduling parameters for 'poll' command
-      every: 6h                    # How often to run (e.g., 5m, hourly, daily, 2h).
-      jitter: 30m                  # Random delay added to 'every' to prevent thundering herd.
-      preferred_window:            # Optional: constrain execution to a time window
-        start: "06:00"
-        end: "22:00"
-    config:                        # Plugin-specific static configuration (passed to plugin)
-      client_id: ${WITHINGS_CLIENT_ID}  # Environment variable interpolation supported
-      client_secret: ${WITHINGS_CLIENT_SECRET}
-    retry:                         # Retry policy for failed jobs
-      max_attempts: 4              # Total attempts (1 original + 3 retries). Default: 4
-      backoff_base: 30s            # Base duration for exponential backoff. Default: 30s
-    timeouts:                      # Custom timeouts for plugin commands
-      poll: 60s                    # Default poll timeout: 60s
-      handle: 120s                 # Default handle timeout: 120s
-    circuit_breaker:               # Prevents hammering failing plugins
-      threshold: 3                 # Consecutive failures before opening the circuit. Default: 3
-      reset_after: 30m             # Time after which to attempt closing the circuit. Default: 30m
-    max_outstanding_polls: 1       # Max concurrent 'poll' jobs for this plugin. Default: 1
-
-  google-calendar:                 # Another example plugin configuration
-    enabled: true
-    schedule:
-      every: 15m
-      jitter: 3m
-    config:
-      credentials_file: ${GOOGLE_CREDS_PATH}
-
-
-
-```
-
-#### Environment Variable Interpolation
-The Senechal Gateway supports environment variable interpolation within the `config.yaml` using the `${VAR_NAME}` syntax (e.g., `${GITHUB_WEBHOOK_SECRET}`). This is particularly useful for injecting sensitive information like API keys and secrets without hardcoding them directly into the configuration file. When the gateway loads the configuration, it will replace these placeholders with the values from the environment.
-
 
 ## 5. Plugin Development Guide
 This section guides developers on how to create their own plugins for the Senechal Gateway.
@@ -474,7 +531,7 @@ When the Senechal Gateway executes the `python-greet` plugin, `run.py` will rece
 -   Use `json.dump(response, sys.stdout)` to write the response. It's good practice to add `sys.stdout.write("\n")` to ensure the output is properly terminated.
 -   If your Python plugin requires external libraries, you should manage them within the plugin's directory (e.g., using a `venv` and installing dependencies locally) or ensure they are available in the execution environment. The Senechal Gateway itself does not manage plugin-specific Python environments.
 
-## 6. Operations and Troubleshooting
+## 7. Operations and Troubleshooting
 This section covers how to operate the Senechal Gateway in production or development environments, including monitoring, understanding logs, and common troubleshooting scenarios.
 
 ### Logging
