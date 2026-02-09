@@ -382,3 +382,71 @@ After completing Sprint 2-4 (routing, webhooks, reliability), we'll evaluate whe
 
 **Note:** Sprint 2-4 are prerequisites for RFC-003 regardless. No commitment needed until after Sprint 4.
 
+
+## Sprint 2 Work Assignment (3 Agents in Parallel)
+
+### Agent 1 (Claude) - HTTP Server + API Endpoints
+**Branch:** `claude/api-server`
+**Card:** #28
+
+**Scope:**
+- HTTP server with chi router
+- POST /trigger/{plugin}/{command} endpoint
+- GET /job/{job_id} endpoint
+- Auth middleware integration
+- Main.go wiring (start API server alongside scheduler/dispatcher)
+- Integration and E2E tests
+
+**Dependencies:**
+- Queue interface (exists): Enqueue()
+- Plugin registry (exists): Get(name)
+- Agent 2 provides: GetJobByID(), ValidateAPIKey()
+- Can develop in parallel using mocks
+
+**Lines:** ~350 (server + endpoints + tests)
+
+### Agent 2 (Codex) - Job Storage + Auth
+**Branch:** `codex/job-storage-auth`
+**Card:** #29
+
+**Scope:**
+- Enhance job_log table (add result column)
+- Store plugin response payload on job completion
+- Implement GetJobByID() method
+- API key validation functions
+- Update dispatcher to pass results to Complete()
+- Unit tests
+
+**Dependencies:**
+- None (foundation work)
+
+**Lines:** ~250 (storage + auth + tests)
+
+**Merge first:** Agent 1 depends on this interface
+
+### Agent 3 (Gemini) - User Guide
+**Branch:** `gemini/user-guide`
+**Card:** #30
+
+**Scope:**
+- Comprehensive user guide at `docs/USER_GUIDE.md`
+- 2000-3000 words, 8 sections
+- Setup, configuration, usage, plugin development
+- Operations, troubleshooting, advanced topics
+
+**Dependencies:**
+- None (documentation only)
+
+**Independent:** Can merge anytime, no code conflicts
+
+## Sprint 2 Timeline
+
+**Estimated duration:** 1-2 days per agent (parallel execution)
+
+**Merge order:**
+1. Codex (foundation)
+2. Claude (uses Codex's interface)
+3. Gemini (documentation, anytime)
+
+**Deliverable:** LLM can curl to trigger plugins and receive results
+

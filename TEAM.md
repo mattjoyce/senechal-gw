@@ -81,22 +81,74 @@ Based on Phase 1 & 2 execution:
 - **Agent 1 (Claude):** Complex multi-component work, strong architecture understanding
 - **Agent 2 (Codex):** Solid implementation, good with focused tasks and testing
 - **Agent 3 (Gemini):** Produces high-quality code, best with well-defined single-component tasks
-## Next Steps
 
-### Immediate: Merge Phase 3 PR
-- Review PR on `claude/main-cli` branch
-- Merge to main
-- Tag as v0.1.0-mvp
+---
 
-### Sprint 2-4: Core Features (Per SPEC.md)
-- Sprint 2: Event Routing (plugin chaining)
-- Sprint 3: Webhooks + /healthz
-- Sprint 4: Reliability Controls (circuit breaker, retry, deduplication)
+## 🔄 Sprint 2: API Triggers (Current)
 
-### Future: RFC-003 Evaluation (After Sprint 4)
-Card #27 created for post-Sprint 4 reflection:
-- Assess whether to evolve toward "Agentic Loop Runtime" vision
-- Or mature as personal automation tool
-- Decision deferred until we have real usage data
+**Goal:** Enable LLM to curl-trigger plugins and retrieve results
+
+### Agent 1 (Claude): HTTP Server + API Endpoints
+- **Branch:** `claude/api-server`
+- **Card:** #28 - HTTP Server + API Endpoints
+- **Deliverable:** HTTP server with POST /trigger and GET /job endpoints
+- **Work:**
+  - Chi router with graceful shutdown
+  - POST /trigger/{plugin}/{command} - enqueue job, return job_id
+  - GET /job/{job_id} - return status and results
+  - Auth middleware integration
+  - Wire to main.go alongside scheduler/dispatcher
+  - Integration and E2E tests
+- **Dependencies:** Uses interface from Agent 2 (can develop with mocks in parallel)
+
+### Agent 2 (Codex): Job Storage + Auth
+- **Branch:** `codex/job-storage-auth`
+- **Card:** #29 - Job Storage Enhancement + Auth Middleware
+- **Deliverable:** Enhanced job storage with results + API key validation
+- **Work:**
+  - Add result column to job_log table
+  - Store plugin response payload on completion
+  - Implement GetJobByID() for result retrieval
+  - API key validation functions
+  - Update dispatcher to pass results to Complete()
+  - Unit tests for storage and auth
+- **Merge first:** Agent 1 depends on this interface
+
+### Agent 3 (Gemini): User Guide Documentation
+- **Branch:** `gemini/user-guide`
+- **Card:** #30 - User Guide Documentation
+- **Deliverable:** Comprehensive user guide at `docs/USER_GUIDE.md`
+- **Work:**
+  - Document MVP features (scheduler, plugins, state, crash recovery)
+  - Step-by-step setup and usage instructions
+  - Configuration reference with examples
+  - Plugin development guide (Bash and Python examples)
+  - Operations and troubleshooting sections
+  - 2000-3000 words, well-structured Markdown
+- **Independent:** No code dependencies, can merge anytime
+
+### Merge Order
+1. **Agent 2** (codex/job-storage-auth) - Foundation for Agent 1
+2. **Agent 1** (claude/api-server) - Uses Agent 2's interface
+3. **Agent 3** (gemini/user-guide) - Documentation, no conflicts
+
+---
+
+## Future Sprints
+
+### Sprint 3: Webhooks + Event Routing
+- External webhook triggers (GitHub, Slack)
+- Internal plugin→plugin event routing
+- HMAC validation, routing table
+
+### Sprint 4: Reliability Controls
+- Circuit breaker (auto-pause failing plugins)
+- Retry with exponential backoff
+- Deduplication enforcement
+- /healthz endpoint
+
+### Post-Sprint 4: RFC-003 Evaluation
+Card #27 - Assess evolution toward "Agentic Loop Runtime" or mature as automation tool.
+Decision deferred until real usage data available.
 
 See `kanban/rfc-003-evaluation.md` and `RFC-003-Agentic-Loop-Runtime.md` for details.
