@@ -37,7 +37,16 @@ type APIConfig struct {
 
 // APIAuthConfig defines API authentication settings.
 type APIAuthConfig struct {
-	APIKey string `yaml:"api_key"`
+	// APIKey is the legacy single bearer token (admin/full access).
+	// Prefer Tokens for scoped access.
+	APIKey string     `yaml:"api_key"`
+	Tokens []APIToken `yaml:"tokens,omitempty"`
+}
+
+// APIToken defines a bearer token and its scopes.
+type APIToken struct {
+	Token  string   `yaml:"token"`
+	Scopes []string `yaml:"scopes"`
 }
 
 // PluginConf defines configuration for a single plugin.

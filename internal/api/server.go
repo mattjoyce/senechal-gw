@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
 )
@@ -17,35 +18,44 @@ import (
 type JobQueuer interface {
 	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
 	GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error)
+	Depth(ctx context.Context) (int, error)
 }
 
 // PluginRegistry defines the interface for plugin operations
 type PluginRegistry interface {
 	Get(name string) (*plugin.Plugin, bool)
+	All() map[string]*plugin.Plugin
 }
 
 // Config holds API server configuration
 type Config struct {
 	Listen string
+	// APIKey is the legacy single bearer token (admin/full access).
 	APIKey string
+	// Tokens is an optional list of scoped bearer tokens.
+	Tokens []auth.TokenConfig
 }
 
 // Server represents the HTTP API server
 type Server struct {
-	config   Config
-	queue    JobQueuer
-	registry PluginRegistry
-	logger   *slog.Logger
-	server   *http.Server
+	config    Config
+	queue     JobQueuer
+	registry  PluginRegistry
+	logger    *slog.Logger
+	server    *http.Server
+	startedAt time.Time
+	events    *EventHub
 }
 
 // New creates a new API server instance
 func New(config Config, queue JobQueuer, registry PluginRegistry, logger *slog.Logger) *Server {
 	return &Server{
-		config:   config,
-		queue:    queue,
-		registry: registry,
-		logger:   logger,
+		config:    config,
+		queue:     queue,
+		registry:  registry,
+		logger:    logger,
+		startedAt: time.Now(),
+		events:    NewEventHub(256),
 	}
 }
 
@@ -96,12 +106,17 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
 
-	// Auth middleware for all routes
-	r.Use(s.authMiddleware)
-
 	// Routes
-	r.Post("/trigger/{plugin}/{command}", s.handleTrigger)
-	r.Get("/job/{jobID}", s.handleGetJob)
+	// Unauthenticated ops endpoint.
+	r.Get("/healthz", s.handleHealthz)
+
+	// Protected API.
+	r.Group(func(r chi.Router) {
+		r.Use(s.authMiddleware)
+		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/trigger/{plugin}/{command}", s.handleTrigger)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
+		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
+	})
 
 	return r
 }

@@ -21,6 +21,21 @@ func New(db *sql.DB) *Queue {
 	return &Queue{db: db}
 }
 
+// Depth returns the number of outstanding jobs (queued or running).
+// Used by /healthz for quick operational visibility.
+func (q *Queue) Depth(ctx context.Context) (int, error) {
+	row := q.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM job_queue
+WHERE status IN (?, ?);
+`, StatusQueued, StatusRunning)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("queue depth: %w", err)
+	}
+	return n, nil
+}
+
 func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error) {
 	if req.Plugin == "" {
 		return "", fmt.Errorf("plugin is empty")
@@ -262,6 +277,7 @@ WHERE completed_at < ?;
 	}
 	return nil
 }
+
 // Complete marks a job complete and writes a log row. This signature is kept
 // stable since other sprint work may call it directly.
 func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {

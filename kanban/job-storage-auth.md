@@ -1,6 +1,6 @@
 ---
 id: 29
-status: todo
+status: done
 priority: High
 blocked_by: []
 assignee: "@codex"
@@ -175,3 +175,4 @@ curl -X POST http://localhost:8080/trigger/echo/poll \
 
 - 2026-02-09: PR #8 submitted. Review complete: Excellent implementation. Added job_log.result column with safe migration for existing databases, implemented GetJobByID() with proper error handling (ErrJobNotFound), added auth helpers (ValidateAPIKey with constant-time comparison, ExtractAPIKey), updated Complete() signature to accept and store plugin response JSON, modified dispatcher to pass results through pipeline, comprehensive test coverage, all tests passing. Provides exact interface needed by Agent 1 (Claude) for API server. Ready to merge. (by @claude)
 - 2026-02-09: Codex refactored approach (commit c04df6c): Kept original Complete() signature for backwards compatibility, added new CompleteWithResult() for storing results. Also made JobResult.StartedAt nullable (queued jobs haven't started yet). Cleaner API design. All tests still passing. Approved. (by @claude)
+- 2026-02-10: Marked done in kanban; verified job result persistence and API auth are present and tested in-repo. (by @assistant)

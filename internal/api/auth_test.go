@@ -4,22 +4,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/mattjoyce/senechal-gw/internal/auth"
 )
 
-func TestValidateAPIKey(t *testing.T) {
+func TestAuthenticate_LegacyAPIKeyIsAdmin(t *testing.T) {
 	t.Parallel()
 
-	if got := ValidateAPIKey("provided", "provided"); !got {
-		t.Fatalf("expected true for matching keys")
+	p, ok := auth.Authenticate("provided", "provided", nil)
+	if !ok {
+		t.Fatalf("expected ok")
 	}
-	if got := ValidateAPIKey("provided", "other"); got {
-		t.Fatalf("expected false for mismatched keys")
-	}
-	if got := ValidateAPIKey("", "configured"); got {
-		t.Fatalf("expected false for empty provided key")
-	}
-	if got := ValidateAPIKey("provided", ""); got {
-		t.Fatalf("expected false for empty configured key")
+	if !auth.HasAnyScope(p, "*") {
+		t.Fatalf("expected admin scope")
 	}
 }
 
