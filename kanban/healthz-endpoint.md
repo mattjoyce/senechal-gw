@@ -1,6 +1,6 @@
 ---
 id: 43
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 tags: [sprint-3, observability, api]

@@ -1,6 +1,6 @@
 ---
 id: 36
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [sprint-3, plugins, manifest, security]
