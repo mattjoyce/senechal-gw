@@ -4,6 +4,7 @@ import "time"
 
 // Config represents the complete senechal-gw configuration.
 type Config struct {
+	Include    []string              `yaml:"include,omitempty"`  // Multi-file mode: files to merge
 	Service    ServiceConfig         `yaml:"service"`
 	State      StateConfig           `yaml:"state"`
 	API        APIConfig             `yaml:"api,omitempty"`
@@ -110,9 +111,32 @@ type WebhooksConfig struct {
 type WebhookEndpoint struct {
 	Path            string `yaml:"path"`
 	Plugin          string `yaml:"plugin"`
-	Secret          string `yaml:"secret"`
+	Secret          string `yaml:"secret,omitempty"`    // Legacy: direct secret (deprecated)
+	SecretRef       string `yaml:"secret_ref,omitempty"` // Preferred: reference to tokens.yaml
 	SignatureHeader string `yaml:"signature_header"`
 	MaxBodySize     string `yaml:"max_body_size"`
+}
+
+// TokensConfig defines sensitive authentication tokens (separate file for security).
+type TokensConfig struct {
+	Tokens map[string]string `yaml:",inline"` // Flat key-value map
+}
+
+// ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml).
+type ChecksumManifest struct {
+	Version     int               `yaml:"version"`
+	GeneratedAt string            `yaml:"generated_at"`
+	Hashes      map[string]string `yaml:"hashes"` // filename -> BLAKE3 hash
+}
+
+// PluginsFileConfig is the structure of plugins.yaml.
+type PluginsFileConfig struct {
+	Plugins map[string]PluginConf `yaml:"plugins"`
+}
+
+// RoutesFileConfig is the structure of routes.yaml.
+type RoutesFileConfig struct {
+	Routes []RouteConfig `yaml:"routes"`
 }
 
 // Defaults returns a Config with sensible defaults for MVP.
