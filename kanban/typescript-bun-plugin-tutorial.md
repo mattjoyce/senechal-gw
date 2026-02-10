@@ -1,9 +1,19 @@
-# Task: TypeScript Bun Plugin Tutorial
+---
+id: 46
+status: todo
+priority: Normal
+blocked_by: []
+assignee: "@gemini"
+tags: [tutorial, typescript, bun]
+---
 
-## Status: todo
+# Task: TypeScript Bun Plugin Tutorial
 
 ## Description
 Create a tutorial and example plugin for using TypeScript with the Bun runtime. This will demonstrate how to build high-performance, type-safe plugins for the Senechal Gateway.
+
+## Job Story
+When I want to build a high-performance plugin, I want to use TypeScript and Bun, so I can have type safety and low startup latency.
 
 ## TODO
 - [ ] Create example plugin directory `plugins/ts-bun-greet`
@@ -14,3 +24,6 @@ Create a tutorial and example plugin for using TypeScript with the Bun runtime. 
 
 ## Context
 Bun provides a fast, all-in-one JavaScript/TypeScript runtime that is ideal for the "spawn-per-command" model of Senechal Gateway due to its low startup latency.
+
+## Narrative
+- 2026-02-10: Created Kanban card for the TypeScript Bun tutorial task. (by @gemini)
