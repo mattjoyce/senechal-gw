@@ -31,8 +31,11 @@ func TestAPIIntegration(t *testing.T) {
 	// Create mock plugin registry
 	registry := plugin.NewRegistry()
 	registry.Add(&plugin.Plugin{
-		Name:     "echo",
-		Commands: []string{"poll", "handle"},
+		Name: "echo",
+		Commands: plugin.Commands{
+			{Name: "poll", Type: plugin.CommandTypeWrite},
+			{Name: "handle", Type: plugin.CommandTypeWrite},
+		},
 	})
 
 	// Create API server

@@ -1,67 +1,51 @@
 package api
 
 import (
-	"crypto/subtle"
-	"errors"
 	"net/http"
+
+	"github.com/mattjoyce/senechal-gw/internal/auth"
 )
 
-// ValidateAPIKey returns true if providedKey matches configKey.
-// If configKey is empty, callers should treat the API as effectively disabled.
-func ValidateAPIKey(providedKey string, configKey string) bool {
-	if configKey == "" || providedKey == "" {
-		return false
-	}
-	if len(providedKey) != len(configKey) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(providedKey), []byte(configKey)) == 1
-}
-
 // ExtractAPIKey extracts an API key from an Authorization: Bearer <key> header.
+// Deprecated: use internal/auth.ExtractBearerToken.
 func ExtractAPIKey(r *http.Request) (string, error) {
-	auth := r.Header.Get("Authorization")
-	if auth == "" {
-		return "", errors.New("missing Authorization header")
-	}
-
-	const prefix = "Bearer "
-	if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
-		return "", errors.New("invalid Authorization header format")
-	}
-
-	key := auth[len(prefix):]
-	// Trim whitespace and check if empty
-	if len(key) == 0 || len(key) > 0 && key[0] == ' ' {
-		// Check if it's only whitespace
-		trimmed := ""
-		for _, c := range key {
-			if c != ' ' && c != '\t' {
-				trimmed += string(c)
-			}
-		}
-		if trimmed == "" {
-			return "", errors.New("missing API key")
-		}
-		return trimmed, nil
-	}
-	return key, nil
+	return auth.ExtractBearerToken(r)
 }
 
-// authMiddleware validates the API key from Authorization header using Codex's functions
+// authMiddleware authenticates the bearer token and attaches a Principal to context.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiKey, err := ExtractAPIKey(r)
+		token, err := auth.ExtractBearerToken(r)
 		if err != nil {
 			s.writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
 
-		if !ValidateAPIKey(apiKey, s.config.APIKey) {
+		principal, ok := auth.Authenticate(token, s.config.APIKey, s.config.Tokens)
+		if !ok {
 			s.writeError(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	})
+}
+
+// requireScopes enforces that the current Principal has at least one of the required scopes.
+// Responds with 403 Forbidden on insufficient scope.
+func (s *Server) requireScopes(required ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, ok := auth.PrincipalFromContext(r.Context())
+			if !ok {
+				s.writeError(w, http.StatusUnauthorized, "missing Authorization context")
+				return
+			}
+			if !auth.HasAnyScope(p, required...) {
+				s.writeError(w, http.StatusForbidden, "insufficient scope")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

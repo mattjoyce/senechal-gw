@@ -111,7 +111,9 @@ version: 0.1.0
 protocol: 1
 entrypoint: run.sh
 description: "Reads input, echoes it back with a timestamp"
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 config_keys:
   required: []
   optional: []

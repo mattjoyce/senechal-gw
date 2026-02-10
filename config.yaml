@@ -14,10 +14,16 @@ state:
 
 # API Server: HTTP endpoints for external triggers (Sprint 2)
 api:
-  enabled: true                # Enable/disable API server
+  enabled: false               # Enable/disable API server
   listen: "localhost:8080"     # Listen address
   auth:
-    api_key: ${API_KEY}        # API key from environment (required if enabled)
+    # Legacy single token (admin/full access):
+    # api_key: ${API_KEY}
+    #
+    # Scoped tokens:
+    tokens:
+      - token: ${SENECHAL_TOKEN_ADMIN}
+        scopes: ["*"]
 
 plugins_dir: ./plugins         # Plugin directory
 

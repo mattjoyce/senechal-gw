@@ -8,11 +8,11 @@ import (
 
 func TestDiscover(t *testing.T) {
 	tests := []struct {
-		name       string
-		setupFn    func(t *testing.T) string // Returns plugins directory
-		wantCount  int
-		wantErr    bool
-		checkFn    func(t *testing.T, reg *Registry)
+		name      string
+		setupFn   func(t *testing.T) string // Returns plugins directory
+		wantCount int
+		wantErr   bool
+		checkFn   func(t *testing.T, reg *Registry)
 	}{
 		{
 			name: "valid plugin discovered",
@@ -174,7 +174,7 @@ func TestValidateManifest(t *testing.T) {
 				Name:       "test",
 				Protocol:   1,
 				Entrypoint: "run.sh",
-				Commands:   []string{"poll"},
+				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: false,
 		},
@@ -183,7 +183,7 @@ func TestValidateManifest(t *testing.T) {
 			manifest: &Manifest{
 				Protocol:   1,
 				Entrypoint: "run.sh",
-				Commands:   []string{"poll"},
+				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -192,7 +192,7 @@ func TestValidateManifest(t *testing.T) {
 			manifest: &Manifest{
 				Name:       "test",
 				Entrypoint: "run.sh",
-				Commands:   []string{"poll"},
+				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -201,7 +201,7 @@ func TestValidateManifest(t *testing.T) {
 			manifest: &Manifest{
 				Name:     "test",
 				Protocol: 1,
-				Commands: []string{"poll"},
+				Commands: Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -220,7 +220,7 @@ func TestValidateManifest(t *testing.T) {
 				Name:       "test",
 				Protocol:   1,
 				Entrypoint: "../evil/run.sh",
-				Commands:   []string{"poll"},
+				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -230,7 +230,7 @@ func TestValidateManifest(t *testing.T) {
 				Name:       "test",
 				Protocol:   1,
 				Entrypoint: "run.sh",
-				Commands:   []string{"invalid_command"},
+				Commands:   Commands{{Name: "invalid_command", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -337,7 +337,10 @@ func TestValidateTrust(t *testing.T) {
 
 func TestPluginSupportsCommand(t *testing.T) {
 	plugin := &Plugin{
-		Commands: []string{"poll", "health"},
+		Commands: Commands{
+			{Name: "poll", Type: CommandTypeWrite},
+			{Name: "health", Type: CommandTypeRead},
+		},
 	}
 
 	if !plugin.SupportsCommand("poll") {
@@ -350,5 +353,40 @@ func TestPluginSupportsCommand(t *testing.T) {
 
 	if plugin.SupportsCommand("handle") {
 		t.Error("should not support handle")
+	}
+}
+
+func TestDiscover_TypedCommandMetadata(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "test-plugin")
+	os.Mkdir(pluginDir, 0755)
+
+	manifest := `name: test-plugin
+version: 1.0.0
+protocol: 1
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+  - name: health
+    type: read
+`
+	os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+	os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0755)
+
+	logger := func(level, msg string, args ...interface{}) {}
+	reg, err := Discover(dir, logger)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	p, ok := reg.Get("test-plugin")
+	if !ok {
+		t.Fatalf("test-plugin not discovered")
+	}
+	if got := p.GetReadCommands(); len(got) != 1 || got[0] != "health" {
+		t.Fatalf("GetReadCommands() = %v, want [health]", got)
+	}
+	if got := p.GetWriteCommands(); len(got) != 1 || got[0] != "poll" {
+		t.Fatalf("GetWriteCommands() = %v, want [poll]", got)
 	}
 }

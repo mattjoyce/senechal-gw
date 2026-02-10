@@ -213,7 +213,7 @@ One process per job. No long-lived plugin processes.
 
 Process spawn overhead is ~5ms on Linux — irrelevant when the shortest interval is 5 minutes.
 
-**Persistent connections (WebSockets, long-polling) are out of scope.** If needed, run as a separate service that pushes events into Senechal via the webhook endpoint. No streaming plugin mode — not now, not ever for this core.
+**Persistent plugin connections (WebSockets, long-polling) are out of scope.** If needed, run as a separate service that pushes events into Senechal via the webhook endpoint. No streaming plugin mode — not now, not ever for this core.
 
 ### 5.2 Commands
 
@@ -251,7 +251,13 @@ version: 1.0.0
 protocol: 1
 entrypoint: run.py
 description: "Fetch health data from Withings API"
-commands: [poll, handle, health]
+commands:
+  - name: poll
+    type: write
+  - name: handle
+    type: write
+  - name: health
+    type: read
 config_keys:
   required: [client_id, client_secret]
   optional: [access_token]
@@ -260,6 +266,8 @@ config_keys:
 - `protocol` — must match a version the core supports. Mismatch → plugin not loaded.
 - `entrypoint` — mandatory. Core constructs execution path as `<plugins_dir>/<plugin_name>/<entrypoint>`.
 - `config_keys.required` — validated at load time. Missing keys → plugin not loaded, error logged.
+- `commands` — list of supported commands and their type (`read` or `write`).
+  - Back-compat: `commands: [poll, handle, health]` is accepted; defaults are `health=read`, everything else `write`.
 
 ### 5.5 Trust & Execution
 
@@ -508,6 +516,7 @@ Enqueues a job for the specified plugin and command. Returns immediately with a 
 **Error Responses:**
 - `401 Unauthorized` - Missing or invalid API key
 - `400 Bad Request` - Plugin not found or command not supported
+- `403 Forbidden` - Insufficient scope for requested command
 - `500 Internal Server Error` - Failed to enqueue job
 
 **Example:**
@@ -567,18 +576,71 @@ Retrieves the status and results of a previously triggered job.
 
 **Error Responses:**
 - `401 Unauthorized` - Missing or invalid API key
+- `403 Forbidden` - Insufficient scope
 - `404 Not Found` - Job ID not found
 
-### 8.4 Authentication
+### 8.4 GET /events
 
-Simple bearer token authentication. Single API key configured via `api.auth.api_key` in config.yaml.
+Streams server events as Server-Sent Events (SSE).
 
-- Key should be stored in environment variable and interpolated: `${API_KEY}`
-- All API requests must include `Authorization: Bearer <api_key>` header
-- Invalid or missing key returns `401 Unauthorized`
-- No key rotation mechanism in MVP (manual config update + reload)
+**Request:**
+- Header: `Authorization: Bearer <api_key>`
+- Optional header: `Last-Event-ID: <id>` to resume from a previously seen event ID.
 
-### 8.5 Use Cases
+**Response (200 OK):**
+- `Content-Type: text/event-stream`
+- Each event has an `id`, an `event` type, and JSON `data`.
+
+**Notes:**
+- The server keeps a small in-memory ring buffer of recent events. Late clients will receive buffered events on connect (or on reconnect when using `Last-Event-ID`).
+- Event payloads are best-effort and intended for observability, not as a durable audit log.
+
+**Example (curl):**
+```bash
+curl -N http://localhost:8080/events \
+  -H "Authorization: Bearer my-api-key-123"
+```
+
+### 8.5 Authentication
+
+Bearer token authentication. Supports a legacy single API key, and optionally a list of scoped tokens.
+
+- Tokens should be stored in environment variables and interpolated: `${SENECHAL_TOKEN_ADMIN}`
+- All protected API requests must include `Authorization: Bearer <token>` header
+- Invalid or missing token returns `401 Unauthorized`
+- Valid token with insufficient scope returns `403 Forbidden`
+
+**Config (legacy single token, full access):**
+```yaml
+api:
+  auth:
+    api_key: ${SENECHAL_API_KEY}
+```
+
+**Config (scoped tokens):**
+```yaml
+api:
+  auth:
+    tokens:
+      - token: ${SENECHAL_TOKEN_RO}
+        scopes: [plugin:ro, jobs:ro, events:ro]
+      - token: ${SENECHAL_TOKEN_ADMIN}
+        scopes: ["*"]
+```
+
+### 8.6 Token Scopes
+
+Well-known scopes:
+
+- `plugin:ro`: may trigger **read** commands only (manifest `commands[].type: read`)
+- `plugin:rw`: may trigger read or write commands
+- `jobs:ro`: may read job status (`GET /job/{job_id}`)
+- `events:ro`: may read the events stream (`GET /events`)
+- `*`: admin/full access
+
+Write scopes imply the corresponding read scope (e.g., `plugin:rw` implies `plugin:ro`).
+
+### 8.7 Use Cases
 
 - **LLM Tool Calling:** LLM agents can curl /trigger to execute actions (e.g., "check my calendar", "sync Withings data")
 - **External Automation:** Scripts, cron jobs, or other services can trigger plugins programmatically
@@ -616,7 +678,7 @@ No replay protection in V1. No rate limiting in V1 (proxy responsibility if fron
 
 ### 9.3 Health Endpoint
 
-`/healthz` on the webhook listener port:
+`/healthz` on an HTTP listener (webhook listener port preferred; MVP may serve this on the API listener port):
 
 ```json
 {
@@ -774,7 +836,15 @@ api:
   enabled: false
   listen: 127.0.0.1:8080
   auth:
-    api_key: ${SENECHAL_API_KEY}
+    # Legacy single token (admin/full access):
+    # api_key: ${SENECHAL_API_KEY}
+    #
+    # Scoped tokens:
+    tokens:
+      - token: ${SENECHAL_TOKEN_RO}
+        scopes: [plugin:ro, jobs:ro, events:ro]
+      - token: ${SENECHAL_TOKEN_ADMIN}
+        scopes: ["*"]
 
 state:
   path: ./data/state.db

@@ -170,8 +170,14 @@ func validateManifest(m *Manifest) error {
 	// Validate command names
 	validCommands := map[string]bool{"poll": true, "handle": true, "health": true, "init": true}
 	for _, cmd := range m.Commands {
-		if !validCommands[cmd] {
-			return fmt.Errorf("invalid command %q (valid: poll, handle, health, init)", cmd)
+		if cmd.Name == "" {
+			return fmt.Errorf("command name is required")
+		}
+		if !validCommands[cmd.Name] {
+			return fmt.Errorf("invalid command %q (valid: poll, handle, health, init)", cmd.Name)
+		}
+		if !cmd.Type.valid() {
+			return fmt.Errorf("invalid command type %q for %q (valid: read, write)", cmd.Type, cmd.Name)
 		}
 	}
 

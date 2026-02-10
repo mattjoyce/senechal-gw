@@ -3,11 +3,35 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"slices"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mattjoyce/senechal-gw/internal/auth"
+	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
 )
+
+// handleHealthz handles GET /healthz (no auth).
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	depth, err := s.queue.Depth(r.Context())
+	if err != nil {
+		s.logger.Error("failed to compute queue depth", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to compute queue depth")
+		return
+	}
+
+	resp := HealthzResponse{
+		Status:             "ok",
+		UptimeSeconds:      int64(time.Since(s.startedAt).Seconds()),
+		QueueDepth:         depth,
+		PluginsLoaded:      len(s.registry.All()),
+		PluginsCircuitOpen: 0,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
 
 // handleTrigger handles POST /trigger/{plugin}/{command}
 func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
@@ -15,16 +39,28 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	commandName := chi.URLParam(r, "command")
 
 	// Validate plugin exists
-	plugin, ok := s.registry.Get(pluginName)
+	plug, ok := s.registry.Get(pluginName)
 	if !ok {
 		s.writeError(w, http.StatusBadRequest, "plugin not found")
 		return
 	}
 
 	// Validate command is supported by plugin
-	if !slices.Contains(plugin.Commands, commandName) {
+	if !plug.SupportsCommand(commandName) {
 		s.writeError(w, http.StatusBadRequest, "command not supported by plugin")
 		return
+	}
+
+	// Enforce token scopes. plugin:ro may only invoke read commands.
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	cmdType, _ := plug.CommandTypeFor(commandName)
+	if cmdType == plugin.CommandTypeRead {
+		// already allowed by route middleware
+	} else {
+		if !auth.HasAnyScope(principal, "plugin:rw", "*") {
+			s.writeError(w, http.StatusForbidden, "insufficient scope")
+			return
+		}
 	}
 
 	// Parse request body (optional payload)
@@ -48,6 +84,14 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
 		return
 	}
+
+	s.events.Publish("job_enqueued", map[string]any{
+		"at":           time.Now().UTC().Format(time.RFC3339Nano),
+		"job_id":       jobID,
+		"plugin":       pluginName,
+		"command":      commandName,
+		"submitted_by": "api",
+	})
 
 	// Return success response
 	resp := TriggerResponse{

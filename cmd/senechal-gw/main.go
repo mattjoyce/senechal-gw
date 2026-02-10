@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/mattjoyce/senechal-gw/internal/api"
+	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/config"
 	"github.com/mattjoyce/senechal-gw/internal/dispatch"
 	"github.com/mattjoyce/senechal-gw/internal/lock"
@@ -182,12 +183,21 @@ func runStart(args []string) int {
 
 	// Start API server if enabled
 	if cfg.API.Enabled {
-		if cfg.API.Auth.APIKey == "" {
-			logger.Warn("API server enabled but api_key is empty - this is insecure!")
+		if cfg.API.Auth.APIKey == "" && len(cfg.API.Auth.Tokens) == 0 {
+			logger.Warn("API server enabled but no tokens configured (api.auth.api_key or api.auth.tokens) - this is insecure!")
+		}
+
+		tokens := make([]auth.TokenConfig, 0, len(cfg.API.Auth.Tokens))
+		for _, t := range cfg.API.Auth.Tokens {
+			tokens = append(tokens, auth.TokenConfig{
+				Token:  t.Token,
+				Scopes: t.Scopes,
+			})
 		}
 		apiConfig := api.Config{
 			Listen: cfg.API.Listen,
 			APIKey: cfg.API.Auth.APIKey,
+			Tokens: tokens,
 		}
 		apiServer := api.New(apiConfig, q, registry, log.WithComponent("api"))
 		go func() {

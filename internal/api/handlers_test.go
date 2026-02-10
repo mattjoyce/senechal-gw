@@ -7,16 +7,21 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
 )
 
 // mockQueue implements JobQueuer for testing
 type mockQueue struct {
-	enqueueFunc   func(ctx context.Context, req queue.EnqueueRequest) (string, error)
+	enqueueFunc    func(ctx context.Context, req queue.EnqueueRequest) (string, error)
 	getJobByIDFunc func(ctx context.Context, jobID string) (*queue.JobResult, error)
+	depthFunc      func(ctx context.Context) (int, error)
 }
 
 func (m *mockQueue) Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error) {
@@ -25,6 +30,13 @@ func (m *mockQueue) Enqueue(ctx context.Context, req queue.EnqueueRequest) (stri
 
 func (m *mockQueue) GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error) {
 	return m.getJobByIDFunc(ctx, jobID)
+}
+
+func (m *mockQueue) Depth(ctx context.Context) (int, error) {
+	if m.depthFunc == nil {
+		return 0, nil
+	}
+	return m.depthFunc(ctx)
 }
 
 // mockRegistry implements PluginRegistry for testing
@@ -37,6 +49,13 @@ func (m *mockRegistry) Get(name string) (*plugin.Plugin, bool) {
 	return p, ok
 }
 
+func (m *mockRegistry) All() map[string]*plugin.Plugin {
+	if m.plugins == nil {
+		return map[string]*plugin.Plugin{}
+	}
+	return m.plugins
+}
+
 func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 	logger := slog.Default()
 	config := Config{
@@ -44,6 +63,121 @@ func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 		APIKey: "test-key-123",
 	}
 	return New(config, q, reg, logger)
+}
+
+func TestHandleHealthz_NoAuth(t *testing.T) {
+	q := &mockQueue{
+		depthFunc: func(ctx context.Context) (int, error) { return 7, nil },
+	}
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {Name: "echo"},
+		},
+	}
+
+	server := newTestServer(q, reg)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	router := server.setupRoutes()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var resp HealthzResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("expected status ok, got %q", resp.Status)
+	}
+	if resp.QueueDepth != 7 {
+		t.Fatalf("expected queue_depth 7, got %d", resp.QueueDepth)
+	}
+	if resp.PluginsLoaded != 1 {
+		t.Fatalf("expected plugins_loaded 1, got %d", resp.PluginsLoaded)
+	}
+	if resp.UptimeSeconds < 0 {
+		t.Fatalf("expected non-negative uptime_seconds")
+	}
+}
+
+func TestHandleTrigger_PluginROToken_CannotInvokeWriteCommand(t *testing.T) {
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			t.Fatalf("enqueue should not be called for forbidden request")
+			return "", nil
+		},
+	}
+
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "poll", Type: plugin.CommandTypeWrite},
+					{Name: "health", Type: plugin.CommandTypeRead},
+				},
+			},
+		},
+	}
+
+	server := newTestServer(q, reg)
+	server.config.Tokens = []auth.TokenConfig{
+		{Token: "ro-token", Scopes: []string{"plugin:ro"}},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/poll", nil)
+	req.Header.Set("Authorization", "Bearer ro-token")
+
+	rr := httptest.NewRecorder()
+	router := server.setupRoutes()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", rr.Code)
+	}
+}
+
+func TestHandleTrigger_PluginROToken_CanInvokeReadCommand(t *testing.T) {
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			if req.Plugin != "echo" || req.Command != "health" || req.SubmittedBy != "api" {
+				t.Errorf("unexpected enqueue request: %+v", req)
+			}
+			return "job-999", nil
+		},
+	}
+
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "poll", Type: plugin.CommandTypeWrite},
+					{Name: "health", Type: plugin.CommandTypeRead},
+				},
+			},
+		},
+	}
+
+	server := newTestServer(q, reg)
+	server.config.Tokens = []auth.TokenConfig{
+		{Token: "ro-token", Scopes: []string{"plugin:ro"}},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/health", nil)
+	req.Header.Set("Authorization", "Bearer ro-token")
+
+	rr := httptest.NewRecorder()
+	router := server.setupRoutes()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d", rr.Code)
+	}
 }
 
 func TestHandleTrigger_Success(t *testing.T) {
@@ -59,8 +193,11 @@ func TestHandleTrigger_Success(t *testing.T) {
 	reg := &mockRegistry{
 		plugins: map[string]*plugin.Plugin{
 			"echo": {
-				Name:     "echo",
-				Commands: []string{"poll", "handle"},
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "poll", Type: plugin.CommandTypeWrite},
+					{Name: "handle", Type: plugin.CommandTypeWrite},
+				},
 			},
 		},
 	}
@@ -99,6 +236,102 @@ func TestHandleTrigger_Success(t *testing.T) {
 	}
 }
 
+type streamWriter struct {
+	mu     sync.Mutex
+	header http.Header
+	status int
+	buf    bytes.Buffer
+}
+
+func newStreamWriter() *streamWriter {
+	return &streamWriter{header: make(http.Header)}
+}
+
+func (w *streamWriter) Header() http.Header { return w.header }
+
+func (w *streamWriter) WriteHeader(statusCode int) {
+	w.mu.Lock()
+	w.status = statusCode
+	w.mu.Unlock()
+}
+
+func (w *streamWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *streamWriter) Flush() {}
+
+func (w *streamWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+func (w *streamWriter) Status() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func TestHandleEvents_Unauthorized(t *testing.T) {
+	q := &mockQueue{}
+	reg := &mockRegistry{plugins: map[string]*plugin.Plugin{}}
+	server := newTestServer(q, reg)
+
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+	rr := httptest.NewRecorder()
+	router := server.setupRoutes()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", rr.Code)
+	}
+}
+
+func TestHandleEvents_ReplaysBufferedEvents(t *testing.T) {
+	q := &mockQueue{}
+	reg := &mockRegistry{plugins: map[string]*plugin.Plugin{}}
+	server := newTestServer(q, reg)
+	server.events.Publish("test_event", map[string]any{"k": "v"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+
+	w := newStreamWriter()
+	router := server.setupRoutes()
+
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(w, req)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(w.String(), "event: test_event\n") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(w.String(), "event: test_event\n") {
+		t.Fatalf("expected SSE event in stream, got: %q", w.String())
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("stream did not exit after context cancel")
+	}
+}
+
 func TestHandleTrigger_PluginNotFound(t *testing.T) {
 	q := &mockQueue{}
 	reg := &mockRegistry{
@@ -133,8 +366,10 @@ func TestHandleTrigger_CommandNotSupported(t *testing.T) {
 	reg := &mockRegistry{
 		plugins: map[string]*plugin.Plugin{
 			"echo": {
-				Name:     "echo",
-				Commands: []string{"poll"},
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "poll", Type: plugin.CommandTypeWrite},
+				},
 			},
 		},
 	}

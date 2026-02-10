@@ -33,3 +33,14 @@ type JobStatusResponse struct {
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
+
+// HealthzResponse is returned by GET /healthz.
+type HealthzResponse struct {
+	Status        string `json:"status"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+	QueueDepth    int    `json:"queue_depth"`
+	PluginsLoaded int    `json:"plugins_loaded"`
+	// PluginsCircuitOpen is reserved for circuit breaker observability.
+	// MVP: always 0 until circuit breaker state is plumbed into the API server.
+	PluginsCircuitOpen int `json:"plugins_circuit_open"`
+}

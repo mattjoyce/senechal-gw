@@ -175,6 +175,93 @@ plugins:
 				}
 			},
 		},
+		{
+			name: "api token missing scopes fails validation",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+api:
+  enabled: true
+  listen: 127.0.0.1:8080
+  auth:
+    tokens:
+      - token: ro-token
+        scopes: []
+plugins:
+  test:
+    enabled: false
+`,
+			wantErr: true,
+		},
+		{
+			name: "api token with scopes is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+api:
+  enabled: true
+  listen: 127.0.0.1:8080
+  auth:
+    tokens:
+      - token: ro-token
+        scopes: [plugin:ro]
+plugins:
+  test:
+    enabled: false
+`,
+			wantErr: false,
+		},
+		{
+			name: "api token unresolved env var fails validation",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+api:
+  enabled: true
+  listen: 127.0.0.1:8080
+  auth:
+    tokens:
+      - token: ${MISSING_TOKEN}
+        scopes: [plugin:ro]
+plugins:
+  test:
+    enabled: false
+`,
+			wantErr: true,
+		},
+		{
+			name: "api token env var interpolation works",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+api:
+  enabled: true
+  listen: 127.0.0.1:8080
+  auth:
+    tokens:
+      - token: ${TOKEN}
+        scopes: [plugin:ro]
+plugins:
+  test:
+    enabled: false
+`,
+			env: map[string]string{
+				"TOKEN": "ro-token",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -209,10 +296,10 @@ plugins:
 
 func TestInterpolateEnv(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		env    map[string]string
-		want   string
+		name  string
+		input string
+		env   map[string]string
+		want  string
 	}{
 		{
 			name:  "simple replacement",
@@ -273,8 +360,8 @@ func TestParseInterval(t *testing.T) {
 		{"hourly", "hourly", 1 * time.Hour, false},
 		{"2 hours", "2h", 2 * time.Hour, false},
 		{"6 hours", "6h", 6 * time.Hour, false},
-		{"daily", "daily", 0, false},    // Special case
-		{"weekly", "weekly", 0, false},  // Special case
+		{"daily", "daily", 0, false},     // Special case
+		{"weekly", "weekly", 0, false},   // Special case
 		{"monthly", "monthly", 0, false}, // Special case
 		{"invalid", "invalid", 0, true},
 		{"negative", "-5m", 0, true},

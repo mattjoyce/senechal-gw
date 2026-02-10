@@ -424,6 +424,33 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("plugins_dir is required")
 	}
 
+	// API auth validation
+	if cfg.API.Enabled {
+		// If tokens are configured, validate them. api_key remains supported for back-compat.
+		if envVarPattern.MatchString(cfg.API.Auth.APIKey) {
+			matches := envVarPattern.FindStringSubmatch(cfg.API.Auth.APIKey)
+			if len(matches) > 1 {
+				return fmt.Errorf("api.auth.api_key: environment variable ${%s} is not set", matches[1])
+			}
+			return fmt.Errorf("api.auth.api_key: unresolved environment variable")
+		}
+		for i, tok := range cfg.API.Auth.Tokens {
+			if tok.Token == "" {
+				return fmt.Errorf("api.auth.tokens[%d].token is required", i)
+			}
+			if envVarPattern.MatchString(tok.Token) {
+				matches := envVarPattern.FindStringSubmatch(tok.Token)
+				if len(matches) > 1 {
+					return fmt.Errorf("api.auth.tokens[%d].token: environment variable ${%s} is not set", i, matches[1])
+				}
+				return fmt.Errorf("api.auth.tokens[%d].token: unresolved environment variable", i)
+			}
+			if len(tok.Scopes) == 0 {
+				return fmt.Errorf("api.auth.tokens[%d].scopes must be non-empty", i)
+			}
+		}
+	}
+
 	// Plugin validation
 	for name, plugin := range cfg.Plugins {
 		if !plugin.Enabled {
