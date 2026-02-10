@@ -19,6 +19,7 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/scheduler"
 	"github.com/mattjoyce/senechal-gw/internal/state"
 	"github.com/mattjoyce/senechal-gw/internal/storage"
+	"github.com/mattjoyce/senechal-gw/internal/webhook"
 )
 
 const version = "0.1.0-mvp"
@@ -197,6 +198,26 @@ func runStart(args []string) int {
 		logger.Info("API server enabled", "listen", cfg.API.Listen)
 	} else {
 		logger.Info("API server disabled")
+	}
+
+	// Start webhook server if configured
+	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
+		// Convert config and resolve secrets
+		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, make(map[string]string))
+		if err != nil {
+			logger.Error("failed to configure webhooks", "error", err)
+			return 1
+		}
+
+		webhookServer := webhook.New(webhookConfig, q, log.WithComponent("webhook"))
+		go func() {
+			if err := webhookServer.Start(ctx); err != nil && err != context.Canceled {
+				errCh <- fmt.Errorf("webhook: %w", err)
+			}
+		}()
+		logger.Info("webhook server enabled", "listen", webhookConfig.Listen, "endpoints", len(webhookConfig.Endpoints))
+	} else {
+		logger.Info("webhook server disabled")
 	}
 
 	logger.Info("senechal-gw running (press Ctrl+C to stop)")
