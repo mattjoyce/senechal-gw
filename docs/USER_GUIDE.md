@@ -3,65 +3,19 @@
 ## Table of Contents
 1.  [Introduction](#introduction)
 2.  [Getting Started](#getting-started)
-<<<<<<< HEAD
-3.  [Configuration](#configuration)
-    *   [Multi-file Configuration](#multi-file-configuration)
-    *   [Environment Variable Interpolation](#environment-variable-interpolation)
-    *   [Security & Integrity (Hash Verification)](#security--integrity-hash-verification)
-4.  [Webhooks](#webhooks)
-    *   [Webhook Configuration](#webhook-configuration)
-    *   [HMAC Verification](#hmac-verification)
-    *   [Security Best Practices](#webhook-security-best-practices)
-5.  [Authentication & Authorization](#authentication--authorization)
-    *   [Bearer Token Authentication](#bearer-token-authentication)
-    *   [API Scopes](#api-scopes)
-    *   [Command Permission Types (Read vs Write)](#command-permission-types-read-vs-write)
-6.  [Using the API](#using-the-api)
-    *   [API Endpoints Introduction](#api-endpoints-introduction)
-    *   [POST /trigger/{plugin}/{command}](#post-triggerplugincommand)
-    *   [GET /job/{job_id}](#get-jobjob_id)
-    *   [API Use Cases](#api-use-cases)
-7.  [Core Concepts](#core-concepts)
-=======
+    *   [Installation](#installation)
+    *   [Basic Usage](#basic-usage)
 3.  [Core Concepts](#core-concepts)
->>>>>>> gemini/sprint3-user-guide
     *   [Scheduler](#scheduler)
     *   [Plugins](#plugins)
     *   [State Management](#state-management)
     *   [Crash Recovery](#crash-recovery)
-<<<<<<< HEAD
-8.  [Monitoring & Observability](#monitoring--observability)
-    *   [GET /healthz](#get-healthz)
-    *   [GET /events (SSE)](#get-events-sse)
-9.  [Configuration Reference](#configuration-reference)
-=======
-4.  [Configuration](#configuration)
-    *   [Multi-file Configuration](#multi-file-configuration)
-    *   [Environment Variable Interpolation](#environment-variable-interpolation)
-    *   [Security & Integrity (Hash Verification)](#security--integrity-hash-verification)
-5.  [Configuration Reference](#configuration-reference)
-6.  [Authentication & Authorization](#authentication--authorization)
-    *   [Bearer Token Authentication](#bearer-token-authentication)
-    *   [API Scopes](#api-scopes)
-    *   [Command Permission Types (Read vs Write)](#command-permission-types-read-vs-write)
-7.  [Using the API](#using-the-api)
-    *   [API Endpoints Introduction](#api-endpoints-introduction)
-    *   [POST /trigger/{plugin}/{command}](#post-triggerplugincommand)
-    *   [GET /job/{job_id}](#get-jobjob_id)
-    *   [API Use Cases](#api-use-cases)
-8.  [Webhooks](#webhooks)
-    *   [Webhook Configuration](#webhook-configuration)
-    *   [HMAC Verification](#hmac-verification)
-    *   [Security Best Practices](#webhook-security-best-practices)
-9.  [Monitoring & Observability](#monitoring--observability)
-    *   [GET /healthz](#get-healthz)
-    *   [GET /events (SSE)](#get-events-sse)
->>>>>>> gemini/sprint3-user-guide
-10. [Plugin Development Guide](#plugin-development-guide)
+4.  [Configuration Reference](#configuration-reference)
+    *   [Example Configuration](#example-configuration)
+5.  [Plugin Development Guide](#plugin-development-guide)
     *   [Bash Plugins](#bash-plugins)
     *   [Python Plugins](#python-plugins)
-    *   [Manifest Command Metadata](#manifest-command-metadata)
-11. [Operations and Troubleshooting](#operations-and-troubleshooting)
+6.  [Operations and Troubleshooting](#operations-and-troubleshooting)
 
 ## 1. Introduction
 The Senechal Gateway is a lightweight, YAML-configured, and modular integration gateway designed for personal automation. It orchestrates various tasks by utilizing polyglot plugins executed via a subprocess protocol. The core idea is to provide a simple, yet extensible platform for handling event-driven workflows, ETL processes, and various integrations without the overhead of larger, more complex integration servers.
@@ -138,268 +92,8 @@ After building the `senechal-gw` executable, you can start the gateway.
     ```
     Press `Ctrl+C` to stop the gateway gracefully.
 
-<<<<<<< HEAD
-## 3. Configuration
-The Senechal Gateway uses a flexible, multi-file configuration system that allows for clean separation of concerns, environment-specific overrides, and secure handling of sensitive credentials.
 
-### Multi-file Configuration
-While you can keep your entire configuration in a single `config.yaml` file, complex setups benefit from splitting definitions into multiple files. This is achieved using the `include` array in your main configuration file.
-
-The gateway looks for configuration in the following priority order:
-1.  **--config-dir** flag
-2.  **SENECHAL_CONFIG_DIR** environment variable
-3.  **~/.config/senechal-gw/** (Recommended)
-4.  **/etc/senechal-gw/**
-5.  **./config.yaml** (Legacy/Development fallback)
-
-#### Example Multi-file Structure
-A typical production setup might look like this in `~/.config/senechal-gw/`:
-```
-.config/senechal-gw/
-├── config.yaml          # Main entry point
-├── plugins.yaml         # Plugin schedules and settings
-├── webhooks.yaml        # Webhook endpoint definitions
-├── tokens.yaml          # API tokens and secrets (Sensitive)
-└── .checksums.json      # Integrity hashes for sensitive files
-```
-
-**Main `config.yaml`:**
-```yaml
-service:
-  name: my-gateway
-  log_level: info
-
-include:
-  - plugins.yaml
-  - webhooks.yaml
-  - tokens.yaml
-```
-
-#### API Service Configuration
-To enable the management API, add an `api` section to your `config.yaml`:
-
-```yaml
-api:
-  enabled: true          # Set to true to enable the HTTP API
-  listen: "0.0.0.0:8080" # Address and port for the API listener
-  auth:
-    api_key: ${API_KEY}  # Legacy support (admin scope)
-    tokens: []           # Scoped tokens (preferred)
-```
-
-### Environment Variable Interpolation
-Configuration values support environment variable interpolation using the `${VAR_NAME}` syntax. This is critical for keeping secrets out of version control and for environment-specific pathing.
-
-```yaml
-# Environment-specific include
-include:
-  - ${ENVIRONMENT:-prod}/plugins.yaml
-
-plugins:
-  github:
-    config:
-      api_token: ${GITHUB_TOKEN}
-```
-Interpolation is performed during the loading phase, before YAML parsing, allowing you to use variables in keys, values, and include paths.
-
-### Security & Integrity (Hash Verification)
-To prevent unauthorized modifications to sensitive configuration files (like `tokens.yaml` or `webhooks.yaml`), Senechal Gateway implements a BLAKE3-based integrity check.
-
-When multi-file mode is used, the gateway verifies that the hashes of "scope files" (detected by name: `tokens.yaml`, `webhooks.yaml`) match those stored in `.checksums.json`. If a file has been modified without updating the hash, the gateway will refuse to start.
-
-**Updating Hashes:**
-If you intentionally modify a sensitive configuration file, you must update the checksums:
-```bash
-senechal-gw config hash-update --config-dir ~/.config/senechal-gw
-```
-*Why this matters:* This protects against "configuration injection" attacks where an attacker with limited filesystem access might attempt to add a backdoor API token or redirect a webhook.
-
-## 4. Webhooks
-The Senechal Gateway can act as a webhook listener, allowing external services (like GitHub, GitLab, or Stripe) to trigger internal plugin commands directly via HTTP POST requests.
-
-### Webhook Configuration
-Webhooks are defined in the `webhooks` section of your configuration. It is recommended to keep these in a separate `webhooks.yaml` file.
-
-```yaml
-# webhooks.yaml
-webhooks:
-  listen: ":8081"  # Separate port for webhooks (optional)
-  endpoints:
-    - path: /webhook/github-push
-      plugin: github-handler
-      command: handle
-      secret: ${GITHUB_WEBHOOK_SECRET}
-      signature_header: "X-Hub-Signature-256"
-      max_body_size: 2MB
-```
-
--   **path:** The URL path the gateway listens on.
--   **plugin/command:** The target to trigger when a valid request arrives.
--   **secret:** The HMAC secret used to verify the sender.
--   **signature_header:** The HTTP header containing the HMAC signature.
--   **max_body_size:** Safety limit for inbound payloads.
-
-### HMAC Verification
-Security is paramount for webhooks. Senechal Gateway requires HMAC-SHA256 signature verification for all webhook endpoints. It supports both plain hex signatures and GitHub-style `sha256=<hex>` formats.
-
-When a request arrives, the gateway:
-1.  Reads the raw request body.
-2.  Computes the HMAC-SHA256 hash using the configured `secret`.
-3.  Performs a constant-time comparison against the value in the `signature_header`.
-
-If verification fails, the gateway returns `401 Unauthorized` and does *not* trigger the plugin.
-
-### Webhook Security Best Practices
--   **Use HTTPS:** Always terminate TLS (via Nginx or Caddy) before the gateway to protect the HMAC secret and payload.
--   **Secret Rotation:** Regularly rotate your webhook secrets and update the gateway configuration.
--   **Separate Port:** Use a different port or even a different network interface for webhooks compared to the management API.
--   **Least Privilege:** Ensure the target plugin command is designed to handle untrusted input safely.
-
-## 5. Authentication & Authorization
-The Senechal Gateway uses a scope-based Bearer token authentication system to control access to its API and events.
-
-### Bearer Token Authentication
-All requests to the management API (except `/healthz`) must include an `Authorization` header:
-
-```http
-Authorization: Bearer <your-token-here>
-```
-
-Tokens are defined in your configuration (usually `tokens.yaml`):
-
-```yaml
-# tokens.yaml
-api:
-  auth:
-    tokens:
-      - token: ${MONITOR_TOKEN}
-        scopes: ["plugin:ro", "events:ro"]
-      - token: ${ADMIN_TOKEN}
-        scopes: ["*"]
-```
-
-### API Scopes
-Scopes define what an authenticated "Principal" is allowed to do.
-
-| Scope | Description |
-| :--- | :--- |
-| `*` | Full administrative access (Superuser) |
-| `plugin:ro` | Read-only access to plugins and command execution (read commands only) |
-| `plugin:rw` | Ability to trigger any plugin command (implies `plugin:ro`) |
-| `jobs:ro` | Ability to view job status and results |
-| `jobs:rw` | Ability to manage or delete jobs (implies `jobs:ro`) |
-| `events:ro` | Ability to stream system events via the `/events` endpoint |
-
-### Command Permission Types (Read vs Write)
-To support fine-grained authorization, plugin commands are classified as either `read` or `write`.
--   **Read Commands:** Informational commands that do not change state (e.g., `health`, `status`). These can be invoked by tokens with the `plugin:ro` scope.
--   **Write Commands:** Actions that mutate state, perform side effects, or fetch data (e.g., `poll`, `handle`, `sync`). These require the `plugin:rw` or `*` scope.
-
-By default, the `health` command is considered `read`, and all others are `write`. You can override this in the plugin's `manifest.yaml` (see [Plugin Development Guide](#manifest-command-metadata)).
-
-## 6. Using the API
-The Senechal Gateway provides a simple HTTP API to programmatically trigger plugins and retrieve job results. This is particularly useful for external systems, such as LLM agents or custom scripts, that need to interact with the gateway on-demand rather than relying solely on scheduled tasks.
-
-### API Endpoints Introduction
-The API is organized around plugins and jobs. All requests (except `/healthz`) require authentication.
-
-### POST /trigger/{plugin}/{command}
-This endpoint allows you to enqueue a job for a specific plugin and command. The API call returns immediately with a job ID, and the plugin execution happens asynchronously.
-
--   **Purpose:** Enqueue jobs on-demand.
--   **Authentication:** Requires a Bearer token with `plugin:rw` or `*` scope (or `plugin:ro` for read commands).
--   **URL Parameters:**
-    *   `{plugin}`: The name of the plugin to execute (e.g., `echo`, `my-custom-plugin`).
-    *   `{command}`: The command to execute on the plugin (e.g., `poll`, `handle`).
--   **Request Body:** An optional JSON payload that will be passed to the plugin as part of its `config` in the request envelope.
--   **Response (202 Accepted):**
-    ```json
-    {
-      "job_id": "uuid-v4-string",
-      "status": "queued",
-      "plugin": "plugin_name",
-      "command": "command_name"
-    }
-    ```
--   **Error Responses:**
-    *   `401 Unauthorized`: Missing or invalid API key.
-    *   `403 Forbidden`: Insufficient scope for the requested command.
-    *   `400 Bad Request`: Plugin not found or command not supported.
-    *   `500 Internal Server Error`: Failed to enqueue job.
-
-#### Example: Triggering the `echo` plugin
-```bash
-API_KEY="your_api_key_here" # Replace with your actual API key
-curl -X POST http://localhost:8080/trigger/echo/poll \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Triggered via API"}'
-```
-
-### GET /job/{job_id}
-This endpoint allows you to retrieve the current status and, upon completion, the results of a previously triggered job.
-
--   **Purpose:** Check job status and retrieve execution results.
--   **Authentication:** Requires a Bearer token with `jobs:ro`, `jobs:rw`, or `*` scope.
--   **URL Parameters:**
-    *   `{job_id}`: The UUID of the job, as returned by the `POST /trigger` endpoint.
--   **Response (200 OK):**
-    *   **Queued Job:**
-        ```json
-        {
-          "job_id": "uuid-v4-string",
-          "status": "queued",
-          "plugin": "plugin_name",
-          "command": "command_name",
-          "created_at": "ISO8601-timestamp"
-        }
-        ```
-    *   **Running Job:**
-        ```json
-        {
-          "job_id": "uuid-v4-string",
-          "status": "running",
-          "plugin": "plugin_name",
-          "command": "command_name",
-          "started_at": "ISO8601-timestamp"
-        }
-        ```
-    *   **Completed Job:**
-        ```json
-        {
-          "job_id": "uuid-v4-string",
-          "status": "completed",
-          "plugin": "plugin_name",
-          "command": "command_name",
-          "result": { /* Plugin's JSON response from stdout */ },
-          "started_at": "ISO8601-timestamp",
-          "completed_at": "ISO8601-timestamp"
-        }
-        ```
--   **Error Responses:**
-    *   `401 Unauthorized`: Missing or invalid API key.
-    *   `404 Not Found`: Job ID not found.
-
-#### Example: Polling for job completion
-```bash
-API_KEY="your_api_key_here" # Replace with your actual API key
-JOB_ID="your_job_id_from_trigger_response" # Replace with actual job ID
-
-# Poll for job status
-curl http://localhost:8080/job/$JOB_ID \
-  -H "Authorization: Bearer $API_KEY"
-```
-
-### API Use Cases
--   **LLM Tool Calling:** Integrate Senechal Gateway as a tool for Large Language Models (LLMs), allowing them to trigger actions (e.g., "check my calendar," "sync health data") programmatically.
--   **External Automation Scripts:** Use custom scripts, cron jobs, or other automation tools to interact with Senechal Gateway.
--   **Manual Testing:** Developers can quickly trigger plugins via `curl` for testing and debugging without waiting for scheduler intervals.
--   **Webhook-style Triggers:** Other services can send requests to the `/trigger` endpoint to initiate workflows in Senechal Gateway.
-
-## 7. Core Concepts
-=======
 ## 3. Core Concepts
->>>>>>> gemini/sprint3-user-guide
 
 ### Scheduler
 The Senechal Gateway includes a built-in scheduler responsible for orchestrating the periodic execution of configured plugins. It operates on a "tick loop" that runs at a configurable interval (defaulting to `service.tick_interval`, typically 60 seconds).
@@ -408,7 +102,7 @@ For each enabled plugin with a defined `schedule`, the scheduler calculates its 
 
 When a plugin's scheduled time arrives, the scheduler enqueues a `poll` job for that plugin into the system's work queue. This `poll` job initiates the plugin's execution flow. The scheduler also ensures "at-least-once" job execution semantics by utilizing deduplication keys.
 
-The `schedule.every` field supports various named intervals suchs as `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, and `monthly`.
+The `schedule.every` field supports various named intervals such as `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, and `monthly`.
 
 In addition to scheduling, the tick loop is also responsible for pruning completed job logs based on the configured `job_log_retention` policy.
 
@@ -532,151 +226,8 @@ Upon startup, the gateway performs the following steps:
 
 This mechanism guarantees that no job is silently dropped due to a crash, upholding the "at-least-once" delivery guarantee. Plugins are expected to be idempotent or use their state to handle potential re-executions.
 
-<<<<<<< HEAD
-## 8. Monitoring & Observability
-Senechal Gateway provides built-in endpoints for health monitoring and real-time event streaming, enabling effective observability of your integration workflows.
-
-### GET /healthz
-The `/healthz` endpoint provides a quick summary of the gateway's operational status. It does not require authentication, making it suitable for use by load balancers, container orchestrators (like Kubernetes), or simple monitoring scripts.
-
--   **Endpoint:** `GET http://localhost:8080/healthz`
--   **Response (200 OK):**
-    ```json
-    {
-      "status": "ok",
-      "uptime_seconds": 3600,
-      "queue_depth": 5,
-      "plugins_loaded": 12,
-      "plugins_circuit_open": 0
-    }
-    ```
-
-**Key Metrics:**
--   **queue_depth:** The number of jobs currently waiting to be processed. A consistently high number may indicate the need for more resources or plugin optimization.
--   **plugins_circuit_open:** The number of plugins whose circuit breakers are currently open due to repeated failures.
-
-### GET /events (SSE)
-The `/events` endpoint provides a real-time stream of system events using Server-Sent Events (SSE). This is invaluable for debugging complex workflows and monitoring the gateway's activity as it happens.
-
--   **Endpoint:** `GET http://localhost:8080/events`
--   **Authentication:** Requires a Bearer token with `events:ro` or `*` scope.
--   **Format:** `text/event-stream`
-
-**Streaming with curl:**
-```bash
-TOKEN="your_token"
-curl -N -H "Authorization: Bearer $TOKEN" http://localhost:8080/events
-```
-
-**Example Event Stream:**
-```text
-id: 101
-event: job_enqueued
-data: {"job_id":"...","plugin":"echo","command":"poll"}
-
-id: 102
-event: job_started
-data: {"job_id":"...","plugin":"echo"}
-
-id: 103
-event: job_completed
-data: {"job_id":"...","plugin":"echo","status":"ok"}
-```
-
-The gateway maintains a small buffer of recent events. If a client disconnects and reconnects using the `Last-Event-ID` header, the gateway will attempt to replay the missed events.
-
-## 9. Configuration Reference
-=======
-## 4. Configuration
-The Senechal Gateway uses a flexible, multi-file configuration system that allows for clean separation of concerns, environment-specific overrides, and secure handling of sensitive credentials.
-
-### Multi-file Configuration
-While you can keep your entire configuration in a single `config.yaml` file, complex setups benefit from splitting definitions into multiple files. This is achieved using the `include` array in your configuration files.
-
-The configuration system is **recursive**: an included file can itself contain an `include` array to pull in further configuration.
-
-#### Path Resolution
-- **Top-level includes:** Paths in the main `config.yaml` are resolved relative to the directory containing that file.
-- **Nested includes:** Paths in an included file are resolved relative to the directory containing *that* included file.
-- **Environment Variables:** All include paths support `${VAR}` interpolation.
-- **Absolute Paths:** Absolute paths are supported and bypass relative resolution.
-
-The gateway looks for the initial configuration in the following priority order:
-1.  **--config-dir** flag
-2.  **SENECHAL_CONFIG_DIR** environment variable
-3.  **~/.config/senechal-gw/** (Recommended)
-4.  **/etc/senechal-gw/**
-5.  **./config.yaml** (Legacy/Development fallback)
-
-#### Example Multi-file Structure
-A typical production setup might look like this:
-```
-~/.config/senechal-gw/
-├── config.yaml          # Main entry point
-├── plugins/             # Organization by category
-│   ├── plugins.yaml     # Plugin schedules
-│   └── tokens.yaml      # Scoped tokens for plugins
-│   └── .checksums       # Hashes for files in this directory
-├── webhooks.yaml        # Webhook definitions
-└── .checksums           # Hashes for top-level files
-```
-
-**Main `config.yaml`:**
-```yaml
-include:
-  - plugins/plugins.yaml
-  - webhooks.yaml
-```
-
-**`plugins/plugins.yaml` (Nested Include):**
-```yaml
-include:
-  - tokens.yaml          # Resolved relative to plugins/ directory
-
-plugins:
-  echo:
-    enabled: true
-    schedule:
-      every: 5m
-```
-
-### Environment Variable Interpolation
-Configuration values support environment variable interpolation using the `${VAR_NAME}` syntax. This is critical for keeping secrets out of version control and for environment-specific pathing.
-
-```yaml
-# Environment-specific include
-include:
-  - ${ENVIRONMENT:-prod}/plugins.yaml
-
-plugins:
-  github:
-    config:
-      api_token: ${GITHUB_TOKEN}
-```
-Interpolation is performed during the loading phase, before YAML parsing, allowing you to use variables in keys, values, and include paths.
-
-### Security & Integrity (Hash Verification)
-To prevent unauthorized modifications to sensitive configuration files (like `tokens.yaml` or `webhooks.yaml`), Senechal Gateway implements a BLAKE3-based integrity check.
-
-**Recursive Verification:**
-The gateway automatically detects any file named `tokens.yaml` or `webhooks.yaml` anywhere in the recursive inclusion tree. Each such file is verified against a `.checksums` file located in the **same directory** as the scope file itself.
-
-If any sensitive file has been modified without updating its corresponding hash, the gateway will refuse to start.
-
-**Updating Hashes:**
-If you intentionally modify a sensitive configuration file, you must update the checksums for that directory:
-```bash
-# Update top-level checksums
-senechal-gw config hash-update --config-dir ~/.config/senechal-gw
-
-# Update checksums in a sub-directory
-senechal-gw config hash-update --config-dir ~/.config/senechal-gw/plugins
-```
-*Why this matters:* This protects against "configuration injection" attacks where an attacker with limited filesystem access might attempt to add a backdoor API token or redirect a webhook. By requiring a `.checksums` file in every directory containing sensitive data, we ensure that an attacker must be able to write to both the sensitive file and its corresponding checksum file.
-
-## 5. Configuration Reference
->>>>>>> gemini/sprint3-user-guide
-The Senechal Gateway's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings and define plugin behavior.
+## 4. Configuration Reference
+The Senechal Gateway's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings, define plugin behavior, and set up advanced features like webhooks and routing.
 
 ### Example Configuration
 Below is a comprehensive example `config.yaml` with explanations for each major section and field.
@@ -730,253 +281,31 @@ plugins:
     config:
       credentials_file: ${GOOGLE_CREDS_PATH}
 
-# API Service Configuration
-api:
-  enabled: true          # Set to true to enable the HTTP API
-  listen: "0.0.0.0:8080" # Address and port for the API listener
-  auth:
-    api_key: ${API_KEY}  # Legacy support (admin scope)
-    tokens: []           # Scoped tokens (preferred)
-```
-
-## 6. Authentication & Authorization
-The Senechal Gateway uses a scope-based Bearer token authentication system to control access to its API and events.
-
-<<<<<<< HEAD
-=======
-### Bearer Token Authentication
-All requests to the management API (except `/healthz`) must include an `Authorization` header:
-
-```http
-Authorization: Bearer <your-token-here>
-```
-
-Tokens are defined in your configuration (usually `tokens.yaml`):
-
-```yaml
-# tokens.yaml
-api:
-  auth:
-    tokens:
-      - token: ${MONITOR_TOKEN}
-        scopes: ["plugin:ro", "events:ro"]
-      - token: ${ADMIN_TOKEN}
-        scopes: ["*"]
-```
-
-### API Scopes
-Scopes define what an authenticated "Principal" is allowed to do.
-
-| Scope | Description |
-| :--- | :--- |
-| `*` | Full administrative access (Superuser) |
-| `plugin:ro` | Read-only access to plugins and command execution (read commands only) |
-| `plugin:rw` | Ability to trigger any plugin command (implies `plugin:ro`) |
-| `jobs:ro` | Ability to view job status and results |
-| `jobs:rw` | Ability to manage or delete jobs (implies `jobs:ro`) |
-| `events:ro` | Ability to stream system events via the `/events` endpoint |
-
-### Command Permission Types (Read vs Write)
-To support fine-grained authorization, plugin commands are classified as either `read` or `write`.
--   **Read Commands:** Informational commands that do not change state (e.g., `health`, `status`). These can be invoked by tokens with the `plugin:ro` scope.
--   **Write Commands:** Actions that mutate state, perform side effects, or fetch data (e.g., `poll`, `handle`, `sync`). These require the `plugin:rw` or `*` scope.
-
-By default, the `health` command is considered `read`, and all others are `write`. You can override this in the plugin's `manifest.yaml` (see [Plugin Development Guide](#manifest-command-metadata)).
-
-## 7. Using the API
-The Senechal Gateway provides a simple HTTP API to programmatically trigger plugins and retrieve job results. This is particularly useful for external systems, such as LLM agents or custom scripts, that need to interact with the gateway on-demand rather than relying solely on scheduled tasks.
-
-### API Endpoints Introduction
-The API is organized around plugins and jobs. All requests (except `/healthz`) require authentication.
-
-### POST /trigger/{plugin}/{command}
-This endpoint allows you to enqueue a job for a specific plugin and command. The API call returns immediately with a job ID, and the plugin execution happens asynchronously.
-
--   **Purpose:** Enqueue jobs on-demand.
--   **Authentication:** Requires a Bearer token with `plugin:rw` or `*` scope (or `plugin:ro` for read commands).
--   **URL Parameters:**
-    *   `{plugin}`: The name of the plugin to execute (e.g., `echo`, `my-custom-plugin`).
-    *   `{command}`: The command to execute on the plugin (e.g., `poll`, `handle`).
--   **Request Body:** An optional JSON payload that will be passed to the plugin as part of its `config` in the request envelope.
--   **Response (202 Accepted):**
-    ```json
-    {
-      "job_id": "uuid-v4-string",
-      "status": "queued",
-      "plugin": "plugin_name",
-      "command": "command_name"
-    }
-    ```
--   **Error Responses:**
-    *   `401 Unauthorized`: Missing or invalid API key.
-    *   `403 Forbidden`: Insufficient scope for the requested command.
-    *   `400 Bad Request`: Plugin not found or command not supported.
-    *   `500 Internal Server Error`: Failed to enqueue job.
-
-#### Example: Triggering the `echo` plugin
-```bash
-API_KEY="your_api_key_here" # Replace with your actual API key
-curl -X POST http://localhost:8080/trigger/echo/poll \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Triggered via API"}'
-```
-
-### GET /job/{job_id}
-This endpoint allows you to retrieve the current status and, upon completion, the results of a previously triggered job.
-
--   **Purpose:** Check job status and retrieve execution results.
--   **Authentication:** Requires a Bearer token with `jobs:ro`, `jobs:rw`, or `*` scope.
--   **URL Parameters:**
-    *   `{job_id}`: The UUID of the job, as returned by the `POST /trigger` endpoint.
--   **Response (200 OK):**
-    *   **Queued Job:**
-        ```json
-        {
-          "job_id": "uuid-v4-string",
-          "status": "queued",
-          "plugin": "plugin_name",
-          "command": "command_name",
-          "created_at": "ISO8601-timestamp"
-        }
-        ```
-    *   **Running Job:**
-        ```json
-        {
-          "job_id": "uuid-v4-string",
-          "status": "running",
-          "plugin": "plugin_name",
-          "command": "command_name",
-          "started_at": "ISO8601-timestamp"
-        }
-        ```
-    *   **Completed Job:**
-        ```json
-        {
-          "job_id": "uuid-v4-string",
-          "status": "completed",
-          "plugin": "plugin_name",
-          "command": "command_name",
-          "result": { /* Plugin's JSON response from stdout */ },
-          "started_at": "ISO8601-timestamp",
-          "completed_at": "ISO8601-timestamp"
-        }
-        ```
--   **Error Responses:**
-    *   `401 Unauthorized`: Missing or invalid API key.
-    *   `404 Not Found`: Job ID not found.
-
-#### Example: Polling for job completion
-```bash
-API_KEY="your_api_key_here" # Replace with your actual API key
-JOB_ID="your_job_id_from_trigger_response" # Replace with actual job ID
-
-# Poll for job status
-curl http://localhost:8080/job/$JOB_ID \
-  -H "Authorization: Bearer $API_KEY"
-```
-
-### API Use Cases
--   **LLM Tool Calling:** Integrate Senechal Gateway as a tool for Large Language Models (LLMs), allowing them to trigger actions (e.g., "check my calendar," "sync health data") programmatically.
--   **External Automation Scripts:** Use custom scripts, cron jobs, or other automation tools to interact with Senechal Gateway.
--   **Manual Testing:** Developers can quickly trigger plugins via `curl` for testing and debugging without waiting for scheduler intervals.
--   **Webhook-style Triggers:** Other services can send requests to the `/trigger` endpoint to initiate workflows in Senechal Gateway.
-
-## 8. Webhooks
-The Senechal Gateway can act as a webhook listener, allowing external services (like GitHub, GitLab, or Stripe) to trigger internal plugin commands directly via HTTP POST requests.
-
-### Webhook Configuration
-Webhooks are defined in the `webhooks` section of your configuration. It is recommended to keep these in a separate `webhooks.yaml` file.
-
-```yaml
-# webhooks.yaml
 webhooks:
-  listen: ":8081"  # Separate port for webhooks (optional)
-  endpoints:
-    - path: /webhook/github-push
-      plugin: github-handler
-      command: handle
-      secret: ${GITHUB_WEBHOOK_SECRET}
-      signature_header: "X-Hub-Signature-256"
-      max_body_size: 2MB
+  listen: 127.0.0.1:8081           # Address and port for the webhook listener.
+  endpoints:                       # List of webhook endpoints
+    - path: /hook/github           # URL path for this endpoint
+      plugin: github-handler       # Plugin to invoke with the 'handle' command
+      secret: ${GITHUB_WEBHOOK_SECRET} # Secret for HMAC-SHA256 verification
+      signature_header: X-Hub-Signature-256 # HTTP header containing the signature
+      max_body_size: 1MB           # Max request body size.
+
+routes:
+  # Define how events emitted by plugins are routed to other plugins
+  - from: withings                 # Source plugin emitting the event
+    event_type: new_health_data    # Type of event to match
+    to: health-analyzer            # Target plugin to receive the event (via 'handle' command)
+
+  - from: health-analyzer
+    event_type: alert
+    to: notify
 ```
 
--   **path:** The URL path the gateway listens on.
--   **plugin/command:** The target to trigger when a valid request arrives.
--   **secret:** The HMAC secret used to verify the sender.
--   **signature_header:** The HTTP header containing the HMAC signature.
--   **max_body_size:** Safety limit for inbound payloads.
+#### Environment Variable Interpolation
+The Senechal Gateway supports environment variable interpolation within the `config.yaml` using the `${VAR_NAME}` syntax (e.g., `${GITHUB_WEBHOOK_SECRET}`). This is particularly useful for injecting sensitive information like API keys and secrets without hardcoding them directly into the configuration file. When the gateway loads the configuration, it will replace these placeholders with the values from the environment.
 
-### HMAC Verification
-Security is paramount for webhooks. Senechal Gateway requires HMAC-SHA256 signature verification for all webhook endpoints. It supports both plain hex signatures and GitHub-style `sha256=<hex>` formats.
 
-When a request arrives, the gateway:
-1.  Reads the raw request body.
-2.  Computes the HMAC-SHA256 hash using the configured `secret`.
-3.  Performs a constant-time comparison against the value in the `signature_header`.
-
-If verification fails, the gateway returns `401 Unauthorized` and does *not* trigger the plugin.
-
-### Webhook Security Best Practices
--   **Use HTTPS:** Always terminate TLS (via Nginx or Caddy) before the gateway to protect the HMAC secret and payload.
--   **Secret Rotation:** Regularly rotate your webhook secrets and update the gateway configuration.
--   **Separate Port:** Use a different port or even a different network interface for webhooks compared to the management API.
--   **Least Privilege:** Ensure the target plugin command is designed to handle untrusted input safely.
-
-## 9. Monitoring & Observability
-Senechal Gateway provides built-in endpoints for health monitoring and real-time event streaming, enabling effective observability of your integration workflows.
-
-### GET /healthz
-The `/healthz` endpoint provides a quick summary of the gateway's operational status. It does not require authentication, making it suitable for use by load balancers, container orchestrators (like Kubernetes), or simple monitoring scripts.
-
--   **Endpoint:** `GET http://localhost:8080/healthz`
--   **Response (200 OK):**
-    ```json
-    {
-      "status": "ok",
-      "uptime_seconds": 3600,
-      "queue_depth": 5,
-      "plugins_loaded": 12,
-      "plugins_circuit_open": 0
-    }
-    ```
-
-**Key Metrics:**
--   **queue_depth:** The number of jobs currently waiting to be processed. A consistently high number may indicate the need for more resources or plugin optimization.
--   **plugins_circuit_open:** The number of plugins whose circuit breakers are currently open due to repeated failures.
-
-### GET /events (SSE)
-The `/events` endpoint provides a real-time stream of system events using Server-Sent Events (SSE). This is invaluable for debugging complex workflows and monitoring the gateway's activity as it happens.
-
--   **Endpoint:** `GET http://localhost:8080/events`
--   **Authentication:** Requires a Bearer token with `events:ro` or `*` scope.
--   **Format:** `text/event-stream`
-
-**Streaming with curl:**
-```bash
-TOKEN="your_token"
-curl -N -H "Authorization: Bearer $TOKEN" http://localhost:8080/events
-```
-
-**Example Event Stream:**
-```text
-id: 101
-event: job_enqueued
-data: {"job_id":"...","plugin":"echo","command":"poll"}
-
-id: 102
-event: job_started
-data: {"job_id":"...","plugin":"echo"}
-
-id: 103
-event: job_completed
-data: {"job_id":"...","plugin":"echo","status":"ok"}
-```
-
-The gateway maintains a small buffer of recent events. If a client disconnects and reconnects using the `Last-Event-ID` header, the gateway will attempt to replay the missed events.
-
->>>>>>> gemini/sprint3-user-guide
-## 10. Plugin Development Guide
+## 5. Plugin Development Guide
 This section guides developers on how to create their own plugins for the Senechal Gateway.
 
 ### Bash Plugins
@@ -1061,7 +390,7 @@ EOF
 
 When the Senechal Gateway runs and the `hello-world` plugin's schedule is due, it will execute `run.sh`. The script will read the incoming request, construct a greeting using the configured `name`, and output a JSON response. The gateway will then capture the log message and update the plugin's state with `last_run_job_id` and `last_greeting`.
 
-**Important:** Ensure your Bash scripts have a [shebang line](https://en.wikipedia.org/wiki/Shebang_(Unix)) (e.g., `#!/usr/bin/env bash`) and are executable (`chmod +x`). Avoid complex background processes or interactive commands within your plugins. For parsing JSON in Bash, `jq` is highly recommended. If `jq' is not available on the execution environment, you would need to implement JSON parsing using `python -c` or `sed` (as seen in the `echo` plugin's `run.sh` script), or ensure `jq` is installed.
+**Important:** Ensure your Bash scripts have a [shebang line](https://en.wikipedia.org/wiki/Shebang_(Unix)) (e.g., `#!/usr/bin/env bash`) and are executable (`chmod +x`). Avoid complex background processes or interactive commands within your plugins. For parsing JSON in Bash, `jq` is highly recommended. If `jq` is not available on the execution environment, you would need to implement JSON parsing using `python -c` or `sed` (as seen in the `echo` plugin's `run.sh` script), or ensure `jq` is installed.
 
 ### Python Plugins
 Developing plugins in Python is a common and powerful approach, leveraging Python's rich ecosystem. The principle remains the same as Bash plugins: read JSON from stdin, process, and write JSON to stdout.
@@ -1161,37 +490,7 @@ When the Senechal Gateway executes the `python-greet` plugin, `run.py` will rece
 -   Use `json.dump(response, sys.stdout)` to write the response. It's good practice to add `sys.stdout.write("\n")` to ensure the output is properly terminated.
 -   If your Python plugin requires external libraries, you should manage them within the plugin's directory (e.g., using a `venv` and installing dependencies locally) or ensure they are available in the execution environment. The Senechal Gateway itself does not manage plugin-specific Python environments.
 
-### Manifest Command Metadata
-To take full advantage of Senechal Gateway's authorization system, you should provide metadata for the commands your plugin supports in its `manifest.yaml`.
-
-#### Command Formats
-The `commands` field in `manifest.yaml` supports two formats:
-
-1.  **Simple Array (Legacy):**
-    ```yaml
-    commands: [poll, health]
-    ```
-    *Behavior:* `health` is automatically assigned `type: read`, all others are `type: write`.
-
-2.  **Object Array (Recommended):**
-    ```yaml
-    commands:
-      - name: poll
-        type: write
-      - name: health
-        type: read
-      - name: status
-        type: read
-    ```
-
-#### Read vs Write Commands
--   **read:** Commands that only return information and have no side effects. Can be executed by tokens with `plugin:ro` scope.
--   **write:** Commands that fetch data, update external systems, or change local state. Require `plugin:rw` scope.
-
-#### Why use explicit types?
-Explicitly marking commands as `read` allows you to create highly restricted "Monitoring Tokens" that can check plugin health and status but cannot trigger data synchronization or other potentially expensive or sensitive actions.
-
-## 11. Operations and Troubleshooting
+## 6. Operations and Troubleshooting
 This section covers how to operate the Senechal Gateway in production or development environments, including monitoring, understanding logs, and common troubleshooting scenarios.
 
 ### Logging
