@@ -213,7 +213,7 @@ One process per job. No long-lived plugin processes.
 
 Process spawn overhead is ~5ms on Linux — irrelevant when the shortest interval is 5 minutes.
 
-**Persistent plugin connections (WebSockets, long-polling) are out of scope.** If needed, run as a separate service that pushes events into Senechal via the webhook endpoint. No streaming plugin mode — not now, not ever for this core.
+**Persistent connections (WebSockets, long-polling) are out of scope.** If needed, run as a separate service that pushes events into Senechal via the webhook endpoint. No streaming plugin mode — not now, not ever for this core.
 
 ### 5.2 Commands
 
@@ -245,6 +245,20 @@ plugins/
 
 ### 5.4 Manifest
 
+**Array format (legacy, deprecated Sprint 5):**
+```yaml
+name: withings
+version: 1.0.0
+protocol: 1
+entrypoint: run.py
+description: "Fetch health data from Withings API"
+commands: [poll, handle, health]  # All treated as type: write
+config_keys:
+  required: [client_id, client_secret]
+  optional: [access_token]
+```
+
+**Object format (Sprint 3+, recommended):**
 ```yaml
 name: withings
 version: 1.0.0
@@ -252,22 +266,41 @@ protocol: 1
 entrypoint: run.py
 description: "Fetch health data from Withings API"
 commands:
-  - name: poll
-    type: write
-  - name: handle
-    type: write
-  - name: health
+  poll:
     type: read
+    description: "Fetch latest measurements from Withings API"
+  sync:
+    type: write
+    description: "Push weight data to Withings API"
+  oauth_callback:
+    type: write
+    description: "Handle OAuth2 callback and store tokens"
+  health:
+    type: read
+    description: "Health check"
 config_keys:
   required: [client_id, client_secret]
   optional: [access_token]
 ```
 
+**Command type semantics (Sprint 3+):**
+- `type: read` - No external side effects, idempotent (safe for automated retries)
+  - Examples: poll, fetch, get, list, health
+  - Can update local plugin state (e.g., cache, timestamps)
+  - Cannot POST/PUT/DELETE to external APIs
+- `type: write` - Modifies external state, may not be idempotent
+  - Examples: sync, send, notify, oauth_callback, delete
+  - Default if type not specified (paranoid default)
+
+**Purpose:** Enables manifest-driven token scopes (`plugin:ro` vs `plugin:rw`) without hardcoding command knowledge in auth middleware.
+
+**Validation:**
 - `protocol` — must match a version the core supports. Mismatch → plugin not loaded.
 - `entrypoint` — mandatory. Core constructs execution path as `<plugins_dir>/<plugin_name>/<entrypoint>`.
 - `config_keys.required` — validated at load time. Missing keys → plugin not loaded, error logged.
-- `commands` — list of supported commands and their type (`read` or `write`).
-  - Back-compat: `commands: [poll, handle, health]` is accepted; defaults are `health=read`, everything else `write`.
+- `commands.*.type` — must be `read` or `write` if specified. Invalid type → plugin not loaded.
+
+See card #36 (Manifest Command Type Metadata).
 
 ### 5.5 Trust & Execution
 
@@ -516,7 +549,6 @@ Enqueues a job for the specified plugin and command. Returns immediately with a 
 **Error Responses:**
 - `401 Unauthorized` - Missing or invalid API key
 - `400 Bad Request` - Plugin not found or command not supported
-- `403 Forbidden` - Insufficient scope for requested command
 - `500 Internal Server Error` - Failed to enqueue job
 
 **Example:**
@@ -576,71 +608,78 @@ Retrieves the status and results of a previously triggered job.
 
 **Error Responses:**
 - `401 Unauthorized` - Missing or invalid API key
-- `403 Forbidden` - Insufficient scope
 - `404 Not Found` - Job ID not found
 
-### 8.4 GET /events
+### 8.4 Authentication & Authorization (Sprint 3+)
 
-Streams server events as Server-Sent Events (SSE).
+**Bearer token authentication** with **manifest-driven scopes** for fine-grained authorization.
 
-**Request:**
-- Header: `Authorization: Bearer <api_key>`
-- Optional header: `Last-Event-ID: <id>` to resume from a previously seen event ID.
+**Token registry** (`tokens.yaml`):
+- Multiple tokens with individual scope definitions
+- Each token references a scope file (JSON)
+- BLAKE3 hash ensures scope file integrity
+- Environment variable references for keys (never plaintext)
 
-**Response (200 OK):**
-- `Content-Type: text/event-stream`
-- Each event has an `id`, an `event` type, and JSON `data`.
+**Scope syntax:**
+- **Manifest-driven:** `{plugin}:ro|rw` - Expands based on plugin manifest command types
+- **Granular:** `{action}:{resource}:{command}` - Direct permission specification
+- **Explicit deny:** `{plugin}:deny:{command}` - Overrides grants
 
-**Notes:**
-- The server keeps a small in-memory ring buffer of recent events. Late clients will receive buffered events on connect (or on reconnect when using `Last-Event-ID`).
-- Event payloads are best-effort and intended for observability, not as a durable audit log.
+**Scope types:**
+- `read:*` - All GET endpoints (jobs, events, healthz, plugins, queue)
+- `trigger:{plugin}:{command}` - POST /trigger permissions
+- `admin:*` - Admin operations (reload, reset)
+- `{plugin}:ro` - Read-only plugin commands (type: read in manifest)
+- `{plugin}:rw` - All plugin commands (read + write)
+- `{plugin}:allow:{command}` - Specific command
+- `{plugin}:deny:{command}` - Explicit denial (precedence over grants)
 
-**Example (curl):**
-```bash
-curl -N http://localhost:8080/events \
-  -H "Authorization: Bearer my-api-key-123"
-```
-
-### 8.5 Authentication
-
-Bearer token authentication. Supports a legacy single API key, and optionally a list of scoped tokens.
-
-- Tokens should be stored in environment variables and interpolated: `${SENECHAL_TOKEN_ADMIN}`
-- All protected API requests must include `Authorization: Bearer <token>` header
-- Invalid or missing token returns `401 Unauthorized`
-- Valid token with insufficient scope returns `403 Forbidden`
-
-**Config (legacy single token, full access):**
+**Example tokens.yaml:**
 ```yaml
-api:
-  auth:
-    api_key: ${SENECHAL_API_KEY}
+tokens:
+  - name: admin-cli
+    key: ${ADMIN_API_KEY}
+    scopes_file: scopes/admin-cli.json
+    scopes_hash: blake3:a3f8c2d9...
+
+  - name: github-integration
+    key: ${GITHUB_API_KEY}
+    scopes_file: scopes/github-integration.json
+    scopes_hash: blake3:b4e9d3c0...
 ```
 
-**Config (scoped tokens):**
-```yaml
-api:
-  auth:
-    tokens:
-      - token: ${SENECHAL_TOKEN_RO}
-        scopes: [plugin:ro, jobs:ro, events:ro]
-      - token: ${SENECHAL_TOKEN_ADMIN}
-        scopes: ["*"]
+**Example scope file (scopes/github-integration.json):**
+```json
+{
+  "scopes": [
+    "read:jobs",
+    "read:events",
+    "github-handler:rw",
+    "withings:ro"
+  ]
+}
 ```
 
-### 8.6 Token Scopes
+**Authorization middleware:**
+1. Extract bearer token from `Authorization` header
+2. Lookup token in registry
+3. Load and verify scope file (BLAKE3 hash check)
+4. Expand manifest-driven scopes using plugin registry
+5. Check if requested action matches any granted scope
+6. Return 403 if denied, proceed if allowed
 
-Well-known scopes:
+**Backward compatibility:**
+- Sprint 3-4: Support legacy `api.auth.api_key` (single key, full access)
+- Sprint 5: Remove legacy support (breaking change)
 
-- `plugin:ro`: may trigger **read** commands only (manifest `commands[].type: read`)
-- `plugin:rw`: may trigger read or write commands
-- `jobs:ro`: may read job status (`GET /job/{job_id}`)
-- `events:ro`: may read the events stream (`GET /events`)
-- `*`: admin/full access
+See cards #35 (Token Scopes), #36 (Manifest Metadata), #38 (CLI Config Tool), #40 (TUI Token Manager).
 
-Write scopes imply the corresponding read scope (e.g., `plugin:rw` implies `plugin:ro`).
+- Key should be stored in environment variable and interpolated: `${API_KEY}`
+- All API requests must include `Authorization: Bearer <api_key>` header
+- Invalid or missing key returns `401 Unauthorized`
+- No key rotation mechanism in MVP (manual config update + reload)
 
-### 8.7 Use Cases
+### 8.5 Use Cases
 
 - **LLM Tool Calling:** LLM agents can curl /trigger to execute actions (e.g., "check my calendar", "sync Withings data")
 - **External Automation:** Scripts, cron jobs, or other services can trigger plugins programmatically
@@ -678,7 +717,7 @@ No replay protection in V1. No rate limiting in V1 (proxy responsibility if fron
 
 ### 9.3 Health Endpoint
 
-`/healthz` on an HTTP listener (webhook listener port preferred; MVP may serve this on the API listener port):
+`/healthz` on the webhook listener port:
 
 ```json
 {
@@ -821,36 +860,75 @@ job_log (
 
 ## 12. Configuration Reference
 
-Complete `config.yaml` with all supported fields and defaults:
+### 12.1 Multi-File Configuration (Sprint 3+)
+
+**Design decision (2026-02-10):** Configuration uses multiple files in `~/.config/senechal-gw/` (Nagios-style), compiled into monolithic runtime config with preflight validation.
+
+**Directory structure:**
+```
+~/.config/senechal-gw/           # Default XDG location
+├── config.yaml                  # Service-level settings
+├── plugins.yaml                 # Plugin configurations & schedules
+├── routes.yaml                  # Event routing rules
+├── webhooks.yaml                # Webhook endpoint definitions
+├── tokens.yaml                  # API token registry (BLAKE3 hashes)
+└── scopes/                      # Token scope definitions (JSON)
+    ├── admin-cli.json
+    ├── github-integration.json
+    └── webhook-integration.json
+```
+
+**Benefits:**
+- Focused files per concern (separation of concerns)
+- LLM-friendly (safe to edit specific files)
+- BLAKE3 hash integrity checking on scope files
+- Version control friendly (granular diffs)
+- Compile-time cross-reference validation
+
+**Config directory location:**
+- Default: `~/.config/senechal-gw/` (XDG Base Directory)
+- Override: `--config-dir /path/to/config/` flag
+- Environment: `$SENECHAL_CONFIG_DIR`
+
+**Loader behavior:**
+1. Discover config directory
+2. Load individual YAML files (config, plugins, routes, webhooks, tokens)
+3. Load referenced JSON scope files
+4. Verify BLAKE3 hashes on scope files (hard fail if mismatch)
+5. Interpolate environment variables
+6. Compile into monolithic RuntimeConfig
+7. Validate cross-file references
+8. Start or fail with detailed errors
+
+See cards #39 (Multi-File Config), #38 (CLI Config Tool), #40 (TUI Token Manager).
+
+### 12.2 File Format Reference
+
+**config.yaml** (Service settings):
 
 ```yaml
 service:
   name: senechal-gw
+  plugins_dir: /opt/senechal-gw/plugins
   tick_interval: 60s           # scheduler tick frequency
   log_level: info              # debug | info | warn | error
   log_format: json
   dedupe_ttl: 24h              # deduplication window
   job_log_retention: 30d       # prune completed jobs older than this
+  events:
+    enabled: true              # SSE /events endpoint
+    buffer_size: 100           # ring buffer for late-joining clients
 
 api:
-  enabled: false
+  enabled: true
   listen: 127.0.0.1:8080
-  auth:
-    # Legacy single token (admin/full access):
-    # api_key: ${SENECHAL_API_KEY}
-    #
-    # Scoped tokens:
-    tokens:
-      - token: ${SENECHAL_TOKEN_RO}
-        scopes: [plugin:ro, jobs:ro, events:ro]
-      - token: ${SENECHAL_TOKEN_ADMIN}
-        scopes: ["*"]
 
 state:
   path: ./data/state.db
+```
 
-plugins_dir: ./plugins
-
+**plugins.yaml** (Plugin configurations):
+```yaml
 plugins:
   withings:
     enabled: true
@@ -881,16 +959,28 @@ plugins:
       jitter: 3m
     config:
       credentials_file: ${GOOGLE_CREDS_PATH}
+```
 
+**webhooks.yaml** (Webhook endpoints):
+```yaml
 webhooks:
-  listen: 127.0.0.1:8081
-  endpoints:
-    - path: /hook/github
-      plugin: github-handler
-      secret: ${GITHUB_WEBHOOK_SECRET}
-      signature_header: X-Hub-Signature-256
-      max_body_size: 1MB
+  - name: github
+    path: /webhook/github
+    plugin: github-handler
+    command: handle
+    secret: ${GITHUB_WEBHOOK_SECRET}
+    signature_header: X-Hub-Signature-256
+    max_body_size: 1MB
 
+  - name: stripe
+    path: /webhook/stripe
+    plugin: stripe-handler
+    command: handle
+    secret: ${STRIPE_WEBHOOK_SECRET}
+```
+
+**routes.yaml** (Event routing):
+```yaml
 routes:
   - from: withings
     event_type: new_health_data
@@ -901,7 +991,41 @@ routes:
     to: notify
 ```
 
-Environment variable interpolation via `${VAR}` syntax. Secrets never stored in the config file itself.
+**tokens.yaml** (API token registry with BLAKE3 hashes):
+```yaml
+tokens:
+  - name: admin-cli
+    key: ${ADMIN_API_KEY}
+    scopes_file: scopes/admin-cli.json
+    scopes_hash: blake3:a3f8c2d9e1b4567890abcdef1234567890abcdef1234567890abcdef12345678
+    created_at: 2026-02-10T10:00:00Z
+    description: "Full admin access"
+
+  - name: github-integration
+    key: ${GITHUB_API_KEY}
+    scopes_file: scopes/github-integration.json
+    scopes_hash: blake3:b4e9d3c0f2a5678901bcdefg2345678901bcdefg2345678901bcdefg23456789
+    created_at: 2026-02-10T11:30:00Z
+    description: "GitHub webhook integration"
+```
+
+**scopes/github-integration.json** (Token scope definition):
+```json
+{
+  "scopes": [
+    "read:jobs",
+    "read:events",
+    "github-handler:rw"
+  ],
+  "metadata": {
+    "description": "GitHub webhook integration",
+    "created_at": "2026-02-10T11:30:00Z",
+    "purpose": "Allow GitHub to query job status and trigger handlers"
+  }
+}
+```
+
+Environment variable interpolation via `${VAR}` syntax across all files. Secrets never stored in config files themselves.
 
 ---
 

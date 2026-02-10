@@ -450,3 +450,89 @@ After completing Sprint 2-4 (routing, webhooks, reliability), we'll evaluate whe
 
 **Deliverable:** LLM can curl to trigger plugins and receive results
 
+**Status:** ✅ COMPLETE (PRs #8, #9, #10 merged)
+
+---
+
+## Sprint 3 Work Assignment (3 Agents in Parallel)
+
+**Goal:** Webhooks + Security + Observability
+- Multi-file config for LLM-safe editing
+- Token-based authorization with manifest-driven scopes
+- Real-time event streaming for debugging
+- Webhook endpoints with HMAC verification
+
+### Agent 1 (Claude) - Multi-File Config + Webhooks
+**Branch:** `claude/sprint3-config-webhooks`
+**Cards:** #39, #42
+
+**Scope:**
+- Multi-file configuration system
+  - `~/.config/senechal-gw/` directory structure
+  - Separate YAML files: config, plugins, routes, webhooks, tokens
+  - BLAKE3 hash verification on scope files
+  - Cross-file reference validation
+- Webhook listener (after multi-file config done)
+  - POST /webhook/{path} endpoints from webhooks.yaml
+  - HMAC-SHA256 signature verification (mandatory)
+  - Body size limits, job enqueueing
+  - Integration with existing queue
+
+**Dependencies:**
+- Config package (exists, will enhance)
+- Queue (exists): Enqueue()
+- No blockers, can start immediately
+
+**Lines:** ~400 (config loader + webhook listener + tests)
+
+**Test Strategy:**
+- Multi-file config loads correctly
+- BLAKE3 hash verification works
+- Cross-file references validated
+- Webhook HMAC verification (valid/invalid)
+- Job enqueueing from webhook
+
+### Agent 2 (Codex) - Metadata + Auth + Observability
+**Branch:** `codex/sprint3-metadata-auth-obs`
+**Cards:** #36, #35, #33, #43
+
+**Scope:**
+- Manifest command type metadata (#36 first)
+  - Add `type: read|write` to manifest commands
+  - Object format: `{name, type}` or legacy array
+  - GetReadCommands(), GetWriteCommands() methods
+- Token scopes (#35 after #36, needs #39)
+  - Scope expansion: `plugin:ro` → only read commands
+  - Authorization middleware for API, 403 on insufficient scope
+- SSE /events endpoint (#33)
+  - Server-Sent Events for real-time debugging
+  - Ring buffer for late-joining clients
+- /healthz endpoint (#43)
+  - GET /healthz returns JSON status
+  - uptime, queue_depth, plugins_loaded
+
+**Dependencies:**
+- #36 blocks #35
+- #35 needs #39 (can develop with mock, finalize after #39 merges)
+- #33, #43 independent
+
+**Lines:** ~650 total
+
+**Test Strategy:**
+- Manifest parsing, scope expansion, authorization
+- SSE streaming, /healthz performance (<10ms)
+
+## Sprint 3 Timeline
+
+**Estimated duration:** 2-3 days per agent (parallel execution)
+
+**Merge order:**
+1. **Agent 2** (codex) - #36 independent, #33/#43 independent, #35 after Agent 1's #39
+2. **Agent 1** (claude) - #39 enables Agent 2's #35, then #42
+3. **Agent 3** (Gemini) - Documentation after all dev work merged
+
+**Deliverable:**
+- GitHub webhook integration with scoped tokens
+- Real-time event stream for debugging
+- Multi-file config system for safe LLM editing
+
