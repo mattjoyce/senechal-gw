@@ -33,6 +33,8 @@ func main() {
 	switch command {
 	case "start":
 		os.Exit(runStart(os.Args[2:]))
+	case "config":
+		os.Exit(runConfig(os.Args[2:]))
 	case "version":
 		fmt.Printf("senechal-gw version %s\n", version)
 		os.Exit(0)
@@ -50,16 +52,27 @@ func printUsage() {
 	fmt.Print(`senechal-gw - Lightweight YAML-configured integration gateway
 
 Usage:
-  senechal-gw start [flags]    Start the service in foreground
-  senechal-gw version          Show version information
-  senechal-gw help             Show this help message
+  senechal-gw start [flags]         Start the service in foreground
+  senechal-gw config hash-update    Regenerate .checksums for scope files
+  senechal-gw version               Show version information
+  senechal-gw help                  Show this help message
 
 Flags for 'start':
-  --config PATH                Path to config file (default: ./config.yaml)
+  --config PATH                     Path to config file or directory
+                                    (default: auto-discover from standard locations)
+
+Config file discovery order:
+  1. --config flag (if provided)
+  2. $SENECHAL_CONFIG_DIR environment variable
+  3. ~/.config/senechal-gw/ (multi-file mode)
+  4. /etc/senechal-gw/ (multi-file mode)
+  5. ./config.yaml (legacy single-file mode)
 
 Examples:
   senechal-gw start
-  senechal-gw start --config /etc/senechal/config.yaml
+  senechal-gw start --config ~/.config/senechal-gw
+  senechal-gw start --config /etc/senechal/config.yaml  # legacy single-file
+  senechal-gw config hash-update --config-dir ~/.config/senechal-gw
 
 `)
 }
@@ -67,10 +80,21 @@ Examples:
 func runStart(args []string) int {
 	// Parse flags
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", "./config.yaml", "Path to configuration file")
+	configPath := fs.String("config", "", "Path to configuration file or directory")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
+	}
+
+	// Discover config if not specified
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+		fmt.Fprintf(os.Stderr, "Using discovered config: %s\n", *configPath)
 	}
 
 	// Load configuration
@@ -189,6 +213,67 @@ func runStart(args []string) int {
 	}
 
 	logger.Info("senechal-gw stopped")
+	return 0
+}
+
+// runConfig handles config subcommands.
+func runConfig(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config hash-update --config-dir PATH\n")
+		return 1
+	}
+
+	subcommand := args[0]
+	switch subcommand {
+	case "hash-update":
+		return runConfigHashUpdate(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s\n", subcommand)
+		return 1
+	}
+}
+
+// runConfigHashUpdate regenerates .checksums for scope files.
+func runConfigHashUpdate(args []string) int {
+	fs := flag.NewFlagSet("hash-update", flag.ExitOnError)
+	configDir := fs.String("config-dir", "", "Path to config directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return 1
+	}
+
+	// Discover config dir if not specified
+	if *configDir == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config directory: %v\n", err)
+			return 1
+		}
+
+		// Check if discovered path is a directory
+		info, err := os.Stat(discovered)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to stat config path: %v\n", err)
+			return 1
+		}
+
+		if !info.IsDir() {
+			fmt.Fprintf(os.Stderr, "Error: hash-update requires multi-file config mode (directory), but found single-file config: %s\n", discovered)
+			fmt.Fprintf(os.Stderr, "Hint: Migrate to multi-file config first.\n")
+			return 1
+		}
+
+		*configDir = discovered
+	}
+
+	// Generate checksums for scope files
+	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+	if err := config.GenerateChecksums(*configDir, scopeFiles); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to generate checksums: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Successfully generated .checksums for scope files in %s\n", *configDir)
 	return 0
 }
 

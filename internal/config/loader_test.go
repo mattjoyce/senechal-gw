@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -367,5 +368,363 @@ func TestValidate(t *testing.T) {
 				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestLoadMultiFileWithInclude tests loading configuration using include array.
+func TestLoadMultiFileWithInclude(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create main config.yaml with include array
+	configYAML := `
+include:
+  - plugins.yaml
+
+service:
+  name: senechal-gw
+  tick_interval: 60s
+  log_level: info
+state:
+  path: /var/lib/senechal-gw/state.db
+plugins_dir: /usr/local/lib/senechal-gw/plugins
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create plugins.yaml
+	pluginsYAML := `
+plugins:
+  echo:
+    enabled: true
+    schedule:
+      every: 5m
+      jitter: 30s
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "plugins.yaml"), []byte(pluginsYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load config
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	// Verify config loaded correctly
+	if cfg.Service.Name != "senechal-gw" {
+		t.Errorf("Service.Name = %q, want %q", cfg.Service.Name, "senechal-gw")
+	}
+	if cfg.State.Path != "/var/lib/senechal-gw/state.db" {
+		t.Errorf("State.Path = %q", cfg.State.Path)
+	}
+	if _, ok := cfg.Plugins["echo"]; !ok {
+		t.Error("echo plugin not loaded from included file")
+	}
+}
+
+// TestLoadMissingIncludeFile tests hard fail when included file is missing.
+func TestLoadMissingIncludeFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create config.yaml with include to non-existent file
+	configYAML := `
+include:
+  - missing.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should fail with good error message
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() should have failed with missing include file")
+	}
+
+	// Check error message is helpful
+	errMsg := err.Error()
+	if !contains(errMsg, "file not found") {
+		t.Errorf("Error message should mention 'file not found', got: %v", errMsg)
+	}
+	if !contains(errMsg, "Hint") {
+		t.Errorf("Error message should contain hint, got: %v", errMsg)
+	}
+}
+
+// TestLoadAbsoluteIncludePath tests include with absolute path.
+func TestLoadAbsoluteIncludePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create plugins.yaml in temp dir
+	pluginsYAML := `
+plugins:
+  test:
+    enabled: true
+    schedule:
+      every: 5m
+`
+	pluginsPath := filepath.Join(tmpDir, "plugins.yaml")
+	if err := os.WriteFile(pluginsPath, []byte(pluginsYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create config.yaml with absolute path include
+	configYAML := fmt.Sprintf(`
+include:
+  - %s
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+`, pluginsPath)
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should succeed
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if _, ok := cfg.Plugins["test"]; !ok {
+		t.Error("test plugin not loaded from absolute path include")
+	}
+}
+
+// TestLoadCircularInclude tests cycle detection in includes.
+func TestLoadCircularInclude(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a.yaml that includes b.yaml
+	aYAML := `
+include:
+  - b.yaml
+service:
+  tick_interval: 60s
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.yaml"), []byte(aYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create b.yaml that includes a.yaml (circular)
+	bYAML := `
+include:
+  - a.yaml
+state:
+  path: ./test.db
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "b.yaml"), []byte(bYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create main config
+	configYAML := `
+include:
+  - a.yaml
+plugins_dir: ./plugins
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should fail with cycle detection
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() should have failed with circular dependency")
+	}
+
+	if !contains(err.Error(), "circular dependency") {
+		t.Errorf("Error should mention circular dependency, got: %v", err)
+	}
+}
+
+// contains checks if a string contains a substring (helper for tests).
+func contains(s, substr string) bool {
+	return len(substr) > 0 && len(s) >= len(substr) &&
+		(func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		})()
+}
+
+// TestHashVerification tests BLAKE3 hash verification for scope files.
+func TestHashVerification(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create tokens.yaml (scope file)
+	tokensYAML := `
+api_key: original-secret
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create config with include for tokens.yaml
+	configYAML := `
+include:
+  - tokens.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  echo:
+    enabled: true
+    schedule:
+      every: 5m
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate checksums for tokens.yaml
+	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should succeed with correct hash
+	if _, err := Load(configPath); err != nil {
+		t.Fatalf("Load() with correct hash failed: %v", err)
+	}
+
+	// Modify tokens.yaml (tamper with it)
+	tamperedYAML := `
+api_key: tampered-secret
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tamperedYAML), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should fail with hash mismatch
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() should have failed with hash mismatch")
+	}
+
+	// Check error message is helpful
+	if !contains(err.Error(), "verification failed") {
+		t.Errorf("Error should mention verification failed, got: %v", err)
+	}
+}
+
+// TestDeepMerge tests deep merging of included configs.
+func TestDeepMerge(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create base.yaml with some defaults
+	baseYAML := `
+service:
+  name: senechal-gw
+  tick_interval: 60s
+  log_level: info
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "base.yaml"), []byte(baseYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create override.yaml that overrides log_level
+	overrideYAML := `
+service:
+  log_level: debug
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "override.yaml"), []byte(overrideYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create main config that includes both
+	configYAML := `
+include:
+  - base.yaml
+  - override.yaml
+
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  echo:
+    enabled: true
+    schedule:
+      every: 5m
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load config
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	// Verify merge: should have name from base, log_level from override
+	if cfg.Service.Name != "senechal-gw" {
+		t.Errorf("Service.Name = %q, want %q", cfg.Service.Name, "senechal-gw")
+	}
+	if cfg.Service.LogLevel != "debug" {
+		t.Errorf("Service.LogLevel = %q, want %q (should be overridden)", cfg.Service.LogLevel, "debug")
+	}
+	if cfg.Service.TickInterval != 60*time.Second {
+		t.Error("Service.TickInterval should be preserved from base")
+	}
+}
+
+// TestLegacySingleFile ensures backward compatibility with single config.yaml.
+func TestLegacySingleFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a single config.yaml with all settings
+	legacyYAML := `
+service:
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  echo:
+    enabled: true
+    schedule:
+      every: 5m
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(legacyYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load should work with single file (legacy mode)
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() legacy mode failed: %v", err)
+	}
+
+	// Verify config loaded correctly
+	if cfg.Service.TickInterval != 60*time.Second {
+		t.Error("tick_interval not parsed in legacy mode")
+	}
+	if _, ok := cfg.Plugins["echo"]; !ok {
+		t.Error("echo plugin not loaded in legacy mode")
 	}
 }
