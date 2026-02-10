@@ -43,10 +43,15 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	// If include array exists, load and merge included files
+	var includedPaths []string
 	if len(cfg.Include) > 0 {
 		configDir := filepath.Dir(absPath)
-		if err := loadIncludes(cfg, configDir, make(map[string]bool)); err != nil {
+		visited := make(map[string]bool)
+		if err := loadIncludes(cfg, cfg.Include, configDir, visited); err != nil {
 			return nil, err
+		}
+		for path := range visited {
+			includedPaths = append(includedPaths, path)
 		}
 	}
 
@@ -54,7 +59,7 @@ func Load(configPath string) (*Config, error) {
 	cfg = applyConfigDefaults(cfg)
 
 	// Hash-verify scope files (tokens.yaml, webhooks.yaml)
-	if err := verifyScopeFilesInConfig(cfg, filepath.Dir(absPath)); err != nil {
+	if err := verifyScopeFilesRecursively(includedPaths); err != nil {
 		return nil, err
 	}
 
@@ -120,8 +125,8 @@ func DiscoverConfigDir() (string, error) {
 
 // loadIncludes recursively loads and merges files from the include array.
 // visited tracks loaded files to prevent cycles.
-func loadIncludes(cfg *Config, baseDir string, visited map[string]bool) error {
-	for i, includePath := range cfg.Include {
+func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[string]bool) error {
+	for i, includePath := range includes {
 		// Apply env var interpolation to path
 		includePath = interpolateEnv(includePath)
 
@@ -170,7 +175,7 @@ func loadIncludes(cfg *Config, baseDir string, visited map[string]bool) error {
 		// If included file has its own includes, recursively load them
 		if len(includedCfg.Include) > 0 {
 			includedBaseDir := filepath.Dir(absPath)
-			if err := loadIncludes(cfg, includedBaseDir, visited); err != nil {
+			if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
 				return err
 			}
 		}
@@ -273,61 +278,42 @@ func deepMergeConfig(dst, src *Config) error {
 	return nil
 }
 
-// verifyScopeFilesInConfig verifies hash for scope files referenced in config.
+// verifyScopeFilesRecursively verifies hash for any scope files found in the included paths.
 // Scope files are auto-detected by basename (tokens.yaml, webhooks.yaml).
-func verifyScopeFilesInConfig(cfg *Config, baseDir string) error {
-	if len(cfg.Include) == 0 {
-		// Single-file mode - no hash verification
-		return nil
-	}
-
-	// Collect scope files from include array
-	var scopeFiles []string
-	for _, includePath := range cfg.Include {
-		includePath = interpolateEnv(includePath)
-
-		// Resolve to absolute path
-		var resolvedPath string
-		if filepath.IsAbs(includePath) {
-			resolvedPath = includePath
-		} else {
-			resolvedPath = filepath.Join(baseDir, includePath)
-		}
-
-		// Check if basename matches scope file patterns
-		basename := filepath.Base(resolvedPath)
+func verifyScopeFilesRecursively(paths []string) error {
+	// Group paths by directory to avoid loading the same checksums file multiple times
+	dirToFiles := make(map[string][]string)
+	for _, path := range paths {
+		basename := filepath.Base(path)
 		if basename == "tokens.yaml" || basename == "webhooks.yaml" {
-			scopeFiles = append(scopeFiles, resolvedPath)
+			dir := filepath.Dir(path)
+			dirToFiles[dir] = append(dirToFiles[dir], path)
 		}
 	}
 
-	if len(scopeFiles) == 0 {
-		// No scope files to verify
-		return nil
-	}
-
-	// Load checksums from baseDir
-	checksums, err := LoadChecksums(baseDir)
-	if err != nil {
-		return fmt.Errorf("checksum verification failed: %w\n"+
-			"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
-			"Run: senechal-gw config hash-update --config-dir %s", err, baseDir)
-	}
-
-	// Verify each scope file
-	for _, scopeFile := range scopeFiles {
-		basename := filepath.Base(scopeFile)
-
-		expectedHash, ok := checksums.Hashes[basename]
-		if !ok {
-			return fmt.Errorf("scope file %s has no hash in checksums\n"+
-				"Run: senechal-gw config hash-update --config-dir %s", basename, baseDir)
+	for dir, files := range dirToFiles {
+		// Load checksums from this directory
+		checksums, err := LoadChecksums(dir)
+		if err != nil {
+			return fmt.Errorf("checksum verification failed in %s: %w\n"+
+				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
+				"Run: senechal-gw config hash-update --config-dir %s", dir, err, dir)
 		}
 
-		if err := VerifyFileHash(scopeFile, expectedHash); err != nil {
-			return fmt.Errorf("scope file verification failed: %w\n"+
-				"This indicates tampering or unauthorized modification.\n"+
-				"If you edited this file intentionally, run: senechal-gw config hash-update --config-dir %s", err, baseDir)
+		// Verify each scope file in this directory
+		for _, path := range files {
+			basename := filepath.Base(path)
+			expectedHash, ok := checksums.Hashes[basename]
+			if !ok {
+				return fmt.Errorf("scope file %s has no hash in checksums at %s\n"+
+					"Run: senechal-gw config hash-update --config-dir %s", basename, dir, dir)
+			}
+
+			if err := VerifyFileHash(path, expectedHash); err != nil {
+				return fmt.Errorf("scope file verification failed for %s: %w\n"+
+					"This indicates tampering or unauthorized modification.\n"+
+					"If you edited this file intentionally, run: senechal-gw config hash-update --config-dir %s", path, err, dir)
+			}
 		}
 	}
 
