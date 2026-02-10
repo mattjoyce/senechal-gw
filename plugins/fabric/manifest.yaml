@@ -1,0 +1,13 @@
+name: fabric
+version: 0.1.0
+protocol: 1
+entrypoint: run.py
+description: "Wrapper for fabric AI pattern tool - processes text through predefined patterns"
+commands:
+  - name: execute
+    type: write
+  - name: health
+    type: read
+config_keys:
+  required: []
+  optional: [FABRIC_BIN_PATH, FABRIC_DEFAULT_MODEL]

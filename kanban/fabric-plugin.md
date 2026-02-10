@@ -1,6 +1,6 @@
 ---
 id: 45
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [plugin, fabric, ai]
