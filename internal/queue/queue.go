@@ -55,21 +55,37 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 		maxAttempts = 4
 	}
 
-	var payload any
-	if len(req.Payload) > 0 {
-		payload = string(req.Payload)
-	}
+	        var payload any
 
-	_, err := q.db.ExecContext(ctx, `
-INSERT INTO job_queue(
-  id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, parent_job_id, source_event_id, event_context_id
-)
-VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?);
-`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
-	if err != nil {
-		return "", fmt.Errorf("enqueue job: %w", err)
-	}
+	        if len(req.Payload) > 0 {
+
+	                payload = string(req.Payload)
+
+	        }
+
+	
+
+	        _, err := q.db.ExecContext(ctx, `
+
+	INSERT OR IGNORE INTO job_queue(
+
+	  id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
+
+	  created_at, parent_job_id, source_event_id, event_context_id
+
+	)
+
+	VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?);
+
+	`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
+
+	        if err != nil {
+
+	                return "", fmt.Errorf("enqueue job: %w", err)
+
+	        }
+
+	
 	return id, nil
 }
 

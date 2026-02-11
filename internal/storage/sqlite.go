@@ -110,6 +110,7 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, created_at);`,
 		`CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);`,
 		`CREATE INDEX IF NOT EXISTS event_context_parent_id_idx ON event_context(parent_id);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;`,
 	}
 
 	for _, stmt := range stmts {

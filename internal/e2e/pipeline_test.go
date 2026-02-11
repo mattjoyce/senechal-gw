@@ -52,7 +52,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	// 2. Create Real Bash Plugins
 	// Hop 1: Trigger (Emits event with origin metadata)
 	triggerScript := `#!/bin/bash
-echo '{"status":"ok","events":[{"type":"test.triggered","payload":{"origin_user":"matt","video_url":"https://yt.com/123"}}]}'
+echo '{"status":"ok","events":[{"type":"test.triggered","event_id":"stable-id","payload":{"origin_user":"matt","video_url":"https://yt.com/123"}}]}'
 `
 	createPlugin(t, pluginsDir, "trigger", triggerScript)
 
@@ -125,14 +125,17 @@ echo '{"status":"ok","logs":[{"level":"info","message":"verified all hops"}]}'
 	rootID, _ := q.Enqueue(ctx, queue.EnqueueRequest{
 		Plugin: "trigger", Command: "poll", SubmittedBy: "test",
 	})
-	_ = rootID
 
+	var rootJob *queue.Job
 	// Run until queue is empty (max 3 jobs expected)
 	for i := 0; i < 5; i++ {
 		job, _ := q.Dequeue(ctx)
 		if job == nil {
 			time.Sleep(100 * time.Millisecond)
 			continue
+		}
+		if job.ID == rootID {
+			rootJob = job
 		}
 		disp.ExecuteJob(ctx, job)
 	}
@@ -167,6 +170,17 @@ echo '{"status":"ok","logs":[{"level":"info","message":"verified all hops"}]}'
 	json.Unmarshal(lineage[len(lineage)-1].AccumulatedJSON, &finalBaggage)
 	if finalBaggage["origin_user"] != "matt" {
 		t.Errorf("origin_user baggage lost, got: %v", finalBaggage)
+	}
+
+	// 7. Verify Idempotency (Parent Retry)
+	// If we run the trigger job again, it should NOT create new child jobs
+	// because the (parent_job_id, source_event_id) unique constraint will trigger INSERT OR IGNORE.
+	disp.ExecuteJob(ctx, rootJob)
+
+	var childCount int
+	db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE parent_job_id = ?", rootID).Scan(&childCount)
+	if childCount != 1 {
+		t.Errorf("expected exactly 1 child job after parent retry, got %d", childCount)
 	}
 }
 

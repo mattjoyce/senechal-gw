@@ -475,16 +475,16 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 	}
 
 	for i := range events {
+		if events[i].EventID == "" {
+			events[i].EventID = uuid.NewString()
+		}
+		if events[i].Timestamp.IsZero() {
+			events[i].Timestamp = time.Now().UTC()
+		}
+		if events[i].Source == "" {
+			events[i].Source = job.Plugin
+		}
 		ev := events[i]
-		if ev.EventID == "" {
-			ev.EventID = uuid.NewString()
-		}
-		if ev.Timestamp.IsZero() {
-			ev.Timestamp = time.Now().UTC()
-		}
-		if ev.Source == "" {
-			ev.Source = job.Plugin
-		}
 
 		req := router.Request{
 			SourcePlugin:    job.Plugin,
