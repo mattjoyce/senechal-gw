@@ -10,7 +10,21 @@ import sys
 from datetime import datetime, timezone
 
 
-def execute_command(config, state, event):
+def poll_command(config, state):
+    """Poll command - for scheduled execution (not implemented yet)"""
+    return {
+        "status": "ok",
+        "state_updates": {
+            "last_poll": datetime.now(timezone.utc).isoformat(),
+        },
+        "logs": [
+            {"level": "info", "message": "Fabric poll command - no scheduled actions configured"},
+        ],
+    }
+
+
+def handle_command(config, state, event):
+    """Handle command - processes events with fabric patterns"""
     payload = event.get("payload", {})
 
     text = payload.get("text")
@@ -141,8 +155,10 @@ def main():
     state = request.get("state", {})
     event = request.get("event", {})
 
-    if command == "execute":
-        response = execute_command(config, state, event)
+    if command == "poll":
+        response = poll_command(config, state)
+    elif command == "handle":
+        response = handle_command(config, state, event)
     elif command == "health":
         response = health_command(config)
     else:

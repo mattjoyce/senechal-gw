@@ -1,0 +1,65 @@
+# Senechal Gateway - TEST Environment Configuration
+# This configuration is specifically for testing development changes
+
+service:
+  name: senechal-gw-test
+  tick_interval: 30s           # Faster ticks for testing
+  log_level: debug             # Verbose logging for debugging
+  log_format: json
+  dedupe_ttl: 1h               # Shorter TTL for testing
+  job_log_retention: 24h       # 1 day retention for test
+
+state:
+  path: ./data/senechal-test.db  # Separate test database
+
+# API Server: ENABLED for testing
+api:
+  enabled: true
+  listen: "0.0.0.0:8080"       # Listen on all interfaces in container
+  auth:
+    tokens:
+      - token: ${SENECHAL_TOKEN_ADMIN}
+        scopes: ["*"]
+      - token: ${SENECHAL_TOKEN_READONLY}
+        scopes: ["plugin:ro", "job:ro", "state:ro"]
+
+plugins_dir: ./plugins
+
+plugins:
+  # Echo plugin for basic testing
+  echo:
+    enabled: true
+    schedule:
+      every: 5m                # Minimum allowed interval
+      jitter: 10s
+    timeout: 30s
+    max_attempts: 3
+    circuit_breaker:
+      threshold: 3
+      reset_after: 2m          # Faster reset for testing
+    config:
+      message: "Test environment echo - ${SENECHAL_TEST_MESSAGE}"
+
+  # Fabric plugin (if available)
+  fabric:
+    enabled: false             # Disabled by default in test
+    schedule:
+      every: 5m
+      jitter: 30s
+    timeout: 60s
+    max_attempts: 3
+    config:
+      # Add fabric-specific test config here
+
+# Routes: event-driven plugin chaining (for testing routing)
+# routes:
+#   - from: echo
+#     event_type: test_event
+#     to: fabric
+
+# Webhooks: HTTP listener endpoints (for testing webhooks)
+# webhooks:
+#   test:
+#     path: /webhook/test
+#     secret: ${TEST_WEBHOOK_SECRET}
+#     route_to: echo

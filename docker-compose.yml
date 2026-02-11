@@ -1,0 +1,44 @@
+services:
+  senechal-gw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: senechal-gw-test
+    restart: unless-stopped
+
+    # Use test configuration
+    volumes:
+      - ./config.test.yaml:/app/config.yaml:ro
+      - ./plugins:/app/plugins:ro
+      - senechal-data:/app/data
+      - ./logs:/app/logs
+
+    # Environment variables for test
+    env_file:
+      - .env.test
+
+    environment:
+      - CONFIG_PATH=/app/config.yaml
+
+    # Expose API port
+    ports:
+      - "8080:8080"
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/senechal.pid"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  senechal-data:
+    driver: local
