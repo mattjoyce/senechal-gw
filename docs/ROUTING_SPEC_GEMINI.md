@@ -131,6 +131,20 @@ The Core maintains a `hop_count` in the `event_context`. If a pipeline exceeds 2
 
 ---
 
+## 7. CLI & Operations
+
+All orchestration-related CLI commands MUST support the following flags to ensure safety and observability:
+
+- **-v, --verbose:** Expose internal DAG resolution, baggage merging logic, and path calculations.
+- **--dry-run:** Preview the next steps of a pipeline without enqueuing jobs or cloning workspaces.
+
+### 7.1 LLM Operator Affordances (RFC-004)
+
+The Routing system exposes specific "Admin Utilities" for the LLM:
+*   `inspect <job_id>`: Returns the full Graph of what happened.
+*   `visualize-pipeline <name>`: Returns a Mermaid.js diagram of the DSL.
+*   `dry-run-step <step_id>`: Clones the workspace to a `/sandbox/` directory and executes the plugin.
+
 ## 8. Branching & Decisions (Multi-Event Pattern)
 
 To keep the DSL declarative and simple, Senechal avoids `if/else` logic in YAML. Instead, it uses **Multi-Event Branching**.

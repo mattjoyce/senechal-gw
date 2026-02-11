@@ -119,8 +119,13 @@ Plugins receive orchestration metadata via `stdin`.
 ### 5.1 The `inspect` Tool
 Use the `inspect` command to visualize the "Lineage" of a job. It shows exactly how the baggage accumulated and which files exist in each workspace.
 
+**CLI Principles:**
+All Senechal CLI commands support:
+*   `-v, --verbose`: To see internal routing decisions and baggage merges.
+*   `--dry-run`: To preview pipeline transitions without executing code.
+
 ```bash
-senechal-gw inspect <job_id>
+senechal-gw inspect <job_id> -v
 ```
 
 **Output Example:**

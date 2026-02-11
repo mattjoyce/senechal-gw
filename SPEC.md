@@ -804,6 +804,13 @@ senechal-gw logs [plugin]      # tail structured logs
 senechal-gw queue              # show pending/active jobs
 ```
 
+### 10.7 CLI Principles
+
+To ensure predictability and safety for both human and LLM operators, all CLI commands MUST adhere to these principles:
+
+- **Verbosity:** Provide `-v` and `--verbose` flags to expose internal logic, state transitions, and detailed error context.
+- **Safety:** Provide a `--dry-run` flag for any command that performs mutations (filesystem, database, or external side effects). The dry-run MUST preview exactly what would happen without committing changes.
+
 ---
 
 ## 11. Database Schema
