@@ -15,6 +15,8 @@ type Request struct {
 	SourcePlugin    string
 	SourceJobID     string
 	SourceContextID string
+	SourcePipeline  string
+	SourceStepID    string
 	SourceEventID   string
 	Event           protocol.Event
 }
@@ -24,6 +26,8 @@ type Dispatch struct {
 	Plugin          string
 	Command         string
 	Event           protocol.Event
+	PipelineName    string
+	StepID          string
 	ParentJobID     string
 	ParentContextID string
 	SourceEventID   string

@@ -46,6 +46,7 @@ type EnqueueRequest struct {
 	DedupeKey      *string
 	ParentJobID    *string
 	EventContextID *string
+	SourceEventID  *string
 }
 
 var ErrJobNotFound = errors.New("job not found")

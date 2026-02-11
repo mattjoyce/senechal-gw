@@ -17,10 +17,12 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/log"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/senechal-gw/internal/router"
 	"github.com/mattjoyce/senechal-gw/internal/scheduler"
 	"github.com/mattjoyce/senechal-gw/internal/state"
 	"github.com/mattjoyce/senechal-gw/internal/storage"
 	"github.com/mattjoyce/senechal-gw/internal/webhook"
+	"github.com/mattjoyce/senechal-gw/internal/workspace"
 )
 
 const version = "0.1.0-mvp"
@@ -131,9 +133,10 @@ func runStart(args []string) int {
 	defer db.Close()
 	logger.Info("database opened", "path", cfg.State.Path)
 
-	// Initialize queue and state store
+	// Initialize queue and state stores
 	q := queue.New(db)
 	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
 
 	// Discover plugins
 	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {
@@ -155,9 +158,27 @@ func runStart(args []string) int {
 	}
 	logger.Info("plugin discovery complete", "count", len(registry.All()))
 
+	configDir := *configPath
+	if stat, err := os.Stat(configDir); err != nil || !stat.IsDir() {
+		configDir = filepath.Dir(*configPath)
+	}
+
+	wsBaseDir := filepath.Join(filepath.Dir(cfg.State.Path), "workspaces")
+	wsManager, err := workspace.NewFSManager(wsBaseDir)
+	if err != nil {
+		logger.Error("failed to initialize workspace manager", "base_dir", wsBaseDir, "error", err)
+		return 1
+	}
+
+	routerEngine, err := router.LoadFromConfigDir(configDir, registry)
+	if err != nil {
+		logger.Error("failed to load router pipelines", "config_dir", configDir, "error", err)
+		return 1
+	}
+
 	// Create scheduler and dispatcher
 	sched := scheduler.New(cfg, q, logger)
-	disp := dispatch.New(q, st, registry, cfg)
+	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
 
 	// Setup graceful shutdown on SIGINT/SIGTERM
 	ctx, cancel := context.WithCancel(context.Background())

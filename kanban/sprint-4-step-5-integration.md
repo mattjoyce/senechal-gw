@@ -1,6 +1,6 @@
 ---
 id: 52
-status: todo
+status: done
 priority: High
 blocked_by: [49, 50, 51]
 assignee: "@codex"
@@ -32,3 +32,5 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
+- 2026-02-11: Started router/dispatcher integration: wiring compiled pipeline routing into successful job handling with downstream workspace clones, event-context accumulation, and traceability propagation. (by @codex)
+- 2026-02-11: Completed orchestration wiring with a concrete DSL-backed router, dispatcher-side downstream enqueue flow, per-hop context accumulation (`event_context`), workspace clone fan-out, and traceability propagation (`parent_job_id`/`event_context_id`/`source_event_id`), plus integration coverage proving a 2-hop A→B chain with baggage and artifact preservation. (by @codex)

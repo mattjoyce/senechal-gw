@@ -15,8 +15,10 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/protocol"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/senechal-gw/internal/router"
 	"github.com/mattjoyce/senechal-gw/internal/state"
 	"github.com/mattjoyce/senechal-gw/internal/storage"
+	"github.com/mattjoyce/senechal-gw/internal/workspace"
 )
 
 func TestMain(m *testing.M) {
@@ -38,6 +40,7 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 
 	q := queue.New(db)
 	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
 
 	// Create test plugin directory
 	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
@@ -49,7 +52,7 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 	cfg := config.Defaults()
 	cfg.PluginsDir = pluginsDir
 
-	disp := New(q, st, registry, cfg)
+	disp := New(q, st, contextStore, nil, nil, registry, cfg)
 
 	cleanup := func() {
 		db.Close()
@@ -475,5 +478,176 @@ func TestTruncateStderr(t *testing.T) {
 				t.Errorf("truncateStderr() length = %d, want %d", len(got), tt.want)
 			}
 		})
+	}
+}
+
+func TestDispatcher_RoutesTwoHopChainWithContextAndWorkspace(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(pluginsDir): %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+
+	scriptA := `#!/bin/bash
+payload="$(cat)"
+workspace_dir=$(echo "$payload" | sed -n 's/.*"workspace_dir":"\([^"]*\)".*/\1/p')
+if [ -n "$workspace_dir" ]; then
+  mkdir -p "$workspace_dir"
+  echo "artifact-from-a" > "$workspace_dir/artifact.txt"
+fi
+echo '{"status":"ok","events":[{"type":"chain.start","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
+`
+	scriptB := `#!/bin/bash
+read input
+echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
+`
+
+	registry := plugin.NewRegistry()
+	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
+	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
+
+	pipelinesDir := filepath.Join(tmpDir, "pipelines")
+	if err := os.MkdirAll(pipelinesDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(pipelinesDir): %v", err)
+	}
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: step_b
+        uses: plugin-b
+`
+	if err := os.WriteFile(filepath.Join(pipelinesDir, "chain.yaml"), []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(chain.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry)
+	if err != nil {
+		t.Fatalf("LoadFromConfigDir: %v", err)
+	}
+	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
+	wsManager, err := workspace.NewFSManager(workspaceBaseDir)
+	if err != nil {
+		t.Fatalf("NewFSManager: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginsDir = pluginsDir
+	cfg.Plugins["plugin-a"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+	cfg.Plugins["plugin-b"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Handle: 5 * time.Second,
+		},
+	}
+
+	disp := New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
+	ctx := context.Background()
+
+	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "plugin-a",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue(root): %v", err)
+	}
+
+	rootJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(root): %v", err)
+	}
+	if rootJob == nil {
+		t.Fatalf("expected root job")
+	}
+	disp.executeJob(ctx, rootJob)
+
+	var rootStatus string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", rootJobID).Scan(&rootStatus); err != nil {
+		t.Fatalf("query root status: %v", err)
+	}
+	if rootStatus != string(queue.StatusSucceeded) {
+		t.Fatalf("root status = %s, want %s", rootStatus, queue.StatusSucceeded)
+	}
+
+	childJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(child): %v", err)
+	}
+	if childJob == nil {
+		t.Fatalf("expected routed child job")
+	}
+	if childJob.Plugin != "plugin-b" || childJob.Command != "handle" {
+		t.Fatalf("unexpected child job: %+v", childJob)
+	}
+	if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
+		t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
+	}
+	if childJob.EventContextID == nil {
+		t.Fatalf("child event_context_id is nil")
+	}
+
+	var routedEvent protocol.Event
+	if err := json.Unmarshal(childJob.Payload, &routedEvent); err != nil {
+		t.Fatalf("unmarshal child payload: %v", err)
+	}
+	if routedEvent.Type != "chain.start" {
+		t.Fatalf("child event type = %q, want %q", routedEvent.Type, "chain.start")
+	}
+	if routedEvent.Payload["message"] != "hello" {
+		t.Fatalf("child event payload missing message: %+v", routedEvent.Payload)
+	}
+
+	childContext, err := contextStore.Get(ctx, *childJob.EventContextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(child): %v", err)
+	}
+	var accumulated map[string]any
+	if err := json.Unmarshal(childContext.AccumulatedJSON, &accumulated); err != nil {
+		t.Fatalf("unmarshal child context: %v", err)
+	}
+	if accumulated["origin_channel_id"] != "chan-1" {
+		t.Fatalf("origin_channel_id = %#v, want %q", accumulated["origin_channel_id"], "chan-1")
+	}
+
+	childArtifact := filepath.Join(workspaceBaseDir, childJob.ID, "artifact.txt")
+	b, err := os.ReadFile(childArtifact)
+	if err != nil {
+		t.Fatalf("read child artifact: %v", err)
+	}
+	if string(b) != "artifact-from-a\n" {
+		t.Fatalf("child artifact content = %q, want %q", string(b), "artifact-from-a\n")
+	}
+
+	disp.executeJob(ctx, childJob)
+
+	var childStatus string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", childJob.ID).Scan(&childStatus); err != nil {
+		t.Fatalf("query child status: %v", err)
+	}
+	if childStatus != string(queue.StatusSucceeded) {
+		t.Fatalf("child status = %s, want %s", childStatus, queue.StatusSucceeded)
 	}
 }

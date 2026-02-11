@@ -9,8 +9,10 @@
 //   - Spawn-per-command subprocess execution
 //   - Timeout enforcement with SIGTERM → 5s grace → SIGKILL
 //   - Protocol v1 JSON over stdin/stdout
+//   - Workspace/context injection for Governance Hybrid orchestration
 //   - State persistence via shallow merge
 //   - Stderr capture (capped at 64KB)
+//   - Event routing + downstream enqueueing
 //
 // Timeout handling:
 //   - Each command has a configured timeout (from config.TimeoutsConfig)
@@ -27,7 +29,6 @@
 //   - Success → succeeded status with state updates applied
 //
 // MVP limitations:
-//   - Events from plugins are logged but not routed (routing out of scope)
 //   - Retry logic not implemented (jobs fail permanently)
 //   - No circuit breaker enforcement
 package dispatch

@@ -8,15 +8,19 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mattjoyce/senechal-gw/internal/config"
 	"github.com/mattjoyce/senechal-gw/internal/log"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/protocol"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/senechal-gw/internal/router"
 	"github.com/mattjoyce/senechal-gw/internal/state"
+	"github.com/mattjoyce/senechal-gw/internal/workspace"
 )
 
 const (
@@ -29,21 +33,35 @@ const (
 
 // Dispatcher dequeues jobs and executes them by spawning plugin subprocesses.
 type Dispatcher struct {
-	queue    *queue.Queue
-	state    *state.Store
-	registry *plugin.Registry
-	cfg      *config.Config
-	logger   *slog.Logger
+	queue     *queue.Queue
+	state     *state.Store
+	contexts  *state.ContextStore
+	workspace workspace.Manager
+	router    router.Engine
+	registry  *plugin.Registry
+	cfg       *config.Config
+	logger    *slog.Logger
 }
 
 // New creates a new Dispatcher.
-func New(q *queue.Queue, st *state.Store, reg *plugin.Registry, cfg *config.Config) *Dispatcher {
+func New(
+	q *queue.Queue,
+	st *state.Store,
+	contexts *state.ContextStore,
+	ws workspace.Manager,
+	rt router.Engine,
+	reg *plugin.Registry,
+	cfg *config.Config,
+) *Dispatcher {
 	return &Dispatcher{
-		queue:    q,
-		state:    st,
-		registry: reg,
-		cfg:      cfg,
-		logger:   log.WithComponent("dispatch"),
+		queue:     q,
+		state:     st,
+		contexts:  contexts,
+		workspace: ws,
+		router:    rt,
+		registry:  reg,
+		cfg:       cfg,
+		logger:    log.WithComponent("dispatch"),
 	}
 }
 
@@ -136,14 +154,32 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	timeout := d.getTimeout(pluginCfg.Timeouts, job.Command)
 	deadline := time.Now().Add(timeout)
 
+	workspaceDir, err := d.ensureWorkspaceForJob(ctx, job)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to prepare workspace: %v", err)
+		jobLogger.Error(errMsg)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	requestContext, err := d.loadRequestContext(ctx, job)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to load event context: %v", err)
+		jobLogger.Error(errMsg)
+		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
 	// Build protocol request
 	req := &protocol.Request{
-		Protocol:   1,
-		JobID:      job.ID,
-		Command:    job.Command,
-		Config:     pluginCfg.Config,
-		State:      stateMap,
-		DeadlineAt: deadline,
+		Protocol:     1,
+		JobID:        job.ID,
+		Command:      job.Command,
+		Config:       pluginCfg.Config,
+		State:        stateMap,
+		Context:      requestContext,
+		WorkspaceDir: workspaceDir,
+		DeadlineAt:   deadline,
 	}
 
 	// For handle command, parse and include event payload
@@ -218,10 +254,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		jobLogger.Debug("applied state updates", "updates", resp.StateUpdates)
 	}
 
-	// Process events (stubbed for MVP - routing not implemented)
+	// Process events (routing + orchestration)
 	if len(resp.Events) > 0 {
-		jobLogger.Info("plugin emitted events (routing not implemented)", "count", len(resp.Events))
-		// TODO: Enqueue routing jobs based on config.Routes
+		if err := d.routeEvents(ctx, job, resp.Events, jobLogger); err != nil {
+			errMsg := fmt.Sprintf("failed to route events: %v", err)
+			jobLogger.Error(errMsg)
+			d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			return
+		}
 	}
 
 	// Mark job as succeeded
@@ -340,6 +380,180 @@ func (d *Dispatcher) spawnPlugin(
 
 		return resp, json.RawMessage(rawBytes), stderrStr, nil
 	}
+}
+
+func (d *Dispatcher) ensureWorkspaceForJob(ctx context.Context, job *queue.Job) (string, error) {
+	if d.workspace == nil {
+		return "", nil
+	}
+
+	if ws, err := d.workspace.Open(ctx, job.ID); err == nil {
+		return ws.Dir, nil
+	}
+
+	if job.ParentJobID != nil {
+		if ws, err := d.workspace.Clone(ctx, *job.ParentJobID, job.ID); err == nil {
+			return ws.Dir, nil
+		}
+	}
+
+	ws, err := d.workspace.Create(ctx, job.ID)
+	if err != nil {
+		return "", err
+	}
+	return ws.Dir, nil
+}
+
+func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (map[string]any, error) {
+	if d.contexts == nil || job.EventContextID == nil {
+		return nil, nil
+	}
+
+	eventCtx, err := d.contexts.Get(ctx, *job.EventContextID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]any)
+	if len(eventCtx.AccumulatedJSON) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(eventCtx.AccumulatedJSON, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []protocol.Event, logger *slog.Logger) error {
+	if d.router == nil {
+		logger.Info("plugin emitted events (router not configured)", "count", len(events))
+		return nil
+	}
+
+	var sourcePipeline, sourceStepID string
+	if d.contexts != nil && job.EventContextID != nil {
+		currentCtx, err := d.contexts.Get(ctx, *job.EventContextID)
+		if err != nil {
+			return fmt.Errorf("load current context %q: %w", *job.EventContextID, err)
+		}
+		sourcePipeline = currentCtx.PipelineName
+		sourceStepID = currentCtx.StepID
+	}
+
+	for i := range events {
+		ev := events[i]
+		if ev.EventID == "" {
+			ev.EventID = uuid.NewString()
+		}
+		if ev.Timestamp.IsZero() {
+			ev.Timestamp = time.Now().UTC()
+		}
+		if ev.Source == "" {
+			ev.Source = job.Plugin
+		}
+
+		req := router.Request{
+			SourcePlugin:    job.Plugin,
+			SourceJobID:     job.ID,
+			SourceContextID: deref(job.EventContextID),
+			SourcePipeline:  sourcePipeline,
+			SourceStepID:    sourceStepID,
+			SourceEventID:   ev.EventID,
+			Event:           ev,
+		}
+
+		nextDispatches, err := d.router.Next(ctx, req)
+		if err != nil {
+			return fmt.Errorf("resolve routes for event %q: %w", ev.Type, err)
+		}
+		if len(nextDispatches) == 0 {
+			continue
+		}
+
+		for _, next := range nextDispatches {
+			payload, err := json.Marshal(next.Event)
+			if err != nil {
+				return fmt.Errorf("marshal routed event payload: %w", err)
+			}
+
+			var contextID *string
+			if d.contexts != nil {
+				updates, err := payloadObjectFromEvent(next.Event)
+				if err != nil {
+					return err
+				}
+				parentCtxID := strPtrOrNil(next.ParentContextID)
+				createdCtx, err := d.contexts.Create(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
+				if err != nil {
+					return fmt.Errorf("create routed context (%s:%s): %w", next.PipelineName, next.StepID, err)
+				}
+				contextID = &createdCtx.ID
+			}
+
+			sourceEventID := next.SourceEventID
+			enqueueReq := queue.EnqueueRequest{
+				Plugin:         next.Plugin,
+				Command:        next.Command,
+				Payload:        payload,
+				SubmittedBy:    "route",
+				ParentJobID:    strPtrOrNil(next.ParentJobID),
+				EventContextID: contextID,
+				SourceEventID:  strPtrOrNil(sourceEventID),
+			}
+			childJobID, err := d.queue.Enqueue(ctx, enqueueReq)
+			if err != nil {
+				return fmt.Errorf("enqueue routed job for plugin %q: %w", next.Plugin, err)
+			}
+
+			if d.workspace != nil {
+				if _, err := d.workspace.Clone(ctx, job.ID, childJobID); err != nil {
+					return fmt.Errorf("clone workspace %q -> %q: %w", job.ID, childJobID, err)
+				}
+			}
+
+			logger.Info(
+				"enqueued routed job",
+				"event_type", ev.Type,
+				"to_plugin", next.Plugin,
+				"to_command", next.Command,
+				"child_job_id", childJobID,
+				"pipeline", next.PipelineName,
+				"step_id", next.StepID,
+				"event_context_id", deref(contextID),
+			)
+		}
+	}
+
+	return nil
+}
+
+func payloadObjectFromEvent(event protocol.Event) (json.RawMessage, error) {
+	if event.Payload == nil {
+		return json.RawMessage(`{}`), nil
+	}
+	raw, err := json.Marshal(event.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal event payload: %w", err)
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("event payload must be a JSON object: %w", err)
+	}
+	return raw, nil
+}
+
+func strPtrOrNil(v string) *string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	out := v
+	return &out
+}
+
+func deref(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 // getTimeout returns the timeout for a given command, falling back to defaults.
