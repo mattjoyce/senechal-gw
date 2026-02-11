@@ -1,8 +1,9 @@
 ---
 id: 37
-status: backlog
+status: done
 priority: Normal
-blocked_by: [35, 36]
+blocked_by: []
+assignee: "@claude"
 tags: [sprint-4, cli, config, validation]
 ---
 
@@ -531,3 +532,5 @@ The doctor command transforms "why isn't this working?" into "fix these 3 errors
 Implementation is straightforward—most validation logic is pure functions over the config and plugin registry. The hardest part is providing helpful error messages with precise field paths, but JSON path notation (`api.auth.tokens[1].scopes[2]`) makes it tractable.
 
 **Priority:** Normal. Nice to have before production, but not a blocker. Implement after #35 and #36 are stable.
+
+- 2026-02-11: Implemented `senechal doctor` command in `internal/doctor` package. Validates service config, plugin references (including required config keys), token scopes (manifest-driven and low-level), webhook paths/secrets, route cycles, plus warnings for unused plugins, missing env vars, deprecated syntax, and suspicious schedules. Human and JSON output formats, --strict flag. 18 tests passing. (by @claude)

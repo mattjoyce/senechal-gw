@@ -13,6 +13,7 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/config"
 	"github.com/mattjoyce/senechal-gw/internal/dispatch"
+	"github.com/mattjoyce/senechal-gw/internal/doctor"
 	"github.com/mattjoyce/senechal-gw/internal/inspect"
 	"github.com/mattjoyce/senechal-gw/internal/lock"
 	"github.com/mattjoyce/senechal-gw/internal/log"
@@ -34,22 +35,36 @@ func main() {
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
-	switch command {
-	case "start":
-		os.Exit(runStart(os.Args[2:]))
-	case "inspect":
-		os.Exit(runInspect(os.Args[2:]))
+	cmd := os.Args[1]
+	args := os.Args[2:]
+
+	switch cmd {
+	// --- NOUNS ---
+	case "system":
+		os.Exit(runSystemNoun(args))
 	case "config":
-		os.Exit(runConfig(os.Args[2:]))
+		os.Exit(runConfigNoun(args))
+	case "job":
+		os.Exit(runJobNoun(args))
+	case "plugin":
+		os.Exit(runPluginNoun(args))
+
+	// --- ROOT ALIASES (Backward Compatibility) ---
+	case "start":
+		os.Exit(runStart(args))
+	case "inspect":
+		os.Exit(runInspect(args))
+	case "doctor": // Alias for backward compat with Claude's branch
+		os.Exit(runConfigCheck(args))
 	case "version":
 		fmt.Printf("senechal-gw version %s\n", version)
 		os.Exit(0)
 	case "help", "--help", "-h":
 		printUsage()
 		os.Exit(0)
+
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
 		os.Exit(1)
 	}
@@ -59,36 +74,117 @@ func printUsage() {
 	fmt.Print(`senechal-gw - Lightweight YAML-configured integration gateway
 
 Usage:
-  senechal-gw start [flags]         Start the service in foreground
-  senechal-gw inspect <job_id>      Show lineage + baggage + workspace artifacts
-  senechal-gw config hash-update    Regenerate .checksums for scope files from root config
-  senechal-gw version               Show version information
-  senechal-gw help                  Show this help message
+  senechal-gw <noun> <verb> [flags]
 
-Flags for 'start':
-  --config PATH                     Path to config file or directory
-                                    (default: auto-discover from standard locations)
+Core Resources (Nouns):
+  system    Gateway lifecycle and health
+  config    System configuration and integrity
+  job       Execution instances and lineage
+  plugin    Capability discovery and management
 
-Config file discovery order:
-  1. --config flag (if provided)
-  2. $SENECHAL_CONFIG_DIR environment variable
-  3. ~/.config/senechal-gw/ (multi-file mode)
-  4. /etc/senechal-gw/ (multi-file mode)
-  5. ./config.yaml (legacy single-file mode)
+System Commands:
+  system start      Start the gateway service in foreground
+  system status     Show global gateway health (planned)
 
-Examples:
-  senechal-gw start
-  senechal-gw inspect 123e4567-e89b-12d3-a456-426614174000
-  senechal-gw start --config ~/.config/senechal-gw
-  senechal-gw start --config /etc/senechal/config.yaml  # legacy single-file
-  senechal-gw config hash-update --config ~/.config/senechal-gw/config.yaml
-  senechal-gw config hash-update --config-dir ~/.config/senechal-gw  # legacy
+Config Commands:
+  config lock       Authorize current state (update integrity hashes)
+  config check      Validate syntax, policy, and integrity
 
+Job Commands:
+  job inspect <id>  Show lineage, baggage, and workspace artifacts
+
+Plugin Commands:
+  plugin list       Show discovered plugins (planned)
+  plugin run <name> Manual execution (planned)
+
+General:
+  version           Show version information
+  help              Show this help message
+
+Use 'senechal-gw <noun> help' for resource-specific flags.
 `)
 }
 
+// --- NOUN DISPATCHERS ---
+
+func runSystemNoun(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw system <verb>\nVerbs: start, status\n")
+		return 1
+	}
+	switch args[0] {
+	case "start":
+		return runStart(args[1:])
+	case "status":
+		fmt.Println("system status is not yet implemented")
+		return 0
+	case "help":
+		fmt.Println("Usage: senechal-gw system start")
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown system verb: %s\n", args[0])
+		return 1
+	}
+}
+
+func runConfigNoun(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config <verb>\nVerbs: lock, check\n")
+		return 1
+	}
+	switch args[0] {
+	case "lock", "hash-update": // Alias for backward compat
+		return runConfigHashUpdate(args[1:])
+	case "check":
+		return runConfigCheck(args[1:])
+	case "help":
+		fmt.Println("Usage: senechal-gw config <verb> [--config PATH]")
+		fmt.Println("Verbs: lock, check")
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown config verb: %s\n", args[0])
+		return 1
+	}
+}
+
+func runJobNoun(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw job <verb>\nVerbs: inspect\n")
+		return 1
+	}
+	switch args[0] {
+	case "inspect":
+		return runInspect(args[1:])
+	case "help":
+		fmt.Println("Usage: senechal-gw job inspect <job_id>")
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown job verb: %s\n", args[0])
+		return 1
+	}
+}
+
+func runPluginNoun(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw plugin <verb>\nVerbs: list, run\n")
+		return 1
+	}
+	switch args[0] {
+	case "list":
+		fmt.Println("plugin list is not yet implemented")
+		return 0
+	case "run":
+		fmt.Println("plugin run is not yet implemented")
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown plugin verb: %s\n", args[0])
+		return 1
+	}
+}
+
+// --- VERB IMPLEMENTATIONS ---
+
 func runStart(args []string) int {
-	// Parse flags
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")
 	if err := fs.Parse(args); err != nil {
@@ -96,7 +192,6 @@ func runStart(args []string) int {
 		return 1
 	}
 
-	// Discover config if not specified
 	if *configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
@@ -107,19 +202,16 @@ func runStart(args []string) int {
 		fmt.Fprintf(os.Stderr, "Using discovered config: %s\n", *configPath)
 	}
 
-	// Load configuration
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		return 1
 	}
 
-	// Setup logging
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
 	logger.Info("senechal-gw starting", "version", version, "config", *configPath)
 
-	// Acquire PID lock for single-instance enforcement
 	pidLockPath := getPIDLockPath(cfg)
 	pidLock, err := lock.AcquirePIDLock(pidLockPath)
 	if err != nil {
@@ -129,7 +221,6 @@ func runStart(args []string) int {
 	defer pidLock.Release()
 	logger.Info("acquired PID lock", "path", pidLockPath)
 
-	// Open SQLite database
 	ctx := context.Background()
 	db, err := storage.OpenSQLite(ctx, cfg.State.Path)
 	if err != nil {
@@ -139,14 +230,11 @@ func runStart(args []string) int {
 	defer db.Close()
 	logger.Info("database opened", "path", cfg.State.Path)
 
-	// Initialize queue and state stores
 	q := queue.New(db)
 	st := state.NewStore(db)
 	contextStore := state.NewContextStore(db)
 
-	// Discover plugins
 	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {
-		// Simple logger wrapper for plugin discovery
 		switch level {
 		case "debug":
 			logger.Debug(msg, args...)
@@ -182,18 +270,15 @@ func runStart(args []string) int {
 		return 1
 	}
 
-	// Create scheduler and dispatcher
 	sched := scheduler.New(cfg, q, logger)
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
 
-	// Setup graceful shutdown on SIGINT/SIGTERM
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start scheduler and dispatcher in goroutines
 	errCh := make(chan error, 3)
 
 	go func() {
@@ -208,12 +293,7 @@ func runStart(args []string) int {
 		}
 	}()
 
-	// Start API server if enabled
 	if cfg.API.Enabled {
-		if cfg.API.Auth.APIKey == "" && len(cfg.API.Auth.Tokens) == 0 {
-			logger.Warn("API server enabled but no tokens configured (api.auth.api_key or api.auth.tokens) - this is insecure!")
-		}
-
 		tokens := make([]auth.TokenConfig, 0, len(cfg.API.Auth.Tokens))
 		for _, t := range cfg.API.Auth.Tokens {
 			tokens = append(tokens, auth.TokenConfig{
@@ -233,13 +313,9 @@ func runStart(args []string) int {
 			}
 		}()
 		logger.Info("API server enabled", "listen", cfg.API.Listen)
-	} else {
-		logger.Info("API server disabled")
 	}
 
-	// Start webhook server if configured
 	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
-		// Convert config and resolve secrets
 		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, make(map[string]string))
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
@@ -253,13 +329,10 @@ func runStart(args []string) int {
 			}
 		}()
 		logger.Info("webhook server enabled", "listen", webhookConfig.Listen, "endpoints", len(webhookConfig.Endpoints))
-	} else {
-		logger.Info("webhook server disabled")
 	}
 
 	logger.Info("senechal-gw running (press Ctrl+C to stop)")
 
-	// Wait for shutdown signal or error
 	select {
 	case sig := <-sigCh:
 		logger.Info("received shutdown signal", "signal", sig)
@@ -283,7 +356,7 @@ func runInspect(args []string) int {
 	}
 
 	if fs.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw inspect <job_id> [--config PATH]\n")
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw job inspect <job_id> [--config PATH]\n")
 		return 1
 	}
 	jobID := fs.Arg(0)
@@ -320,26 +393,63 @@ func runInspect(args []string) int {
 	return 0
 }
 
-// runConfig handles config subcommands.
-func runConfig(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config hash-update [--config PATH | --config-dir PATH] [-v|--verbose] [--dry-run]\n")
+func runConfigCheck(args []string) int {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	strict := fs.Bool("strict", false, "Treat warnings as errors")
+	format := fs.String("format", "human", "Output format (human, json)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
 	}
 
-	subcommand := args[0]
-	switch subcommand {
-	case "hash-update":
-		return runConfigHashUpdate(args[1:])
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s\n", subcommand)
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
 		return 1
 	}
+
+	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Plugin discovery error: %v\n", err)
+		return 1
+	}
+
+	doc := doctor.New(cfg, registry)
+	result := doc.Validate()
+
+	switch *format {
+	case "json":
+		out, err := doctor.FormatJSON(result)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "JSON format error: %v\n", err)
+			return 1
+		}
+		fmt.Println(out)
+	default:
+		fmt.Print(doctor.FormatHuman(result))
+	}
+
+	if !result.Valid {
+		return 1
+	}
+	if *strict && len(result.Warnings) > 0 {
+		return 2
+	}
+	return 0
 }
 
-// runConfigHashUpdate regenerates .checksums for scope files.
 func runConfigHashUpdate(args []string) int {
-	fs := flag.NewFlagSet("hash-update", flag.ExitOnError)
+	fs := flag.NewFlagSet("lock", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to root config file or directory")
 	configDir := fs.String("config-dir", "", "Path to config directory")
 	verbose := fs.Bool("verbose", false, "Show per-file hash progress")
@@ -357,8 +467,6 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	var targetDirs []string
-
-	// Legacy explicit directory mode.
 	if *configDir != "" {
 		targetDirs = []string{*configDir}
 	} else {
@@ -380,12 +488,11 @@ func runConfigHashUpdate(args []string) int {
 		targetDirs = dirs
 	}
 
-	// Generate checksums for scope files in each discovered/selected directory.
 	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
 	for _, dir := range targetDirs {
 		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, *dryRun)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to generate checksums in %s: %v\n", dir, err)
+			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 			return 1
 		}
 		if isVerbose {
@@ -406,19 +513,9 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	if *dryRun {
-		fmt.Printf("Dry run completed for %d director", len(targetDirs))
-		if len(targetDirs) == 1 {
-			fmt.Print("y (no files written):\n")
-		} else {
-			fmt.Print("ies (no files written):\n")
-		}
+		fmt.Printf("Dry run completed for %d directory/ies (no files written):\n", len(targetDirs))
 	} else {
-		fmt.Printf("Successfully generated .checksums for scope files in %d director", len(targetDirs))
-		if len(targetDirs) == 1 {
-			fmt.Print("y:\n")
-		} else {
-			fmt.Print("ies:\n")
-		}
+		fmt.Printf("Successfully locked configuration in %d directory/ies:\n", len(targetDirs))
 	}
 	for _, dir := range targetDirs {
 		fmt.Printf("  - %s\n", dir)
@@ -427,17 +524,11 @@ func runConfigHashUpdate(args []string) int {
 	return 0
 }
 
-// getPIDLockPath returns the PID lock file path.
-// Derives it from the database path if not explicitly configured.
 func getPIDLockPath(cfg *config.Config) string {
-	// Use the same directory as the state database, with .pid extension
 	dbPath := cfg.State.Path
 	dbDir := filepath.Dir(dbPath)
 	dbBase := filepath.Base(dbPath)
-
-	// Remove extension and add .pid
 	ext := filepath.Ext(dbBase)
 	nameWithoutExt := dbBase[:len(dbBase)-len(ext)]
-
 	return filepath.Join(dbDir, nameWithoutExt+".pid")
 }
