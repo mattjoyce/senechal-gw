@@ -78,7 +78,7 @@ After building the `senechal-gw` executable, you can start the gateway.
 3.  **Start the Senechal Gateway:**
     Run the gateway from the project root directory.
     ```bash
-    ./senechal-gw start
+    ./senechal-gw system start
     ```
     The gateway will start and begin logging its operations. You should see log entries indicating the scheduler is running and, after the configured interval, the `echo` plugin executing.
 
@@ -91,6 +91,17 @@ After building the `senechal-gw` executable, you can start the gateway.
     {"level":"info","job_id":"...","plugin_name":"echo","output":"Hello from Senechal Gateway!","status":"completed","msg":"plugin job completed","time":"..."}
     ```
     Press `Ctrl+C` to stop the gateway gracefully.
+
+---
+
+### CLI Principles
+
+To ensure predictability and safety, all Senechal CLI commands follow these standards:
+
+- **NOUN VERB Hierarchy:** Commands are organized by resource (e.g., `job inspect`, `config lock`).
+- **Verbosity:** Use `-v` or `--verbose` to see internal logic and state transitions.
+- **Dry Run:** Use `--dry-run` for any mutation to preview changes without committing them.
+- **Machine-Readability:** Use `--json` to get structured data for scripts or LLMs.
 
 
 ## 3. Core Concepts
@@ -521,16 +532,15 @@ Plugins can also emit logs as part of their response envelope. These logs are ca
 Additionally, anything written by a plugin to `stderr` is captured, capped at 64 KB, and logged at `WARN` level to the core log stream, along with the job details. Plugin `stdout` is reserved exclusively for the protocol response; any non-JSON output on `stdout` is treated as a protocol error, causing the job to fail.
 
 ### Command Line Interface (CLI)
-The `senechal-gw` executable provides several commands for interacting with and monitoring the gateway:
+The `senechal-gw` executable provides a structured command hierarchy for interacting with and monitoring the gateway:
 
--   `senechal-gw start`: Runs the service in the foreground.
--   `senechal-gw run <plugin>`: Manually runs a specific plugin's `poll` command once.
--   `senechal-gw status`: Shows the state of discovered plugins, queue depth, and recent runs.
--   `senechal-gw reload`: Sends a `SIGHUP` signal to the running process to reload the configuration without a full restart.
--   `senechal-gw reset <plugin>`: Resets the circuit breaker for a specified plugin.
--   `senechal-gw plugins`: Lists all discovered plugins and their current status.
--   `senechal-gw logs [plugin]`: Tails structured logs, optionally filtered by plugin.
--   `senechal-gw queue`: Shows pending and active jobs in the work queue.
+-   `senechal-gw system start`: Runs the service in the foreground.
+-   `senechal-gw config lock`: Authorizes current configuration by updating integrity hashes.
+-   `senechal-gw job inspect <id>`: Shows the full lineage, baggage, and artifacts for a job.
+-   `senechal-gw system status`: Shows the state of discovered plugins, queue depth, and health (planned).
+-   `senechal-gw system reload`: Sends a `SIGHUP` signal to reload configuration without restart (planned).
+-   `senechal-gw plugin list`: Lists all discovered plugins and their current status (planned).
+-   `senechal-gw queue status`: Shows pending and active jobs in the work queue (planned).
 
 ### Troubleshooting
 -   **Plugin Not Running:**
