@@ -13,6 +13,7 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/config"
 	"github.com/mattjoyce/senechal-gw/internal/dispatch"
+	"github.com/mattjoyce/senechal-gw/internal/doctor"
 	"github.com/mattjoyce/senechal-gw/internal/lock"
 	"github.com/mattjoyce/senechal-gw/internal/log"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
@@ -35,6 +36,8 @@ func main() {
 	switch command {
 	case "start":
 		os.Exit(runStart(os.Args[2:]))
+	case "doctor":
+		os.Exit(runDoctor(os.Args[2:]))
 	case "config":
 		os.Exit(runConfig(os.Args[2:]))
 	case "version":
@@ -55,6 +58,7 @@ func printUsage() {
 
 Usage:
   senechal-gw start [flags]         Start the service in foreground
+  senechal-gw doctor [flags]        Validate configuration and plugins
   senechal-gw config hash-update    Regenerate .checksums for scope files
   senechal-gw version               Show version information
   senechal-gw help                  Show this help message
@@ -244,6 +248,68 @@ func runStart(args []string) int {
 	}
 
 	logger.Info("senechal-gw stopped")
+	return 0
+}
+
+// runDoctor validates configuration and plugins.
+func runDoctor(args []string) int {
+	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	strict := fs.Bool("strict", false, "Treat warnings as errors")
+	format := fs.String("format", "human", "Output format (human, json)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return 1
+	}
+
+	// Discover config if not specified
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	// Load configuration
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
+		return 1
+	}
+
+	// Discover plugins (suppress warnings to stderr)
+	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Plugin discovery error: %v\n", err)
+		return 1
+	}
+
+	// Run validation
+	doc := doctor.New(cfg, registry)
+	result := doc.Validate()
+
+	// Output
+	switch *format {
+	case "json":
+		out, err := doctor.FormatJSON(result)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "JSON format error: %v\n", err)
+			return 1
+		}
+		fmt.Println(out)
+	default:
+		fmt.Print(doctor.FormatHuman(result))
+	}
+
+	// Exit code
+	if !result.Valid {
+		return 1
+	}
+	if *strict && len(result.Warnings) > 0 {
+		return 2
+	}
 	return 0
 }
 
