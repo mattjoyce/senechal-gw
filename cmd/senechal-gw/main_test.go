@@ -112,7 +112,7 @@ include:
 	if !strings.Contains(stdout, "WROTE .checksums:") {
 		t.Fatalf("stdout missing wrote checksums line: %s", stdout)
 	}
-	if !strings.Contains(stdout, "Successfully generated .checksums") {
+	if !strings.Contains(stdout, "Successfully locked configuration") {
 		t.Fatalf("stdout missing success summary: %s", stdout)
 	}
 
