@@ -1,6 +1,6 @@
 ---
 id: 51
-status: todo
+status: done
 priority: High
 blocked_by: [48, 50]
 assignee: "@codex"
@@ -31,3 +31,5 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
+- 2026-02-11: Started DSL/compiler implementation with cycle-safe pipeline-call validation, DAG compilation, BLAKE3 fingerprints, and multi-file discovery under `pipelines/`. (by @codex)
+- 2026-02-11: Completed `internal/router/dsl` with YAML parsing, DAG compiler (supports `on`, `steps`, `call`, `split`), pipeline-call cycle detection, BLAKE3 fingerprints for compiled artifacts, and `pipelines/*.yaml` directory loading; added tests for nested valid graphs, unknown/cyclic call rejection, and multi-file discovery. (by @codex)
