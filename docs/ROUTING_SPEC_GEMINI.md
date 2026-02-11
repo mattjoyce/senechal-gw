@@ -141,9 +141,9 @@ All orchestration-related CLI commands MUST support the following flags to ensur
 ### 7.1 LLM Operator Affordances (RFC-004)
 
 The Routing system exposes specific "Admin Utilities" for the LLM:
-*   `inspect <job_id>`: Returns the full Graph of what happened.
-*   `visualize-pipeline <name>`: Returns a Mermaid.js diagram of the DSL.
-*   `dry-run-step <step_id>`: Clones the workspace to a `/sandbox/` directory and executes the plugin.
+*   `job inspect <job_id>`: Returns the full Graph of what happened.
+*   `pipeline visualize <name>`: Returns a Mermaid.js diagram of the DSL.
+*   `pipeline dry-run <step_id>`: Clones the workspace to a `/sandbox/` directory and executes the plugin.
 
 ## 8. Branching & Decisions (Multi-Event Pattern)
 

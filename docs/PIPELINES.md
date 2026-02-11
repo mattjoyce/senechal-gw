@@ -125,7 +125,7 @@ All Senechal CLI commands support:
 *   `--dry-run`: To preview pipeline transitions without executing code.
 
 ```bash
-senechal-gw inspect <job_id> -v
+senechal-gw job inspect <job_id> -v
 ```
 
 **Output Example:**
