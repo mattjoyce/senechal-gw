@@ -13,6 +13,7 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/config"
 	"github.com/mattjoyce/senechal-gw/internal/dispatch"
+	"github.com/mattjoyce/senechal-gw/internal/inspect"
 	"github.com/mattjoyce/senechal-gw/internal/lock"
 	"github.com/mattjoyce/senechal-gw/internal/log"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
@@ -37,6 +38,8 @@ func main() {
 	switch command {
 	case "start":
 		os.Exit(runStart(os.Args[2:]))
+	case "inspect":
+		os.Exit(runInspect(os.Args[2:]))
 	case "config":
 		os.Exit(runConfig(os.Args[2:]))
 	case "version":
@@ -57,6 +60,7 @@ func printUsage() {
 
 Usage:
   senechal-gw start [flags]         Start the service in foreground
+  senechal-gw inspect <job_id>      Show lineage + baggage + workspace artifacts
   senechal-gw config hash-update    Regenerate .checksums for scope files
   senechal-gw version               Show version information
   senechal-gw help                  Show this help message
@@ -74,6 +78,7 @@ Config file discovery order:
 
 Examples:
   senechal-gw start
+  senechal-gw inspect 123e4567-e89b-12d3-a456-426614174000
   senechal-gw start --config ~/.config/senechal-gw
   senechal-gw start --config /etc/senechal/config.yaml  # legacy single-file
   senechal-gw config hash-update --config-dir ~/.config/senechal-gw
@@ -265,6 +270,52 @@ func runStart(args []string) int {
 	}
 
 	logger.Info("senechal-gw stopped")
+	return 0
+}
+
+func runInspect(args []string) int {
+	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse inspect flags: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw inspect <job_id> [--config PATH]\n")
+		return 1
+	}
+	jobID := fs.Arg(0)
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	report, err := inspect.BuildReport(context.Background(), db, cfg.State.Path, jobID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Inspect failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Print(report)
 	return 0
 }
 

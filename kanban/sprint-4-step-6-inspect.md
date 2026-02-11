@@ -1,6 +1,6 @@
 ---
 id: 53
-status: todo
+status: done
 priority: Normal
 blocked_by: [52]
 assignee: "@codex"
@@ -30,3 +30,5 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
+- 2026-02-11: Began implementation as prerequisite unblock for card #54; adding `senechal-gw inspect <job_id>` to render context lineage, baggage, and workspace artifacts for a chain. (by @codex)
+- 2026-02-11: Completed `inspect` command with lineage reporting from `ContextStore.Lineage`, structured baggage rendering, and workspace artifact listing per hop, including integration into CLI routing and unit tests for report formatting/content. (by @codex)
