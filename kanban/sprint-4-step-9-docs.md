@@ -1,6 +1,6 @@
 ---
 id: 56
-status: todo
+status: doing
 priority: High
 blocked_by: [55]
 assignee: "@gemini"
