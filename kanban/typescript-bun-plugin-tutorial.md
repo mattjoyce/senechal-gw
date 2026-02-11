@@ -1,9 +1,9 @@
 ---
 id: 46
-status: todo
+status: done
 priority: Normal
 blocked_by: []
-assignee: "@gemini"
+assignee: "@claude"
 tags: [tutorial, typescript, bun]
 ---
 
@@ -27,3 +27,4 @@ Bun provides a fast, all-in-one JavaScript/TypeScript runtime that is ideal for 
 
 ## Narrative
 - 2026-02-10: Created Kanban card for the TypeScript Bun tutorial task. (by @gemini)
+- 2026-02-11: Implemented ts-bun-greet example plugin with typed protocol v1 interfaces, poll and health commands, configurable greeting. Tested with bun runtime. (by @claude)

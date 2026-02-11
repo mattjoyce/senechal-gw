@@ -1,0 +1,13 @@
+name: ts-bun-greet
+version: 0.1.0
+protocol: 1
+entrypoint: run.ts
+description: "TypeScript/Bun example plugin - greets the user with a configurable message"
+commands:
+  - name: poll
+    type: read
+  - name: health
+    type: read
+config_keys:
+  required: []
+  optional: [greeting, name]
