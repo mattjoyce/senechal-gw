@@ -323,7 +323,7 @@ func runInspect(args []string) int {
 // runConfig handles config subcommands.
 func runConfig(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config hash-update [--config PATH | --config-dir PATH]\n")
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config hash-update [--config PATH | --config-dir PATH] [-v|--verbose] [--dry-run]\n")
 		return 1
 	}
 
@@ -342,10 +342,14 @@ func runConfigHashUpdate(args []string) int {
 	fs := flag.NewFlagSet("hash-update", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to root config file or directory")
 	configDir := fs.String("config-dir", "", "Path to config directory")
+	verbose := fs.Bool("verbose", false, "Show per-file hash progress")
+	verboseShort := fs.Bool("v", false, "Show per-file hash progress (shorthand)")
+	dryRun := fs.Bool("dry-run", false, "Compute hashes without writing .checksums")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
 	}
+	isVerbose := *verbose || *verboseShort
 
 	if *configPath != "" && *configDir != "" {
 		fmt.Fprintf(os.Stderr, "Error: use only one of --config or --config-dir\n")
@@ -379,17 +383,42 @@ func runConfigHashUpdate(args []string) int {
 	// Generate checksums for scope files in each discovered/selected directory.
 	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
 	for _, dir := range targetDirs {
-		if err := config.GenerateChecksums(dir, scopeFiles); err != nil {
+		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, *dryRun)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to generate checksums in %s: %v\n", dir, err)
 			return 1
 		}
+		if isVerbose {
+			fmt.Printf("Processing directory: %s\n", dir)
+			for _, file := range report.Files {
+				if file.Exists {
+					fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
+					continue
+				}
+				fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
+			}
+			if *dryRun {
+				fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
+			} else {
+				fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
+			}
+		}
 	}
 
-	fmt.Printf("Successfully generated .checksums for scope files in %d director", len(targetDirs))
-	if len(targetDirs) == 1 {
-		fmt.Print("y:\n")
+	if *dryRun {
+		fmt.Printf("Dry run completed for %d director", len(targetDirs))
+		if len(targetDirs) == 1 {
+			fmt.Print("y (no files written):\n")
+		} else {
+			fmt.Print("ies (no files written):\n")
+		}
 	} else {
-		fmt.Print("ies:\n")
+		fmt.Printf("Successfully generated .checksums for scope files in %d director", len(targetDirs))
+		if len(targetDirs) == 1 {
+			fmt.Print("y:\n")
+		} else {
+			fmt.Print("ies:\n")
+		}
 	}
 	for _, dir := range targetDirs {
 		fmt.Printf("  - %s\n", dir)
