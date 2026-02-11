@@ -350,13 +350,14 @@ func runStart(args []string) int {
 func runInspect(args []string) int {
 	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")
+	jsonOut := fs.Bool("json", false, "Output report in structured JSON format")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse inspect flags: %v\n", err)
 		return 1
 	}
 
 	if fs.NArg() != 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw job inspect <job_id> [--config PATH]\n")
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw job inspect <job_id> [--config PATH] [--json]\n")
 		return 1
 	}
 	jobID := fs.Arg(0)
@@ -383,7 +384,13 @@ func runInspect(args []string) int {
 	}
 	defer db.Close()
 
-	report, err := inspect.BuildReport(context.Background(), db, cfg.State.Path, jobID)
+	var report string
+	if *jsonOut {
+		report, err = inspect.BuildJSONReport(context.Background(), db, cfg.State.Path, jobID)
+	} else {
+		report, err = inspect.BuildReport(context.Background(), db, cfg.State.Path, jobID)
+	}
+
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Inspect failed: %v\n", err)
 		return 1

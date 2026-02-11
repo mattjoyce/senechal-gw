@@ -22,59 +22,67 @@ type jobInfo struct {
 	contextID sql.NullString
 }
 
+// Report is the structured JSON representation of a lineage report.
+type Report struct {
+	JobID     string `json:"job_id"`
+	Plugin    string `json:"plugin"`
+	Command   string `json:"command"`
+	Status    string `json:"status"`
+	ContextID string `json:"context_id"`
+	Hops      int    `json:"hops"`
+	Steps     []Step `json:"steps"`
+}
+
+// Step is one entry in the execution lineage.
+type Step struct {
+	Hop           int             `json:"hop"`
+	Pipeline      string          `json:"pipeline"`
+	StepID        string          `json:"step_id"`
+	ContextID     string          `json:"context_id"`
+	ParentID      string          `json:"parent_id,omitempty"`
+	JobID         string          `json:"job_id,omitempty"`
+	Plugin        string          `json:"plugin,omitempty"`
+	Command       string          `json:"command,omitempty"`
+	Status        string          `json:"status,omitempty"`
+	WorkspacePath string          `json:"workspace_path,omitempty"`
+	Artifacts     []string        `json:"artifacts,omitempty"`
+	Baggage       json.RawMessage `json:"baggage"`
+}
+
 // BuildReport renders a terminal-friendly lineage report for a job.
 func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (string, error) {
-	if strings.TrimSpace(jobID) == "" {
-		return "", fmt.Errorf("job_id is required")
-	}
-
-	rootJob, err := lookupJob(ctx, db, jobID)
+	report, err := gatherReportData(ctx, db, statePath, jobID)
 	if err != nil {
 		return "", err
-	}
-	if !rootJob.contextID.Valid {
-		return "", fmt.Errorf("job %q has no event_context_id", jobID)
-	}
-
-	contextStore := state.NewContextStore(db)
-	lineage, err := contextStore.Lineage(ctx, rootJob.contextID.String)
-	if err != nil {
-		return "", fmt.Errorf("load context lineage: %w", err)
 	}
 
 	var out strings.Builder
 	fmt.Fprintf(&out, "Lineage Report\n")
-	fmt.Fprintf(&out, "Job ID      : %s\n", rootJob.id)
-	fmt.Fprintf(&out, "Plugin      : %s\n", rootJob.plugin)
-	fmt.Fprintf(&out, "Command     : %s\n", rootJob.command)
-	fmt.Fprintf(&out, "Status      : %s\n", rootJob.status)
-	fmt.Fprintf(&out, "Context ID  : %s\n", rootJob.contextID.String)
-	fmt.Fprintf(&out, "Hops        : %d\n", len(lineage))
+	fmt.Fprintf(&out, "Job ID      : %s\n", report.JobID)
+	fmt.Fprintf(&out, "Plugin      : %s\n", report.Plugin)
+	fmt.Fprintf(&out, "Command     : %s\n", report.Command)
+	fmt.Fprintf(&out, "Status      : %s\n", report.Status)
+	fmt.Fprintf(&out, "Context ID  : %s\n", report.ContextID)
+	fmt.Fprintf(&out, "Hops        : %d\n", report.Hops)
 	fmt.Fprintf(&out, "\n")
 
-	workspaceBaseDir := workspaceBaseDirFromStatePath(statePath)
-	for idx, node := range lineage {
-		stepJob, _ := lookupFirstJobByContext(ctx, db, node.ID)
-		fmt.Fprintf(&out, "[%d] %s :: %s\n", idx+1, renderUnset(node.PipelineName, "<root>"), renderUnset(node.StepID, "<entry>"))
-		fmt.Fprintf(&out, "    context_id : %s\n", node.ID)
-		if node.ParentID != nil {
-			fmt.Fprintf(&out, "    parent_id  : %s\n", *node.ParentID)
+	for _, step := range report.Steps {
+		fmt.Fprintf(&out, "[%d] %s :: %s\n", step.Hop, step.Pipeline, step.StepID)
+		fmt.Fprintf(&out, "    context_id : %s\n", step.ContextID)
+		if step.ParentID != "" {
+			fmt.Fprintf(&out, "    parent_id  : %s\n", step.ParentID)
 		} else {
 			fmt.Fprintf(&out, "    parent_id  : <none>\n")
 		}
 
-		if stepJob != nil {
-			fmt.Fprintf(&out, "    job        : %s (%s:%s, %s)\n", stepJob.id, stepJob.plugin, stepJob.command, stepJob.status)
-			workspaceDir := filepath.Join(workspaceBaseDir, stepJob.id)
-			fmt.Fprintf(&out, "    workspace  : %s\n", workspaceDir)
-			artifacts, err := listArtifacts(workspaceDir)
-			if err != nil {
-				fmt.Fprintf(&out, "    artifacts  : <error: %v>\n", err)
-			} else if len(artifacts) == 0 {
+		if step.JobID != "" {
+			fmt.Fprintf(&out, "    job        : %s (%s:%s, %s)\n", step.JobID, step.Plugin, step.Command, step.Status)
+			fmt.Fprintf(&out, "    workspace  : %s\n", step.WorkspacePath)
+			if len(step.Artifacts) == 0 {
 				fmt.Fprintf(&out, "    artifacts  : <none>\n")
 			} else {
 				fmt.Fprintf(&out, "    artifacts  :\n")
-				for _, artifact := range artifacts {
+				for _, artifact := range step.Artifacts {
 					fmt.Fprintf(&out, "      - %s\n", artifact)
 				}
 			}
@@ -85,7 +93,7 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 		}
 
 		fmt.Fprintf(&out, "    baggage    :\n")
-		baggage := prettyJSON(node.AccumulatedJSON)
+		baggage := prettyJSON(step.Baggage)
 		for _, line := range strings.Split(strings.TrimSpace(baggage), "\n") {
 			fmt.Fprintf(&out, "      %s\n", line)
 		}
@@ -93,6 +101,79 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 	}
 
 	return strings.TrimRight(out.String(), "\n") + "\n", nil
+}
+
+// BuildJSONReport returns the machine-readable JSON lineage report.
+func BuildJSONReport(ctx context.Context, db *sql.DB, statePath, jobID string) (string, error) {
+	report, err := gatherReportData(ctx, db, statePath, jobID)
+	if err != nil {
+		return "", err
+	}
+
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal json report: %w", err)
+	}
+	return string(data), nil
+}
+
+func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) (*Report, error) {
+	if strings.TrimSpace(jobID) == "" {
+		return nil, fmt.Errorf("job_id is required")
+	}
+
+	rootJob, err := lookupJob(ctx, db, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if !rootJob.contextID.Valid {
+		return nil, fmt.Errorf("job %q has no event_context_id", jobID)
+	}
+
+	contextStore := state.NewContextStore(db)
+	lineage, err := contextStore.Lineage(ctx, rootJob.contextID.String)
+	if err != nil {
+		return nil, fmt.Errorf("load context lineage: %w", err)
+	}
+
+	report := &Report{
+		JobID:     rootJob.id,
+		Plugin:    rootJob.plugin,
+		Command:   rootJob.command,
+		Status:    rootJob.status,
+		ContextID: rootJob.contextID.String,
+		Hops:      len(lineage),
+		Steps:     make([]Step, 0, len(lineage)),
+	}
+
+	workspaceBaseDir := workspaceBaseDirFromStatePath(statePath)
+	for idx, node := range lineage {
+		stepJob, _ := lookupFirstJobByContext(ctx, db, node.ID)
+		step := Step{
+			Hop:       idx + 1,
+			Pipeline:  renderUnset(node.PipelineName, "<root>"),
+			StepID:    renderUnset(node.StepID, "<entry>"),
+			ContextID: node.ID,
+			Baggage:   node.AccumulatedJSON,
+		}
+		if node.ParentID != nil {
+			step.ParentID = *node.ParentID
+		}
+
+		if stepJob != nil {
+			step.JobID = stepJob.id
+			step.Plugin = stepJob.plugin
+			step.Command = stepJob.command
+			step.Status = stepJob.status
+			step.WorkspacePath = filepath.Join(workspaceBaseDir, stepJob.id)
+			artifacts, _ := listArtifacts(step.WorkspacePath)
+			step.Artifacts = artifacts
+		}
+
+		report.Steps = append(report.Steps, step)
+	}
+
+	return report, nil
 }
 
 func lookupJob(ctx context.Context, db *sql.DB, jobID string) (*jobInfo, error) {

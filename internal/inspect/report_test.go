@@ -91,3 +91,47 @@ func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildJSONReport(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	ctxStore := state.NewContextStore(db)
+	q := queue.New(db)
+
+	rootCtx, _ := ctxStore.Create(ctx, nil, "chain", "step_a", json.RawMessage(`{"origin":"test"}`))
+	rootJobID, _ := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:         "p",
+		Command:        "c",
+		SubmittedBy:    "test",
+		EventContextID: &rootCtx.ID,
+	})
+
+	out, err := BuildJSONReport(ctx, db, dbPath, rootJobID)
+	if err != nil {
+		t.Fatalf("BuildJSONReport: %v", err)
+	}
+
+	var report Report
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v", err)
+	}
+
+	if report.JobID != rootJobID {
+		t.Errorf("job_id = %s, want %s", report.JobID, rootJobID)
+	}
+	if len(report.Steps) != 1 {
+		t.Errorf("expected 1 step, got %d", len(report.Steps))
+	}
+	if report.Steps[0].StepID != "step_a" {
+		t.Errorf("step_id = %s, want %s", report.Steps[0].StepID, "step_a")
+	}
+}
