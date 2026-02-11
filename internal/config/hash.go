@@ -11,6 +11,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// HashUpdateFileResult captures checksum generation outcome for a scope file.
+type HashUpdateFileResult struct {
+	Filename string
+	Path     string
+	Exists   bool
+	Hash     string
+}
+
+// HashUpdateReport captures checksum generation details for a config directory.
+type HashUpdateReport struct {
+	ConfigDir    string
+	ChecksumPath string
+	Written      bool
+	Files        []HashUpdateFileResult
+}
+
 // ComputeBlake3Hash computes the BLAKE3 hash of a file.
 func ComputeBlake3Hash(filePath string) (string, error) {
 	data, err := os.ReadFile(filePath)
@@ -39,10 +55,24 @@ func VerifyFileHash(filePath, expectedHash string) error {
 
 // GenerateChecksums computes BLAKE3 hashes for scope files and writes .checksums.
 func GenerateChecksums(configDir string, scopeFiles []string) error {
+	_, err := GenerateChecksumsWithReport(configDir, scopeFiles, false)
+	return err
+}
+
+// GenerateChecksumsWithReport computes scope file hashes and optionally writes .checksums.
+// When dryRun is true, it computes hashes and returns report details without writing files.
+func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun bool) (*HashUpdateReport, error) {
 	manifest := ChecksumManifest{
 		Version:     1,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Hashes:      make(map[string]string),
+	}
+
+	report := &HashUpdateReport{
+		ConfigDir:    configDir,
+		ChecksumPath: filepath.Join(configDir, ".checksums"),
+		Written:      false,
+		Files:        make([]HashUpdateFileResult, 0, len(scopeFiles)),
 	}
 
 	// Compute hash for each scope file
@@ -51,30 +81,46 @@ func GenerateChecksums(configDir string, scopeFiles []string) error {
 
 		// Skip if file doesn't exist (optional files)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			report.Files = append(report.Files, HashUpdateFileResult{
+				Filename: filename,
+				Path:     filePath,
+				Exists:   false,
+				Hash:     "",
+			})
 			continue
 		}
 
 		hash, err := ComputeBlake3Hash(filePath)
 		if err != nil {
-			return fmt.Errorf("failed to hash %s: %w", filename, err)
+			return nil, fmt.Errorf("failed to hash %s: %w", filename, err)
 		}
 
 		manifest.Hashes[filename] = hash
+		report.Files = append(report.Files, HashUpdateFileResult{
+			Filename: filename,
+			Path:     filePath,
+			Exists:   true,
+			Hash:     hash,
+		})
+	}
+
+	if dryRun {
+		return report, nil
 	}
 
 	// Write .checksums file
-	checksumPath := filepath.Join(configDir, ".checksums")
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
-		return fmt.Errorf("failed to marshal checksums: %w", err)
+		return nil, fmt.Errorf("failed to marshal checksums: %w", err)
 	}
 
 	// Write with restrictive permissions (contains expected hashes)
-	if err := os.WriteFile(checksumPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write checksums: %w", err)
+	if err := os.WriteFile(report.ChecksumPath, data, 0600); err != nil {
+		return nil, fmt.Errorf("failed to write checksums: %w", err)
 	}
+	report.Written = true
 
-	return nil
+	return report, nil
 }
 
 // LoadChecksums reads the .checksums file from a config directory.
