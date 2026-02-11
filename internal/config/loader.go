@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -121,6 +122,63 @@ func DiscoverConfigDir() (string, error) {
 	}
 
 	return "", fmt.Errorf("no config found (checked: $SENECHAL_CONFIG_DIR, ~/.config/senechal-gw, /etc/senechal-gw, ./config.yaml)")
+}
+
+// DiscoverScopeDirs returns config directories that need .checksums updates.
+// It accepts either a config file path or a directory containing config.yaml.
+// In include-based mode, it returns directories containing included scope files
+// (tokens.yaml, webhooks.yaml). If no scope includes are found, it falls back
+// to the root config directory for legacy single-directory behavior.
+func DiscoverScopeDirs(configPath string) ([]string, error) {
+	absPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("config file not found: %s\nHint: Check the path or run with --config flag", absPath)
+	}
+
+	if info.IsDir() {
+		absPath = filepath.Join(absPath, "config.yaml")
+		if _, err := os.Stat(absPath); err != nil {
+			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
+		}
+	}
+
+	cfg, err := loadConfigFile(absPath, make(map[string]bool))
+	if err != nil {
+		return nil, err
+	}
+
+	scopeDirs := make(map[string]struct{})
+	if len(cfg.Include) > 0 {
+		visited := make(map[string]bool)
+		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited); err != nil {
+			return nil, err
+		}
+
+		for includePath := range visited {
+			basename := filepath.Base(includePath)
+			if basename == "tokens.yaml" || basename == "webhooks.yaml" {
+				scopeDirs[filepath.Dir(includePath)] = struct{}{}
+			}
+		}
+	}
+
+	// Legacy fallback: update root config directory when no scoped include files exist.
+	if len(scopeDirs) == 0 {
+		scopeDirs[filepath.Dir(absPath)] = struct{}{}
+	}
+
+	dirs := make([]string, 0, len(scopeDirs))
+	for dir := range scopeDirs {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+
+	return dirs, nil
 }
 
 // loadIncludes recursively loads and merges files from the include array.

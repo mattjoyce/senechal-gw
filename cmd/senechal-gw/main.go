@@ -61,7 +61,7 @@ func printUsage() {
 Usage:
   senechal-gw start [flags]         Start the service in foreground
   senechal-gw inspect <job_id>      Show lineage + baggage + workspace artifacts
-  senechal-gw config hash-update    Regenerate .checksums for scope files
+  senechal-gw config hash-update    Regenerate .checksums for scope files from root config
   senechal-gw version               Show version information
   senechal-gw help                  Show this help message
 
@@ -81,7 +81,8 @@ Examples:
   senechal-gw inspect 123e4567-e89b-12d3-a456-426614174000
   senechal-gw start --config ~/.config/senechal-gw
   senechal-gw start --config /etc/senechal/config.yaml  # legacy single-file
-  senechal-gw config hash-update --config-dir ~/.config/senechal-gw
+  senechal-gw config hash-update --config ~/.config/senechal-gw/config.yaml
+  senechal-gw config hash-update --config-dir ~/.config/senechal-gw  # legacy
 
 `)
 }
@@ -322,7 +323,7 @@ func runInspect(args []string) int {
 // runConfig handles config subcommands.
 func runConfig(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config hash-update --config-dir PATH\n")
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config hash-update [--config PATH | --config-dir PATH]\n")
 		return 1
 	}
 
@@ -339,44 +340,61 @@ func runConfig(args []string) int {
 // runConfigHashUpdate regenerates .checksums for scope files.
 func runConfigHashUpdate(args []string) int {
 	fs := flag.NewFlagSet("hash-update", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to root config file or directory")
 	configDir := fs.String("config-dir", "", "Path to config directory")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
 	}
 
-	// Discover config dir if not specified
-	if *configDir == "" {
-		discovered, err := config.DiscoverConfigDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to discover config directory: %v\n", err)
-			return 1
-		}
-
-		// Check if discovered path is a directory
-		info, err := os.Stat(discovered)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to stat config path: %v\n", err)
-			return 1
-		}
-
-		if !info.IsDir() {
-			fmt.Fprintf(os.Stderr, "Error: hash-update requires multi-file config mode (directory), but found single-file config: %s\n", discovered)
-			fmt.Fprintf(os.Stderr, "Hint: Migrate to multi-file config first.\n")
-			return 1
-		}
-
-		*configDir = discovered
-	}
-
-	// Generate checksums for scope files
-	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
-	if err := config.GenerateChecksums(*configDir, scopeFiles); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to generate checksums: %v\n", err)
+	if *configPath != "" && *configDir != "" {
+		fmt.Fprintf(os.Stderr, "Error: use only one of --config or --config-dir\n")
 		return 1
 	}
 
-	fmt.Printf("Successfully generated .checksums for scope files in %s\n", *configDir)
+	var targetDirs []string
+
+	// Legacy explicit directory mode.
+	if *configDir != "" {
+		targetDirs = []string{*configDir}
+	} else {
+		resolvedConfigPath := *configPath
+		if resolvedConfigPath == "" {
+			discovered, err := config.DiscoverConfigDir()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+				return 1
+			}
+			resolvedConfigPath = discovered
+		}
+
+		dirs, err := config.DiscoverScopeDirs(resolvedConfigPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to resolve scope directories: %v\n", err)
+			return 1
+		}
+		targetDirs = dirs
+	}
+
+	// Generate checksums for scope files in each discovered/selected directory.
+	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+	for _, dir := range targetDirs {
+		if err := config.GenerateChecksums(dir, scopeFiles); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to generate checksums in %s: %v\n", dir, err)
+			return 1
+		}
+	}
+
+	fmt.Printf("Successfully generated .checksums for scope files in %d director", len(targetDirs))
+	if len(targetDirs) == 1 {
+		fmt.Print("y:\n")
+	} else {
+		fmt.Print("ies:\n")
+	}
+	for _, dir := range targetDirs {
+		fmt.Printf("  - %s\n", dir)
+	}
+
 	return 0
 }
 

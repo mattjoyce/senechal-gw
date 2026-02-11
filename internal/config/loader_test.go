@@ -716,6 +716,92 @@ api_key: tampered-secret
 	}
 }
 
+func TestDiscoverScopeDirsFromIncludes(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configDir := filepath.Join(tmpDir, "config")
+	secretsDir := filepath.Join(tmpDir, "secrets")
+	hooksDir := filepath.Join(tmpDir, "hooks")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secretsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(hooksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	mainYAML := `
+include:
+  - base.yaml
+`
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(mainYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	baseYAML := `
+include:
+  - ../secrets/tokens.yaml
+  - ../hooks/webhooks.yaml
+`
+	if err := os.WriteFile(filepath.Join(configDir, "base.yaml"), []byte(baseYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(secretsDir, "tokens.yaml"), []byte("api_key: secret\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hooksDir, "webhooks.yaml"), []byte("listen: :8080\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	dirs, err := DiscoverScopeDirs(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("DiscoverScopeDirs() failed: %v", err)
+	}
+
+	if len(dirs) != 2 {
+		t.Fatalf("DiscoverScopeDirs() returned %d dirs, want 2: %v", len(dirs), dirs)
+	}
+
+	got := map[string]bool{
+		dirs[0]: true,
+		dirs[1]: true,
+	}
+	if !got[secretsDir] {
+		t.Errorf("DiscoverScopeDirs() missing secrets dir: %s", secretsDir)
+	}
+	if !got[hooksDir] {
+		t.Errorf("DiscoverScopeDirs() missing hooks dir: %s", hooksDir)
+	}
+}
+
+func TestDiscoverScopeDirsFallbackToRootDir(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+service:
+  tick_interval: 60s
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dirs, err := DiscoverScopeDirs(configPath)
+	if err != nil {
+		t.Fatalf("DiscoverScopeDirs() failed: %v", err)
+	}
+
+	if len(dirs) != 1 {
+		t.Fatalf("DiscoverScopeDirs() returned %d dirs, want 1: %v", len(dirs), dirs)
+	}
+	if dirs[0] != tmpDir {
+		t.Errorf("DiscoverScopeDirs() = %q, want %q", dirs[0], tmpDir)
+	}
+}
+
 // TestDeepMerge tests deep merging of included configs.
 func TestDeepMerge(t *testing.T) {
 	tmpDir := t.TempDir()
