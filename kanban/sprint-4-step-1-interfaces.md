@@ -1,6 +1,6 @@
 ---
 id: 48
-status: todo
+status: doing
 priority: High
 blocked_by: []
 assignee: "@gemini"
@@ -28,3 +28,4 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
+- 2026-02-11: Started implementation after reviewing `docs/ROUTING_SPEC_GEMINI.md`; defining interface-first contracts for router/control-plane and workspace/data-plane separation. (by @codex)
