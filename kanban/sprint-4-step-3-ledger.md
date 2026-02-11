@@ -1,6 +1,6 @@
 ---
 id: 50
-status: todo
+status: done
 priority: High
 blocked_by: [48, 49]
 assignee: "@codex"
@@ -30,3 +30,5 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
+- 2026-02-11: Began implementation after unblocking dependencies; adding SQLite `event_context` ledger schema, queue/log context linkage, and `internal/state` context accumulation with immutable `origin_*` enforcement and size limits. (by @codex)
+- 2026-02-11: Completed ledger implementation with SQLite bootstrap/migrations for `event_context` and `event_context_id` columns, plus a new `ContextStore` supporting root/child accumulation, lineage retrieval, immutable origin-anchor enforcement, and 1MiB baggage overflow protection; added unit coverage for schema bootstrap, queue context propagation, and context-store merge/lineage/guardrails. (by @codex)

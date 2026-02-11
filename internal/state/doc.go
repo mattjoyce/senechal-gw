@@ -1,2 +1,2 @@
-// Package state manages plugin state persistence in SQLite with shallow merge semantics.
+// Package state manages plugin state and event context persistence in SQLite.
 package state

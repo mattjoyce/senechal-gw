@@ -74,11 +74,13 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 
 	q := New(db)
+	contextID := "ctx-123"
 
 	id, err := q.Enqueue(context.Background(), EnqueueRequest{
-		Plugin:      "echo",
-		Command:     "poll",
-		SubmittedBy: "scheduler",
+		Plugin:         "echo",
+		Command:        "poll",
+		SubmittedBy:    "scheduler",
+		EventContextID: &contextID,
 	})
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
@@ -100,6 +102,14 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected 1 job_log row, got %d", count)
+	}
+
+	var gotContextID string
+	if err := db.QueryRow("SELECT event_context_id FROM job_log WHERE id = ?;", id+"-1").Scan(&gotContextID); err != nil {
+		t.Fatalf("select event_context_id: %v", err)
+	}
+	if gotContextID != contextID {
+		t.Fatalf("event_context_id: got %q want %q", gotContextID, contextID)
 	}
 }
 

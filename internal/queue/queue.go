@@ -63,10 +63,10 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	_, err := q.db.ExecContext(ctx, `
 INSERT INTO job_queue(
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, parent_job_id
+  created_at, parent_job_id, event_context_id
 )
-VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?);
-`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID)
+VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?);
+`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.EventContextID)
 	if err != nil {
 		return "", fmt.Errorf("enqueue job: %w", err)
 	}
@@ -92,25 +92,26 @@ SET status = ?, started_at = ?
 WHERE id IN (SELECT id FROM next)
 RETURNING
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id;
+  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id;
 `, StatusQueued, nowS, StatusRunning, nowS)
 
 	var (
-		j             Job
-		payload       sql.NullString
-		dedupeKey     sql.NullString
-		createdAtS    string
-		startedAtS    sql.NullString
-		completedAtS  sql.NullString
-		nextRetryAtS  sql.NullString
-		lastError     sql.NullString
-		parentJobID   sql.NullString
-		sourceEventID sql.NullString
-		statusS       string
+		j              Job
+		payload        sql.NullString
+		dedupeKey      sql.NullString
+		createdAtS     string
+		startedAtS     sql.NullString
+		completedAtS   sql.NullString
+		nextRetryAtS   sql.NullString
+		lastError      sql.NullString
+		parentJobID    sql.NullString
+		sourceEventID  sql.NullString
+		eventContextID sql.NullString
+		statusS        string
 	)
 	err := row.Scan(
 		&j.ID, &j.Plugin, &j.Command, &payload, &statusS, &j.Attempt, &j.MaxAttempts, &j.SubmittedBy, &dedupeKey,
-		&createdAtS, &startedAtS, &completedAtS, &nextRetryAtS, &lastError, &parentJobID, &sourceEventID,
+		&createdAtS, &startedAtS, &completedAtS, &nextRetryAtS, &lastError, &parentJobID, &sourceEventID, &eventContextID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -153,6 +154,9 @@ RETURNING
 	if sourceEventID.Valid {
 		j.SourceEventID = &sourceEventID.String
 	}
+	if eventContextID.Valid {
+		j.EventContextID = &eventContextID.String
+	}
 	return &j, nil
 }
 
@@ -161,7 +165,7 @@ func (q *Queue) FindJobsByStatus(ctx context.Context, status Status) ([]*Job, er
 	rows, err := q.db.QueryContext(ctx, `
 SELECT
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id
+  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id
 FROM job_queue
 WHERE status = ?;
 `, status)
@@ -173,21 +177,22 @@ WHERE status = ?;
 	var jobs []*Job
 	for rows.Next() {
 		var (
-			j             Job
-			payload       sql.NullString
-			dedupeKey     sql.NullString
-			createdAtS    string
-			startedAtS    sql.NullString
-			completedAtS  sql.NullString
-			nextRetryAtS  sql.NullString
-			lastError     sql.NullString
-			parentJobID   sql.NullString
-			sourceEventID sql.NullString
-			statusS       string
+			j              Job
+			payload        sql.NullString
+			dedupeKey      sql.NullString
+			createdAtS     string
+			startedAtS     sql.NullString
+			completedAtS   sql.NullString
+			nextRetryAtS   sql.NullString
+			lastError      sql.NullString
+			parentJobID    sql.NullString
+			sourceEventID  sql.NullString
+			eventContextID sql.NullString
+			statusS        string
 		)
 		if err := rows.Scan(
 			&j.ID, &j.Plugin, &j.Command, &payload, &statusS, &j.Attempt, &j.MaxAttempts, &j.SubmittedBy, &dedupeKey,
-			&createdAtS, &startedAtS, &completedAtS, &nextRetryAtS, &lastError, &parentJobID, &sourceEventID,
+			&createdAtS, &startedAtS, &completedAtS, &nextRetryAtS, &lastError, &parentJobID, &sourceEventID, &eventContextID,
 		); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
 		}
@@ -225,6 +230,9 @@ WHERE status = ?;
 		}
 		if sourceEventID.Valid {
 			j.SourceEventID = &sourceEventID.String
+		}
+		if eventContextID.Valid {
+			j.EventContextID = &eventContextID.String
 		}
 		jobs = append(jobs, &j)
 	}
@@ -301,19 +309,20 @@ func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Sta
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		plugin        string
-		command       string
-		attempt       int
-		submittedBy   string
-		createdAt     string
-		parentJobID   sql.NullString
-		sourceEventID sql.NullString
+		plugin         string
+		command        string
+		attempt        int
+		submittedBy    string
+		createdAt      string
+		parentJobID    sql.NullString
+		sourceEventID  sql.NullString
+		eventContextID sql.NullString
 	)
 	if err := tx.QueryRowContext(ctx, `
-SELECT plugin, command, attempt, submitted_by, created_at, parent_job_id, source_event_id
+SELECT plugin, command, attempt, submitted_by, created_at, parent_job_id, source_event_id, event_context_id
 FROM job_queue
 WHERE id = ?;
-`, jobID).Scan(&plugin, &command, &attempt, &submittedBy, &createdAt, &parentJobID, &sourceEventID); err != nil {
+`, jobID).Scan(&plugin, &command, &attempt, &submittedBy, &createdAt, &parentJobID, &sourceEventID, &eventContextID); err != nil {
 		return fmt.Errorf("load job for completion: %w", err)
 	}
 
@@ -347,10 +356,10 @@ WHERE id = ?;
 
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO job_log(
-  id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id
+  id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
 )
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-`, logID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, logID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID)
 	if err != nil {
 		return fmt.Errorf("insert job_log: %w", err)
 	}

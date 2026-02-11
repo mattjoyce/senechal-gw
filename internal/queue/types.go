@@ -18,32 +18,34 @@ const (
 )
 
 type Job struct {
-	ID            string
-	Plugin        string
-	Command       string
-	Payload       json.RawMessage
-	Status        Status
-	Attempt       int
-	MaxAttempts   int
-	SubmittedBy   string
-	DedupeKey     *string
-	CreatedAt     time.Time
-	StartedAt     *time.Time
-	CompletedAt   *time.Time
-	NextRetryAt   *time.Time
-	LastError     *string
-	ParentJobID   *string
-	SourceEventID *string
+	ID             string
+	Plugin         string
+	Command        string
+	Payload        json.RawMessage
+	Status         Status
+	Attempt        int
+	MaxAttempts    int
+	SubmittedBy    string
+	DedupeKey      *string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	CompletedAt    *time.Time
+	NextRetryAt    *time.Time
+	LastError      *string
+	ParentJobID    *string
+	SourceEventID  *string
+	EventContextID *string
 }
 
 type EnqueueRequest struct {
-	Plugin      string
-	Command     string
-	Payload     json.RawMessage
-	MaxAttempts int
-	SubmittedBy string
-	DedupeKey   *string
-	ParentJobID *string
+	Plugin         string
+	Command        string
+	Payload        json.RawMessage
+	MaxAttempts    int
+	SubmittedBy    string
+	DedupeKey      *string
+	ParentJobID    *string
+	EventContextID *string
 }
 
 var ErrJobNotFound = errors.New("job not found")
