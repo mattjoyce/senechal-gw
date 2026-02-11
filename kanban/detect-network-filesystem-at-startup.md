@@ -1,6 +1,6 @@
 ---
 id: 32
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 tags: [reliability, user-experience, diagnostics]
@@ -39,3 +39,4 @@ Common network filesystem identifiers:
 ## Narrative
 
 - 2026-02-09: Discovered when running from `/Volumes/Projects` (SMB share) vs `~/Projects` (local APFS). Same repo:branch, different outcomes. Added to improve first-run diagnostics. (by @claude)
+- 2026-02-11: Added startup preflight in `internal/storage` to detect network filesystems before SQLite open (Darwin via `statfs().Fstypename`, Linux via `statfs().Type` magic mapping) and fail fast with actionable remediation text including local `state.path` / `--db` guidance. Added mock-driven tests for local pass, network reject, and nearest-existing-path resolution; full `go test ./...` passes. (by @codex)
