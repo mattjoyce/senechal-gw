@@ -66,29 +66,64 @@ func New(
 }
 
 // Start runs the main dispatch loop. It dequeues jobs serially and executes them one at a time.
+
 // This is a blocking call that runs until ctx is cancelled.
+
 func (d *Dispatcher) Start(ctx context.Context) error {
-	d.logger.Info("dispatch loop started")
-	defer d.logger.Info("dispatch loop stopped")
 
-	ticker := time.NewTicker(1 * time.Second) // Poll queue every second
-	defer ticker.Stop()
+        d.logger.Info("dispatch loop started")
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			// Attempt to dequeue and execute one job
-			if err := d.processNextJob(ctx); err != nil {
-				d.logger.Error("failed to process job", "error", err)
-				// Continue processing - don't crash the loop on individual job errors
-			}
-		}
-	}
+        defer d.logger.Info("dispatch loop stopped")
+
+
+
+        ticker := time.NewTicker(1 * time.Second) // Poll queue every second
+
+        defer ticker.Stop()
+
+
+
+        for {
+
+                select {
+
+                case <-ctx.Done():
+
+                        return ctx.Err()
+
+                case <-ticker.C:
+
+                        // Attempt to dequeue and execute one job
+
+                        if err := d.processNextJob(ctx); err != nil {
+
+                                d.logger.Error("failed to process job", "error", err)
+
+                                // Continue processing - don't crash the loop on individual job errors
+
+                        }
+
+                }
+
+        }
+
 }
 
+
+
+// ExecuteJob runs a single job by spawning the plugin subprocess.
+
+func (d *Dispatcher) ExecuteJob(ctx context.Context, job *queue.Job) {
+
+        d.executeJob(ctx, job)
+
+}
+
+
+
 // processNextJob dequeues the next job and executes it.
+
+
 func (d *Dispatcher) processNextJob(ctx context.Context) error {
 	job, err := d.queue.Dequeue(ctx)
 	if err != nil {
