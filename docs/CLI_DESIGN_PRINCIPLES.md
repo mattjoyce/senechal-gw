@@ -37,11 +37,12 @@ The CLI is the primary "API" for an LLM operator. It must provide:
 ### 2.2 The Semantic Verbs (Intents)
 *   **check**: Validate logic, syntax, and integrity (e.g., `config check`).
 *   **lock**: Authorize current state by updating integrity manifests/hashes (e.g., `config lock`).
-*   **get / set**: Retrieve or modify specific configuration nodes using a path syntax (e.g., `config set plugins.withings.enabled=true`).
+*   **get / set**: Retrieve or modify specific configuration nodes using a path syntax (e.g., `config set plugin:withings.enabled=true`).
 *   **show / export**: Display the full, resolved, monolithic configuration or a specific entity node (e.g., `config show plugin:withings`).
 *   **inspect**: Deep-dive into a specific runtime resource instance (e.g., `job inspect <id>`).
-*   **list**: Show a summary of available resources.
-*   **run / trigger**: Initiate a manual action or retry.
+*   **list**: Show a summary of available resources (e.g., `queue list`).
+*   **run / trigger**: Initiate a manual action or retry (e.g., `plugin run echo`, `job trigger <id>`).
+*   **purge**: Destructively clear a resource (e.g., `queue purge`).
 
 ## 4. First-Class Entities
 
@@ -52,6 +53,8 @@ Senechal treats specific configuration blocks as "First-Class Entities." These a
 *   **Pipeline:** A defined workflow graph (e.g., `pipeline:video-wisdom`).
 *   **Webhook:** An inbound HTTP endpoint (e.g., `webhook:github`).
 *   **Token:** An API authorization key and its scopes (e.g., `token:admin-cli`).
+*   **Job:** A discrete execution instance (e.g., `job:uuid-123`). Supports `inspect`, `log`, `retry`.
+*   **Queue:** The state of the work buffer. Supports `list`, `purge`, `status`.
 
 ### 4.2 CLI Intersection (Entity Addressing)
 The CLI uses a standard `<entity_type>:<entity_name>` syntax to address these nodes. 
