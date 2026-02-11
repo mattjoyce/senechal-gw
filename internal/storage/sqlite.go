@@ -29,17 +29,26 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	// Basic health check + apply a few safe pragmas.
+	// Basic health check + apply safe performance pragmas.
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if _, err := db.ExecContext(pctx, "PRAGMA foreign_keys = ON;"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("enable foreign_keys: %w", err)
+	pragmas := []string{
+		"PRAGMA foreign_keys = ON;",
+		"PRAGMA busy_timeout = 5000;",
+		"PRAGMA journal_mode = WAL;",
+		"PRAGMA synchronous = NORMAL;",
 	}
-	if _, err := db.ExecContext(pctx, "PRAGMA busy_timeout = 5000;"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	for _, p := range pragmas {
+		if _, err := db.ExecContext(pctx, p); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("apply pragma %q: %w", p, err)
+		}
 	}
+
+	// Restrict to 1 connection to avoid SQLITE_BUSY errors during concurrent writes.
+	// This ensures only one writer at a time while busy_timeout handles waiting.
+	db.SetMaxOpenConns(1)
+
 	if err := BootstrapSQLite(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
