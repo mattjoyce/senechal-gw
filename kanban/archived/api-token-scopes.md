@@ -1,8 +1,8 @@
 ---
 id: 35
-status: backlog
+status: done
 priority: High
-blocked_by: [36]
+blocked_by: []
 tags: [sprint-3, security, api, auth, webhooks]
 ---
 
@@ -531,6 +531,8 @@ tokens:
 - Scope inheritance / hierarchies (YAGNI)
 
 ## Narrative
+
+- 2026-02-10: Implemented as part of PR #12. Manifest-driven scopes, authorization middleware, 403 on insufficient scope. All tests passing. (by @codex)
 
 Scopes solve two critical problems for Sprint 3:
 

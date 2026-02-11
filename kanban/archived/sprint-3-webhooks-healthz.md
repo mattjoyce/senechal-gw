@@ -1,8 +1,8 @@
 ---
 id: 22
-status: todo
+status: done
 priority: High
-blocked_by: [29]
+blocked_by: []
 tags: [sprint-3, epic, webhooks, security]
 ---
 
@@ -149,4 +149,5 @@ Implement webhooks, token-based authorization with manifest-driven scopes, multi
 - BLAKE3 hash mismatch detected and prevents startup
 
 ## Narrative
+- 2026-02-10: All Sprint 3 work completed and merged. Multi-file config + webhooks (PR #11), token scopes + SSE + healthz (PR #12), user guide updates (PR #13). (by @team)
 
