@@ -806,11 +806,13 @@ senechal-gw queue              # show pending/active jobs
 
 ### 10.7 CLI Principles
 
-To ensure predictability and safety for both human and LLM operators, all CLI commands MUST adhere to these principles:
+To ensure predictability and safety for both human and LLM operators, all CLI commands MUST adhere to the standards defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
 
-- **Hierarchy:** Use a strictly hierarchical **NOUN VERB** pattern (e.g., `senechal-gw job inspect` NOT `senechal-gw inspect`). This keeps the root namespace clean and groups related capabilities.
-- **Verbosity:** Provide `-v` and `--verbose` flags to expose internal logic, state transitions, and detailed error context.
-- **Safety:** Provide a `--dry-run` flag for any command that performs mutations (filesystem, database, or external side effects). The dry-run MUST preview exactly what would happen without committing changes.
+Core requirements:
+- **Hierarchy:** Strict **NOUN VERB** pattern.
+- **Verbosity:** mandatory `-v` / `--verbose` flags.
+- **Safety:** mandatory `--dry-run` for mutations.
+- **Machine-Readability:** mandatory `--json` for status and inspection.
 
 ---
 
