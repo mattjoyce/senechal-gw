@@ -1,10 +1,10 @@
 ---
 id: 62
-status: done
+status: doing
 priority: Normal
 blocked_by: []
-assignee: ""
-tags: [pipeline, plugin, testing, e2e]
+assignee: "@test-admin"
+tags: [pipeline, plugin, testing, e2e, wip]
 ---
 
 # Multi-Plugin Pipeline E2E Test

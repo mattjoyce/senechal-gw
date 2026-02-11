@@ -1,0 +1,9 @@
+name: file_handler
+version: 0.1.0
+protocol: 1
+entrypoint: run.py
+description: "Read and write local files with path restrictions"
+commands: [poll, handle, health]
+config_keys:
+  required: []
+  optional: [allowed_read_paths, allowed_write_paths]

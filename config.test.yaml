@@ -40,22 +40,40 @@ plugins:
     config:
       message: "Test environment echo - ${SENECHAL_TEST_MESSAGE}"
 
-  # Fabric plugin (if available)
-  fabric:
-    enabled: false             # Disabled by default in test
+  # File handler for pipeline testing (event-driven, not scheduled)
+  file_handler:
+    enabled: true
     schedule:
-      every: 5m
-      jitter: 30s
-    timeout: 60s
-    max_attempts: 3
+      every: daily          # Minimal schedule (event-driven via API)
+      jitter: 1h
+    timeout: 30s
+    max_attempts: 1
     config:
-      # Add fabric-specific test config here
+      allowed_read_paths: "/tmp"
+      allowed_write_paths: "/tmp"
 
-# Routes: event-driven plugin chaining (for testing routing)
-# routes:
-#   - from: echo
-#     event_type: test_event
-#     to: fabric
+  # Fabric plugin for text analysis (event-driven via routing)
+  fabric:
+    enabled: true
+    schedule:
+      every: daily          # Minimal schedule (event-driven via routing)
+      jitter: 1h
+    timeout: 120s
+    max_attempts: 1
+    config:
+      FABRIC_DEFAULT_MODEL: "gpt-4"
+
+# Routes: event-driven plugin chaining for multi-plugin pipeline
+routes:
+  # Step 1: file.read → fabric (analyze text)
+  - from: file_handler
+    event_type: file.read
+    to: fabric
+
+  # Step 2: fabric.completed → file_handler (write report)
+  - from: fabric
+    event_type: fabric.completed
+    to: file_handler
 
 # Webhooks: HTTP listener endpoints (for testing webhooks)
 # webhooks:
