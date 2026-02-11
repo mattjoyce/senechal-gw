@@ -29,3 +29,4 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
+- 2026-02-11: Implemented `fsWorkspaceManager` with job-scoped create/open/cleanup and hardlink-based clone semantics, plus tests covering workspace creation, hardlink fan-out behavior, and cleanup retention. (by @codex)
