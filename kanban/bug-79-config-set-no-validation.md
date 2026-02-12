@@ -1,6 +1,6 @@
 ---
 id: 79
-status: todo
+status: done
 priority: High
 tags: [bug, cli, config, validation, data-integrity]
 ---
@@ -212,3 +212,4 @@ After fix, verify:
 ## Narrative
 
 - 2026-02-12: Discovered during comprehensive CLI testing. Tested setting `plugins.echo.enabled=true` which requires a schedule field. The command succeeded with "Successfully set..." message, but config was invalid afterward. All subsequent CLI commands failed with "Load error: invalid configuration". Had to manually edit config.yaml to restore functionality. The `config set` command should run validation BEFORE writing to prevent this corruption scenario. Combined with bug #78 (no backups), this creates a high-severity data integrity issue. (by @test-admin)
+- 2026-02-13: Fixed by making persisted `SetPath` changes transactional: write candidate config, immediately reload+validate full config, and automatically roll back file bytes on validation failure. `config set --apply` now rejects invalid mutations without leaving the config corrupted. Added regression tests in both config and CLI layers. (by @assistant)

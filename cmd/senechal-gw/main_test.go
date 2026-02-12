@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/mattjoyce/senechal-gw/internal/config"
 )
 
 func captureOutputWithExitCode(t *testing.T, run func() int) (int, string, string) {
@@ -189,5 +191,38 @@ func TestPrintUsageUsesActionTerminology(t *testing.T) {
 	}
 	if strings.Contains(stdout, "<noun> <verb>") {
 		t.Fatalf("usage should not reference verb terminology: %s", stdout)
+	}
+}
+
+func TestRunConfigSetApplyRejectsInvalidConfigAndRollsBack(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+service:
+  name: test-gw
+plugins:
+  echo:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigSet([]string{"--config", configPath, "--apply", "plugin:echo.enabled=true"})
+	})
+	if code == 0 {
+		t.Fatalf("runConfigSet() should fail for invalid apply, stderr: %s", stderr)
+	}
+	if !strings.Contains(stderr, "Apply failed: validation failed:") {
+		t.Fatalf("stderr missing validation failure details: %s", stderr)
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config should still be valid after failed apply: %v", err)
+	}
+	if reloaded.Plugins["echo"].Enabled {
+		t.Fatal("plugin:echo.enabled should remain false after failed apply")
 	}
 }
