@@ -1,5 +1,5 @@
 ---
-id: 68
+id: 87
 status: todo
 priority: High
 blocked_by: []
@@ -137,3 +137,4 @@ None available. API triggering of handle commands is non-functional.
 ## Narrative
 
 - 2026-02-12: Discovered during E2E pipeline testing for card #62. The file_handler plugin was created as a Pythonic exemplar with comprehensive error handling, type hints, and security validation. Plugin works perfectly when tested manually via `docker exec` with identical JSON input. However, when triggered via POST /trigger/file_handler/handle, it consistently exits with code 1 and produces no stdout output. The gateway reports "plugin produced no output on stdout". No Python traceback is captured because stderr logging is not implemented. This blocks all event-driven plugin testing via API. Needs core team investigation into API request envelope construction and subprocess stdio handling. (by @test-admin)
+- 2026-02-13: Renumbered from card #68 to card #87 to resolve duplicate kanban ID collision with the separate completed API payload-envelope bug card. (by @assistant)
