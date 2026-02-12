@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mattjoyce/senechal-gw/internal/api"
 	"github.com/mattjoyce/senechal-gw/internal/auth"
@@ -87,7 +91,7 @@ Core Resources (Nouns):
 
 System Commands:
   system start      Start the gateway service in foreground
-  system status     Show global gateway health (planned)
+  system status     Show global gateway health
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
@@ -135,8 +139,7 @@ func runSystemNoun(args []string) int {
 			printSystemStatusHelp()
 			return 0
 		}
-		fmt.Println("system status is not yet implemented")
-		return 0
+		return runSystemStatus(actionArgs)
 	case "help":
 		printSystemNounHelp(os.Stdout)
 		return 0
@@ -459,8 +462,12 @@ func printSystemStartHelp() {
 }
 
 func printSystemStatusHelp() {
-	fmt.Println("Usage: senechal-gw system status")
-	fmt.Println("Show global gateway health (planned).")
+	fmt.Println("Usage: senechal-gw system status [--config PATH] [--json]")
+	fmt.Println("Show global gateway health (config, database readiness, and PID lock state).")
+	fmt.Println("")
+	fmt.Println("Exit codes:")
+	fmt.Println("  0  All required checks passed")
+	fmt.Println("  1  One or more checks failed")
 }
 
 func printConfigLockHelp() {
@@ -591,13 +598,11 @@ func runStart(args []string) int {
 		return 1
 	}
 	if r, ok := routerEngine.(*router.Router); ok {
-		logger.Info("router initialized", "pipelines", r.PipelineCount(), "config_dir", configDir)
-	}
-
-	pipelines := routerEngine.PipelineSummary()
-	logger.Info("pipeline discovery complete", "config_dir", configDir, "pipelines_loaded", len(pipelines))
-	for _, p := range pipelines {
-		logger.Info("pipeline registered", "name", p.Name, "trigger", p.Trigger)
+		pipelines := r.PipelineSummary()
+		logger.Info("pipeline discovery complete", "config_dir", configDir, "pipelines_loaded", len(pipelines))
+		for _, p := range pipelines {
+			logger.Info("pipeline registered", "name", p.Name, "trigger", p.Trigger)
+		}
 	}
 
 	sched := scheduler.New(cfg, q, logger)
@@ -675,6 +680,246 @@ func runStart(args []string) int {
 
 	logger.Info("senechal-gw stopped")
 	return 0
+}
+
+type systemStatusCheck struct {
+	Name      string `json:"name"`
+	OK        bool   `json:"ok"`
+	Path      string `json:"path,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	ActivePID int    `json:"active_pid,omitempty"`
+}
+
+type systemStatusReport struct {
+	Healthy bool                `json:"healthy"`
+	Checks  []systemStatusCheck `json:"checks"`
+}
+
+func runSystemStatus(args []string) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	jsonOut := fs.Bool("json", false, "Output status as JSON")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	report := collectSystemStatus(*configPath)
+
+	if *jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to render JSON status: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+	} else {
+		renderSystemStatusHuman(report)
+	}
+
+	if report.Healthy {
+		return 0
+	}
+	return 1
+}
+
+func collectSystemStatus(configPath string) systemStatusReport {
+	report := systemStatusReport{
+		Healthy: true,
+		Checks:  make([]systemStatusCheck, 0, 4),
+	}
+
+	resolvedConfigPath := configPath
+	if resolvedConfigPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			report.Checks = append(report.Checks, systemStatusCheck{
+				Name:   "config_discovery",
+				OK:     false,
+				Detail: err.Error(),
+			})
+			report.Checks = append(report.Checks, systemStatusCheck{
+				Name:   "config_load",
+				OK:     false,
+				Detail: "skipped: config discovery failed",
+			})
+			report.Checks = append(report.Checks, systemStatusCheck{
+				Name:   "state_db",
+				OK:     false,
+				Detail: "skipped: config discovery failed",
+			})
+			report.Checks = append(report.Checks, systemStatusCheck{
+				Name:   "pid_lock",
+				OK:     false,
+				Detail: "skipped: config discovery failed",
+			})
+			report.Healthy = false
+			return report
+		}
+		resolvedConfigPath = discovered
+	}
+
+	report.Checks = append(report.Checks, systemStatusCheck{
+		Name:   "config_discovery",
+		OK:     true,
+		Path:   resolvedConfigPath,
+		Detail: "config path resolved",
+	})
+
+	cfg, err := config.Load(resolvedConfigPath)
+	if err != nil {
+		report.Checks = append(report.Checks, systemStatusCheck{
+			Name:   "config_load",
+			OK:     false,
+			Path:   resolvedConfigPath,
+			Detail: err.Error(),
+		})
+		report.Checks = append(report.Checks, systemStatusCheck{
+			Name:   "state_db",
+			OK:     false,
+			Detail: "skipped: config load failed",
+		})
+		report.Checks = append(report.Checks, systemStatusCheck{
+			Name:   "pid_lock",
+			OK:     false,
+			Detail: "skipped: config load failed",
+		})
+		report.Healthy = false
+		return report
+	}
+
+	report.Checks = append(report.Checks, systemStatusCheck{
+		Name:   "config_load",
+		OK:     true,
+		Path:   resolvedConfigPath,
+		Detail: "configuration loaded",
+	})
+
+	stateDBCheck := checkStateDBReadiness(cfg.State.Path)
+	if !stateDBCheck.OK {
+		report.Healthy = false
+	}
+	report.Checks = append(report.Checks, stateDBCheck)
+
+	pidLockCheck := checkPIDLockState(getPIDLockPath(cfg))
+	if !pidLockCheck.OK {
+		report.Healthy = false
+	}
+	report.Checks = append(report.Checks, pidLockCheck)
+
+	return report
+}
+
+func checkStateDBReadiness(statePath string) systemStatusCheck {
+	check := systemStatusCheck{
+		Name: "state_db",
+		Path: statePath,
+	}
+
+	if statePath == "" {
+		check.OK = false
+		check.Detail = "state path is empty"
+		return check
+	}
+
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		check.OK = true
+		check.Detail = "database file does not exist yet (will be created on start)"
+		return check
+	}
+
+	dsn := fmt.Sprintf("file:%s?mode=ro", filepath.ToSlash(statePath))
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		check.OK = false
+		check.Detail = fmt.Sprintf("open failed: %v", err)
+		return check
+	}
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		check.OK = false
+		check.Detail = fmt.Sprintf("ping failed: %v", err)
+		return check
+	}
+
+	check.OK = true
+	check.Detail = "database is readable"
+	return check
+}
+
+func checkPIDLockState(lockPath string) systemStatusCheck {
+	check := systemStatusCheck{
+		Name: "pid_lock",
+		Path: lockPath,
+	}
+
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			check.OK = true
+			check.Detail = "no active PID lock file"
+			return check
+		}
+		check.OK = false
+		check.Detail = fmt.Sprintf("failed to read lock file: %v", err)
+		return check
+	}
+
+	line := strings.TrimSpace(string(data))
+	if line == "" {
+		check.OK = true
+		check.Detail = "lock file present but empty (not active)"
+		return check
+	}
+
+	pid, err := strconv.Atoi(line)
+	if err != nil || pid <= 0 {
+		check.OK = false
+		check.Detail = "lock file contains invalid pid"
+		return check
+	}
+
+	if processExists(pid) {
+		check.OK = false
+		check.ActivePID = pid
+		check.Detail = fmt.Sprintf("another instance appears active (pid %d)", pid)
+		return check
+	}
+
+	check.OK = true
+	check.Detail = fmt.Sprintf("stale lock file detected (pid %d not running)", pid)
+	return check
+}
+
+func processExists(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+func renderSystemStatusHuman(report systemStatusReport) {
+	state := "HEALTHY"
+	if !report.Healthy {
+		state = "DEGRADED"
+	}
+	fmt.Printf("System Status: %s\n", state)
+	for _, c := range report.Checks {
+		status := "OK"
+		if !c.OK {
+			status = "FAIL"
+		}
+		fmt.Printf("- %s: %s", c.Name, status)
+		if c.Path != "" {
+			fmt.Printf(" (path=%s)", c.Path)
+		}
+		if c.Detail != "" {
+			fmt.Printf(" - %s", c.Detail)
+		}
+		fmt.Println()
+	}
 }
 
 func runInspect(args []string) int {

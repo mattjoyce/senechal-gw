@@ -1,6 +1,6 @@
 ---
 id: 85
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [improvement, cli, system, observability]
@@ -39,3 +39,4 @@ When I run `senechal-gw system status`, I want to see whether core dependencies 
 
 ## Narrative
 - 2026-02-12: Card created after confirming `system status` is still a placeholder and not useful for operations. (by @assistant)
+- 2026-02-13: Implemented `system status` with actionable checks for config discovery/load, database readiness, and PID lock state. Added `--json` machine output, help text with exit codes, and unit tests for healthy status, config-load failure, and active lock detection. (by @assistant)
