@@ -1,6 +1,6 @@
 ---
 id: 21
-status: backlog
+status: done
 priority: High
 blocked_by: [47]
 tags: [routing, epic, core]
@@ -39,3 +39,6 @@ When a plugin emits events during execution, I want the gateway to automatically
 
 ## Narrative
 
+
+## Narrative
+- 2026-02-12: Superseded by Sprint 4 implementation (Cards #48-#52). Orchestration is now DAG-based using Pipeline DSL. (by @gemini)
