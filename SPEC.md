@@ -870,174 +870,19 @@ job_log (
 
 ## 12. Configuration Reference
 
-### 12.1 Multi-File Configuration (Sprint 3+)
+Senechal Gateway uses a **Monolithic Runtime** compiled from a modular, **Tiered Directory** structure.
 
-**Design decision (2026-02-10):** Configuration uses multiple files in `~/.config/senechal-gw/` (Nagios-style), compiled into monolithic runtime config with preflight validation.
+### 12.1 Overview
 
-**Directory structure:**
-```
-~/.config/senechal-gw/           # Default XDG location
-├── config.yaml                  # Service-level settings
-├── plugins.yaml                 # Plugin configurations & schedules
-├── routes.yaml                  # Event routing rules
-├── webhooks.yaml                # Webhook endpoint definitions
-├── tokens.yaml                  # API token registry (BLAKE3 hashes)
-└── scopes/                      # Token scope definitions (JSON)
-    ├── admin-cli.json
-    ├── github-integration.json
-    └── webhook-integration.json
-```
+For the complete configuration specification, including file formats, merge logic, and integrity verification rules, see:  
+👉 **[docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md)**
 
-**Benefits:**
-- Focused files per concern (separation of concerns)
-- LLM-friendly (safe to edit specific files)
-- BLAKE3 hash integrity checking on scope files
-- Version control friendly (granular diffs)
-- Compile-time cross-reference validation
+### 12.2 Key Principles
 
-**Config directory location:**
-- Default: `~/.config/senechal-gw/` (XDG Base Directory)
-- Override: `--config-dir /path/to/config/` flag
-- Environment: `$SENECHAL_CONFIG_DIR`
-
-**Loader behavior:**
-1. Discover config directory
-2. Load individual YAML files (config, plugins, routes, webhooks, tokens)
-3. Load referenced JSON scope files
-4. Verify BLAKE3 hashes on scope files (hard fail if mismatch)
-5. Interpolate environment variables
-6. Compile into monolithic RuntimeConfig
-7. Validate cross-file references
-8. Start or fail with detailed errors
-
-See cards #39 (Multi-File Config), #38 (CLI Config Tool), #40 (TUI Token Manager).
-
-### 12.2 File Format Reference
-
-**config.yaml** (Service settings):
-
-```yaml
-service:
-  name: senechal-gw
-  plugins_dir: /opt/senechal-gw/plugins
-  tick_interval: 60s           # scheduler tick frequency
-  log_level: info              # debug | info | warn | error
-  log_format: json
-  dedupe_ttl: 24h              # deduplication window
-  job_log_retention: 30d       # prune completed jobs older than this
-  events:
-    enabled: true              # SSE /events endpoint
-    buffer_size: 100           # ring buffer for late-joining clients
-
-api:
-  enabled: true
-  listen: 127.0.0.1:8080
-
-state:
-  path: ./data/state.db
-```
-
-**plugins.yaml** (Plugin configurations):
-```yaml
-plugins:
-  withings:
-    enabled: true
-    schedule:
-      every: 6h
-      jitter: 30m
-      preferred_window:
-        start: "06:00"
-        end: "22:00"
-    config:
-      client_id: ${WITHINGS_CLIENT_ID}
-      client_secret: ${WITHINGS_CLIENT_SECRET}
-    retry:
-      max_attempts: 4          # default: 4 (1 original + 3 retries)
-      backoff_base: 30s        # default: 30s
-    timeouts:
-      poll: 60s                # default: 60s
-      handle: 120s             # default: 120s
-    circuit_breaker:
-      threshold: 3             # default: 3 consecutive failures
-      reset_after: 30m         # default: 30m
-    max_outstanding_polls: 1   # default: 1
-
-  google-calendar:
-    enabled: true
-    schedule:
-      every: 15m
-      jitter: 3m
-    config:
-      credentials_file: ${GOOGLE_CREDS_PATH}
-```
-
-**webhooks.yaml** (Webhook endpoints):
-```yaml
-webhooks:
-  - name: github
-    path: /webhook/github
-    plugin: github-handler
-    command: handle
-    secret: ${GITHUB_WEBHOOK_SECRET}
-    signature_header: X-Hub-Signature-256
-    max_body_size: 1MB
-
-  - name: stripe
-    path: /webhook/stripe
-    plugin: stripe-handler
-    command: handle
-    secret: ${STRIPE_WEBHOOK_SECRET}
-```
-
-**routes.yaml** (Event routing):
-```yaml
-routes:
-  - from: withings
-    event_type: new_health_data
-    to: health-analyzer
-
-  - from: health-analyzer
-    event_type: alert
-    to: notify
-```
-
-**tokens.yaml** (API token registry with BLAKE3 hashes):
-```yaml
-tokens:
-  - name: admin-cli
-    key: ${ADMIN_API_KEY}
-    scopes_file: scopes/admin-cli.json
-    scopes_hash: blake3:a3f8c2d9e1b4567890abcdef1234567890abcdef1234567890abcdef12345678
-    created_at: 2026-02-10T10:00:00Z
-    description: "Full admin access"
-
-  - name: github-integration
-    key: ${GITHUB_API_KEY}
-    scopes_file: scopes/github-integration.json
-    scopes_hash: blake3:b4e9d3c0f2a5678901bcdefg2345678901bcdefg2345678901bcdefg23456789
-    created_at: 2026-02-10T11:30:00Z
-    description: "GitHub webhook integration"
-```
-
-**scopes/github-integration.json** (Token scope definition):
-```json
-{
-  "scopes": [
-    "read:jobs",
-    "read:events",
-    "github-handler:rw"
-  ],
-  "metadata": {
-    "description": "GitHub webhook integration",
-    "created_at": "2026-02-10T11:30:00Z",
-    "purpose": "Allow GitHub to query job status and trigger handlers"
-  }
-}
-```
-
-Environment variable interpolation via `${VAR}` syntax across all files. Secrets never stored in config files themselves.
-
----
+- **Directory-Based Modularity:** Configuration is split into `config.yaml`, `webhooks.yaml`, `tokens.yaml`, and modular directories for `plugins/` and `pipelines/`.
+- **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
+- **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
+- **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
 
 ## 13. Deployment
 
