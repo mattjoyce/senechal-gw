@@ -1,6 +1,6 @@
 ---
 id: 73
-status: todo
+status: done
 priority: Normal
 tags: [bug, plugin, file_handler, fabric, pipeline]
 ---
