@@ -131,7 +131,7 @@ func runSystemNoun(args []string) int {
 
 func runConfigNoun(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config <verb>\nVerbs: lock, check, show, get\n")
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config <verb>\nVerbs: lock, check, show, get, set\n")
 		return 1
 	}
 	switch args[0] {
@@ -143,14 +143,69 @@ func runConfigNoun(args []string) int {
 		return runConfigShow(args[1:])
 	case "get":
 		return runConfigGet(args[1:])
+	case "set":
+		return runConfigSet(args[1:])
 	case "help":
 		fmt.Println("Usage: senechal-gw config <verb> [--config PATH]")
-		fmt.Println("Verbs: lock, check, show, get")
+		fmt.Println("Verbs: lock, check, show, get, set")
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config verb: %s\n", args[0])
 		return 1
 	}
+}
+
+// ... (skipping to verb implementations)
+
+func runConfigSet(args []string) int {
+	fs := flag.NewFlagSet("set", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	dryRun := fs.Bool("dry-run", false, "Preview changes without applying them")
+	apply := fs.Bool("apply", false, "Apply changes to physical files")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 || !strings.Contains(fs.Arg(0), "=") {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config set <path>=<value> [--dry-run | --apply]\n")
+		return 1
+	}
+
+	if !*dryRun && !*apply {
+		fmt.Println("Error: either --dry-run or --apply must be specified for 'config set'.")
+		return 1
+	}
+
+	parts := strings.SplitN(fs.Arg(0), "=", 2)
+	path, value := parts[0], parts[1]
+
+	cfg, err := loadConfigForTool(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
+		return 1
+	}
+
+	if *dryRun {
+		// In-memory test without persistence
+		err := cfg.SetPath(path, value, false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Dry-run validation failed: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Dry-run: would set %q to %q\n", path, value)
+		fmt.Println("Status: Configuration check PASSED.")
+		return 0
+	}
+
+	// Real application
+	if err := cfg.SetPath(path, value, true); err != nil {
+		fmt.Fprintf(os.Stderr, "Apply failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Successfully set %q to %q\n", path, value)
+	return 0
 }
 
 // ... (skipping to verb implementations)

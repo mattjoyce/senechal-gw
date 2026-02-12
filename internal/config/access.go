@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -98,4 +99,143 @@ func getValue(m map[string]any, path string) (any, error) {
 	}
 
 	return current, nil
+}
+
+func findNode(node *yaml.Node, path string, create bool) (*yaml.Node, error) {
+	parts := strings.Split(path, ".")
+	current := node
+
+	for _, part := range parts {
+		if current.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("not a mapping node")
+		}
+
+		found := false
+		for i := 0; i < len(current.Content); i += 2 {
+			keyNode := current.Content[i]
+			if keyNode.Value == part {
+				current = current.Content[i+1]
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			if create {
+				// Add new key-value pair to mapping
+				keyNode := &yaml.Node{
+					Kind:  yaml.ScalarNode,
+					Tag:   "!!str",
+					Value: part,
+				}
+				valueNode := &yaml.Node{
+					Kind: yaml.MappingNode, // Default to mapping if we have more parts
+					Tag:  "!!map",
+				}
+				// If this is the last part, it will be overwritten by the value anyway
+				current.Content = append(current.Content, keyNode, valueNode)
+				current = valueNode
+			} else {
+				return nil, fmt.Errorf("key %q not found", part)
+			}
+		}
+	}
+
+	return current, nil
+}
+
+// SetPath modifies a configuration value at the specified path.
+func (c *Config) SetPath(path, value string, persist bool) error {
+	// ... (addressing logic)
+	// 1. Resolve Entity Addressing (type:name)
+	if strings.Contains(path, ":") {
+		parts := strings.SplitN(path, ".", 2)
+		entityAddr := parts[0]
+
+		eparts := strings.SplitN(entityAddr, ":", 2)
+		etype, ename := eparts[0], eparts[1]
+
+		// Map type:name to physical YAML path
+		var physicalPath string
+		switch etype {
+		case "plugin":
+			physicalPath = "plugins." + ename
+		case "webhook":
+			return fmt.Errorf("setting webhook fields via entity address not yet implemented")
+		default:
+			return fmt.Errorf("unsupported entity type for set: %q", etype)
+		}
+
+		if len(parts) > 1 {
+			path = physicalPath + "." + parts[1]
+		} else {
+			return fmt.Errorf("must specify a field to set (e.g., %s.enabled=false)", entityAddr)
+		}
+	}
+
+	// 2. Identify which file owns the root of this path
+	// For simplicity, we try the root config first
+	targetFile := ""
+	for f := range c.SourceFiles {
+		if strings.HasSuffix(f, "config.yaml") {
+			targetFile = f
+			break
+		}
+	}
+	if targetFile == "" {
+		// Fallback to first file if no config.yaml found
+		for f := range c.SourceFiles {
+			targetFile = f
+			break
+		}
+	}
+
+	rootNode := c.SourceFiles[targetFile]
+	if rootNode == nil || rootNode.Kind != yaml.DocumentNode {
+		return fmt.Errorf("no valid configuration source found")
+	}
+
+	target, err := findNode(rootNode.Content[0], path, true)
+	if err != nil {
+		return fmt.Errorf("failed to navigate/create path %q: %w", path, err)
+	}
+
+	target.Kind = yaml.ScalarNode
+	target.Value = value
+	target.Tag = guessTag(value)
+
+	if !persist {
+		return nil
+	}
+
+	return c.saveFile(targetFile, rootNode)
+}
+
+func guessTag(v string) string {
+	if v == "true" || v == "false" {
+		return "!!bool"
+	}
+	// Check for integer
+	isDigit := true
+	for i, c := range v {
+		if i == 0 && c == '-' {
+			continue
+		}
+		if c < '0' || c > '9' {
+			isDigit = false
+			break
+		}
+	}
+	if isDigit && v != "" && v != "-" {
+		return "!!int"
+	}
+	return "!!str"
+}
+
+func (c *Config) saveFile(path string, node *yaml.Node) error {
+	data, err := yaml.Marshal(node)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }

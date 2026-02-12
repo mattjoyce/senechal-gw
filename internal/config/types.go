@@ -1,17 +1,22 @@
 package config
 
-import "time"
+import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
 
 // Config represents the complete senechal-gw configuration.
 type Config struct {
-	Include    []string              `yaml:"include,omitempty"`  // Multi-file mode: files to merge
-	Service    ServiceConfig         `yaml:"service"`
-	State      StateConfig           `yaml:"state"`
-	API        APIConfig             `yaml:"api,omitempty"`
-	PluginsDir string                `yaml:"plugins_dir"`
-	Plugins    map[string]PluginConf `yaml:"plugins"`
-	Routes     []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
-	Webhooks   *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
+	Include     []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
+	Service     ServiceConfig         `yaml:"service"`
+	State       StateConfig           `yaml:"state"`
+	API         APIConfig             `yaml:"api,omitempty"`
+	PluginsDir  string                `yaml:"plugins_dir"`
+	Plugins     map[string]PluginConf `yaml:"plugins"`
+	Routes      []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
+	Webhooks    *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
+	SourceFiles map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
 }
 
 // ServiceConfig defines core service settings.

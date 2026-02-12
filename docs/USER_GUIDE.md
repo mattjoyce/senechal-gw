@@ -536,6 +536,10 @@ The `senechal-gw` executable provides a structured command hierarchy for interac
 
 -   `senechal-gw system start`: Runs the service in the foreground.
 -   `senechal-gw config lock`: Authorizes current configuration by updating integrity hashes.
+-   `senechal-gw config check`: Validates configuration syntax, policy, and integrity.
+-   `senechal-gw config show [entity]`: Displays the full or partial configuration (e.g., `config show plugin:echo`).
+-   `senechal-gw config get <path>`: Retrieves a specific value using dot-notation (e.g., `config get service.name`).
+-   `senechal-gw config set <path>=<value>`: Modifies a configuration value. Requires `--dry-run` or `--apply`.
 -   `senechal-gw job inspect <id>`: Shows the full lineage, baggage, and artifacts for a job.
 -   `senechal-gw system status`: Shows the state of discovered plugins, queue depth, and health (planned).
 -   `senechal-gw system reload`: Sends a `SIGHUP` signal to reload configuration without restart (planned).

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -94,5 +96,47 @@ func TestGetEntity(t *testing.T) {
 	t.Run("unknown plugin", func(t *testing.T) {
 		_, err := cfg.GetEntity("plugin:missing")
 		assert.Error(t, err)
+	})
+}
+
+func TestSetPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	initialYAML := `
+service:
+  name: old-name
+plugins:
+  echo:
+    enabled: true
+    schedule:
+      every: 5m
+`
+	err := os.WriteFile(configPath, []byte(initialYAML), 0644)
+	assert.NoError(t, err)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	t.Run("set root field", func(t *testing.T) {
+		err := cfg.SetPath("service.name", "new-name", true)
+		assert.NoError(t, err)
+
+		// Reload and verify
+		reloaded, _ := Load(configPath)
+		assert.Equal(t, "new-name", reloaded.Service.Name)
+	})
+
+	t.Run("set nested plugin field via entity", func(t *testing.T) {
+		err := cfg.SetPath("plugin:echo.enabled", "false", true)
+		assert.NoError(t, err)
+
+		// Reload and verify
+		reloaded, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("Load reloaded failed: %v", err)
+		}
+		assert.False(t, reloaded.Plugins["echo"].Enabled)
 	})
 }

@@ -42,6 +42,14 @@ func Load(configPath string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.SourceFiles = make(map[string]*yaml.Node)
+
+	// Add root node to SourceFiles (manually since loadConfigFile returns a partial Config)
+	rootData, _ := os.ReadFile(absPath)
+	var rootNode yaml.Node
+	if err := yaml.Unmarshal(rootData, &rootNode); err == nil {
+		cfg.SourceFiles[absPath] = &rootNode
+	}
 
 	// If include array exists, load and merge included files
 	var includedPaths []string
@@ -151,6 +159,7 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.SourceFiles = make(map[string]*yaml.Node)
 
 	scopeDirs := make(map[string]struct{})
 	if len(cfg.Include) > 0 {
@@ -220,6 +229,12 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 		visited[absPath] = true
 
 		// Load included file
+		includedData, _ := os.ReadFile(absPath)
+		var includedNode yaml.Node
+		if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
+			cfg.SourceFiles[absPath] = &includedNode
+		}
+
 		includedCfg, err := loadConfigFile(absPath, visited)
 		if err != nil {
 			return fmt.Errorf("include[%d] (%s): %w", i, includePath, err)
