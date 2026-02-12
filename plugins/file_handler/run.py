@@ -140,8 +140,8 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
     Returns:
         Success response with file.written event or error response
     """
-    # Accept 'content' (standard) or 'result' (from fabric)
-    content = payload.get("content") or payload.get("result")
+    # Prefer 'result' (processed data from fabric) over 'content' (raw input)
+    content = payload.get("result") or payload.get("content")
     if not content:
         return error_response(
             "Missing required field 'content' or 'result' in payload",
