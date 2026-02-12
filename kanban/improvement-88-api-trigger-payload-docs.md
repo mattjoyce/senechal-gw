@@ -1,6 +1,6 @@
 ---
 id: 88
-status: todo
+status: done
 priority: Medium
 tags: [docs, api, ux, testing]
 ---
@@ -122,3 +122,4 @@ During TP-002, spent 10+ minutes debugging why plugin received empty payload. Cl
 ## Narrative
 
 - 2026-02-13: Discovered during TP-002 API trigger testing. First attempt sent raw payload JSON, but plugin received empty action field. After checking code (types.go), found TriggerRequest wraps payload. Second attempt with wrapped payload succeeded. This is not intuitive and wastes time during testing/integration. Recommend adding clear API documentation with examples. (by @test-admin)
+- 2026-02-13: Documented API trigger payload structure in USER_GUIDE.md and API_REFERENCE.md. Added 'trigger' help command to CLI. (by @gemini)

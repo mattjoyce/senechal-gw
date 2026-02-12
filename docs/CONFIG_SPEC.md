@@ -136,7 +136,52 @@ tokens:
 
 ---
 
-## 5. Environment Interpolation
+## 5. Authentication Configuration
+
+Senechal supports two authentication modes. These are configured within the `api` section of the configuration (typically in `config.yaml` or a dedicated `auth.yaml`).
+
+### 5.1 Legacy: Single API Key (Simple)
+For single-user or development environments.
+```yaml
+api:
+  auth:
+    api_key: your_secret_token
+```
+**Access Level**: Full admin (`*` scope).
+**Note**: This field is intended for simple setups and is planned for deprecation in future versions.
+
+### 5.2 Modern: Scoped Tokens (Recommended)
+For multi-user or production environments.
+```yaml
+api:
+  auth:
+    tokens:
+      - token: admin_token
+        scopes: ["*"]
+      - token: readonly_token
+        scopes: ["read:*"]
+      - token: github_token
+        scopes: ["github-handler:rw", "read:jobs"]
+```
+
+### 5.3 Coexistence and Migration
+- If both `api_key` and `tokens` are provided, both remain valid.
+- **Migration Path**:
+  1. Add clients to the `tokens` array.
+  2. Verify client connectivity.
+  3. Remove the `api_key` field.
+
+### 5.4 Token Scopes
+Scopes can be manifest-driven or granular:
+- `*`: Full admin access.
+- `read:*`: Access to all GET endpoints.
+- `{plugin}:ro`: Read-only access to a plugin (mapped to `read` commands in manifest).
+- `{plugin}:rw`: Read-write access to a plugin (mapped to `read` and `write` commands).
+- `trigger:{plugin}:{command}`: Specific permission to trigger a command.
+
+---
+
+## 6. Environment Interpolation
 
 Interpolation of `${VAR}` syntax happens **after** integrity verification but **before** YAML parsing.
 - Secrets must never be stored in YAML files; use environment variables.

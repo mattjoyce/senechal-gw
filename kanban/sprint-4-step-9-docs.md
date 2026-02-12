@@ -29,3 +29,4 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation to formalize orchestration knowledge. (by @gemini)
+- 2026-02-13: Finalized PIPELINES.md with comprehensive documentation on the Governance Hybrid model, Pipeline DSL, Multi-Event Branching, and Troubleshooting. Ensured alignment with Protocol v2 and updated USER_GUIDE.md for consistency. (by @gemini)

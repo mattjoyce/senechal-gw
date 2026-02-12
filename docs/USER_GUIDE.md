@@ -113,7 +113,30 @@ For each enabled plugin with a defined `schedule`, the scheduler calculates its 
 
 When a plugin's scheduled time arrives, the scheduler enqueues a `poll` job for that plugin into the system's work queue. This `poll` job initiates the plugin's execution flow. The scheduler also ensures "at-least-once" job execution semantics by utilizing deduplication keys.
 
-The `schedule.every` field supports various named intervals such as `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, and `monthly`.
+#### Flexible Intervals
+
+Senechal supports a wide range of interval formats for the `schedule.every` field:
+
+- **Go Duration Strings**: Standard Go durations like `1h`, `15m`, `30s`.
+- **Extended Suffixes**: Suffixes for days (`d`) and weeks (`w`). Examples: `3d` (3 days), `2w` (2 weeks).
+- **Human Aliases**:
+    - `hourly` (1h)
+    - `daily` (24h)
+    - `weekly` (168h)
+    - `monthly` (720h)
+
+**Example Configuration:**
+```yaml
+plugins:
+  withings:
+    schedule:
+      every: 6h
+      jitter: 15m
+  backblaze-backup:
+    schedule:
+      every: 3d
+      jitter: 1h
+```
 
 In addition to scheduling, the tick loop is also responsible for pruning completed job logs based on the configured `job_log_retention` policy.
 
@@ -338,7 +361,7 @@ Let's create a minimal Bash plugin called `hello-world`.
     ```yaml
     name: hello-world
     version: 1.0.0
-    protocol: 1
+    protocol: 2
     entrypoint: run.sh
     description: "A simple hello world plugin"
     commands: [poll]
@@ -356,27 +379,34 @@ Let's create a minimal Bash plugin called `hello-world`.
     # Read the JSON request from stdin
     REQUEST_JSON=$(cat)
 
-    # Use 'jq' to parse values from the request (install 'jq' if you don't have it)
-    # Alternatively, use 'python -c' or 'sed' for basic parsing if 'jq' is not available.
-    # For simplicity, this example assumes 'jq' is present for parsing 'config.name'.
+    # Protocol v2 Request Fields:
+    # .protocol      - Protocol version (2)
+    # .job_id        - Unique ID for this execution
+    # .command       - The command being run (poll, handle, etc.)
+    # .config        - Static configuration from config.yaml
+    # .state         - Persistent plugin state
+    # .context       - Shared metadata (Baggage) carried across the chain
+    # .workspace_dir - Local filesystem directory for ephemeral artifacts
+    # .event         - The triggering event (only for 'handle')
+
     PLUGIN_CONFIG_NAME=$(echo "$REQUEST_JSON" | jq -r '.config.name // "World"')
     JOB_ID=$(echo "$REQUEST_JSON" | jq -r '.job_id // "unknown"')
+    WORKSPACE=$(echo "$REQUEST_JSON" | jq -r '.workspace_dir // "."')
+
+    # Example: Writing to the workspace
+    echo "Greeting generated at $(date)" > "$WORKSPACE/last_greeting.txt"
 
     # Generate the JSON response
-    # The 'status' must be "ok" or "error"
-    # 'events' is an array of events to emit
-    # 'state_updates' is a JSON object to update the plugin's state
-    # 'logs' is an array of log messages to capture
     RESPONSE_JSON=$(cat <<EOF
 {
   "status": "ok",
   "events": [],
   "state_updates": {
     "last_run_job_id": "$JOB_ID",
-    "last_greeting": "Hello, $PLUGIN_CONFIG_NAME!"
+    "last_greeting_file": "$WORKSPACE/last_greeting.txt"
   },
   "logs": [
-    {"level": "info", "message": "Hello, $PLUGIN_CONFIG_NAME! Job ID: $JOB_ID"}
+    {"level": "info", "message": "Hello, $PLUGIN_CONFIG_NAME! Artifact saved to $WORKSPACE"}
   ]
 }
 EOF
@@ -422,7 +452,7 @@ Let's create a minimal Python plugin called `python-greet`.
     ```yaml
     name: python-greet
     version: 1.0.0
-    protocol: 1
+    protocol: 2
     entrypoint: run.py
     description: "A simple Python greeting plugin"
     commands: [poll, handle]
@@ -438,34 +468,43 @@ Let's create a minimal Python plugin called `python-greet`.
     import sys
     import json
     import datetime
+    import os
 
     def main():
         # Read the JSON request from stdin
         request_json_str = sys.stdin.read()
         request = json.loads(request_json_str)
 
-        # Extract relevant information
+        # Protocol v2 Request Fields
+        protocol = request.get("protocol", 1)
         command = request.get("command", "poll")
         job_id = request.get("job_id", "unknown")
         config = request.get("config", {})
         state = request.get("state", {})
+        context = request.get("context", {})
+        workspace = request.get("workspace_dir", ".")
         event = request.get("event", {}) # Only present for 'handle' command
 
         greeting_word = config.get("greeting_word", "Hello")
 
         # --- Plugin Logic ---
-        output_message = f"{greeting_word} from Python plugin! Command: {command}"
-        if command == "handle" and event:
-            output_message += f", Event Payload: {event.get('payload')}"
+        # Example: Using Context (Baggage)
+        user_id = context.get("origin_user_id", "anonymous")
+        
+        output_message = f"{greeting_word}, {user_id}! Command: {command}"
+        
+        # Example: Using Workspace
+        artifact_path = os.path.join(workspace, "summary.json")
+        with open(artifact_path, "w") as f:
+            json.dump({"greeting": output_message, "user": user_id}, f)
 
         # Prepare the response
         response = {
             "status": "ok",
-            "events": [],  # Plugins can emit new events here
+            "events": [],
             "state_updates": {
                 "last_run": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "last_job_id": job_id,
-                "current_greeting": greeting_word
+                "artifact_saved": artifact_path
             },
             "logs": [
                 {"level": "info", "message": output_message}
@@ -546,6 +585,23 @@ The `senechal-gw` executable provides a structured command hierarchy for interac
 -   `senechal-gw plugin list`: Lists all discovered plugins and their current status (planned).
 -   `senechal-gw queue status`: Shows pending and active jobs in the work queue (planned).
 
+### Operational Integrity
+
+Senechal provides tools to ensure your configuration is both valid and authorized.
+
+#### Config Locking and Verification
+To prevent accidental or unauthorized modifications to sensitive configuration (like API keys or webhook secrets), Senechal uses a "lock and check" mechanism.
+
+- **`config lock`**: Calculates BLAKE3 hashes for all configuration files and saves them to a `.checksums` file. This "authorizes" the current state.
+- **`config check`**: Verifies that the current configuration matches the hashes in `.checksums`. Senechal runs this check automatically at startup for high-security files (like `tokens.yaml`).
+
+#### Surgical Administration
+For fine-grained control and inspection without manually editing YAML files:
+
+- **`config show [plugin:NAME]`**: See exactly what the system sees, including defaults and merged values.
+- **`config get path.to.key`**: Extract a single value.
+- **`config set path.to.key=value --apply`**: Modify a value safely. Senechal validates the change before writing it back to disk.
+
 ### Troubleshooting
 -   **Plugin Not Running:**
     *   Check `config.yaml`: Ensure the plugin is `enabled: true` and its `schedule` is correctly defined.
@@ -567,3 +623,97 @@ The `senechal-gw` executable provides a structured command hierarchy for interac
     *   Check for PID lock errors (only one instance can run at a time). Ensure previous instances are fully shut down.
     *   Validate your `config.yaml` for syntax errors. The gateway will usually report these at startup.
     *   Verify SQLite database path is accessible and writable.
+
+## 7. API Reference
+
+The Senechal Gateway provides a REST API for programmatic interaction, primarily for LLMs and external automation.
+
+### Authentication
+
+Senechal supports two authentication modes:
+
+#### 1. Legacy API Key (Simple)
+For single-user or development environments.
+```yaml
+api:
+  auth:
+    api_key: your_secret_token
+```
+All requests must include the header: `Authorization: Bearer your_secret_token`.
+
+#### 2. Scoped Tokens (Recommended)
+For multi-user or production environments.
+```yaml
+api:
+  auth:
+    tokens:
+      - token: admin_token
+        scopes: ["*"]
+      - token: readonly_token
+        scopes: ["read:*"]
+```
+See `docs/CONFIG_SPEC.md` for more details on scope syntax.
+
+### Manual Plugin Execution
+
+Trigger a plugin command via the API:
+
+**Endpoint**: `POST /trigger/{plugin}/{command}`
+
+**Headers**:
+- `Authorization: Bearer <token>`
+- `Content-Type: application/json`
+
+**Body** (wrap plugin payload in a `payload` field):
+```json
+{
+  "payload": {
+    "your": "plugin-specific",
+    "data": "here"
+  }
+}
+```
+
+**Example** (trigger file read):
+```bash
+curl -X POST http://localhost:8080/trigger/file_handler/handle \
+  -H "Authorization: Bearer test_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payload": {
+      "action": "read",
+      "file_path": "/path/to/file.md"
+    }
+  }'
+```
+
+**Response**:
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "queued",
+  "plugin": "file_handler",
+  "command": "handle"
+}
+```
+
+> **Note**: When you trigger a `handle` command via the API, Senechal automatically wraps your payload in an `api.trigger` event envelope before passing it to the plugin.
+
+### Job Inspection
+
+Retrieve the status and results of a job:
+
+**Endpoint**: `GET /job/{job_id}`
+
+**Response (200 OK)**:
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "completed",
+  "result": {
+    "status": "ok",
+    "events": [],
+    "logs": [...]
+  }
+}
+```

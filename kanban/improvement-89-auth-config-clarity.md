@@ -1,6 +1,6 @@
 ---
 id: 89
-status: todo
+status: done
 priority: Medium
 tags: [docs, config, auth, ux]
 ---
@@ -163,3 +163,4 @@ During TP-002 setup, spent 20+ minutes debugging auth failures trying different 
 ## Narrative
 
 - 2026-02-13: Discovered during TP-002 auth setup. Initially tried tokens array following CONFIG_SPEC pattern for high-security files, but authentication failed with "invalid API key". Tried various configurations: top-level tokens, api.auth.tokens, api.auth.api_key. Only api_key field worked. Code inspection revealed dual auth system (legacy api_key + new scoped tokens) but docs don't explain which to use or how they interact. This caused significant troubleshooting time. Recommend clear documentation of both modes with migration guidance. (by @test-admin)
+- 2026-02-13: Updated CONFIG_SPEC.md and USER_GUIDE.md with comprehensive authentication documentation, covering both legacy and modern modes and the migration path. (by @gemini)

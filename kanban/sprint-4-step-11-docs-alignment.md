@@ -1,6 +1,6 @@
 ---
 id: 67
-status: todo
+status: done
 priority: High
 blocked_by: [52, 56]
 assignee: "@gemini"
@@ -24,3 +24,5 @@ Update the core documentation to reflect the current implementation of Protocol 
 ## Narrative
 - 2026-02-12: Created to align developer-facing docs with the Sprint 4 implementation. (by @gemini)
 - 2026-02-13: Added docs task to capture flexible scheduler interval support introduced in card #82 so user-facing docs reflect new schedule options. (by @assistant)
+- 2026-02-13: Moved to 'doing'. Starting updates for SPEC.md and USER_GUIDE.md. (by @gemini)
+- 2026-02-13: Completed all updates. SPEC.md reflects Protocol v2 and Governance Hybrid. USER_GUIDE.md updated with examples and new CLI features. API_REFERENCE.md created. (by @gemini)

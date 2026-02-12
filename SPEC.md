@@ -80,6 +80,13 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Delivery | At-least-once | Plugins own idempotency; core never drops work |
 | Plugin lifecycle | Spawn-per-command | Eliminates daemon management, memory leaks, zombie processes |
 
+### 2.2 Governance Hybrid (The "Control vs. Data Plane")
+
+Senechal employs a "Governance Hybrid" model to manage state and data across multi-hop plugin chains.
+
+*   **Control Plane (Baggage):** Metadata about the execution (e.g., `origin_user_id`, `trace_id`). This data is stored in the `event_context` SQLite ledger and is automatically merged and carried forward as "Baggage" to every subsequent job in the chain. Keys starting with `origin_` are immutable.
+*   **Data Plane (Workspaces):** Large physical artifacts (e.g., audio files, documents). Every job is assigned a unique `workspace_dir` on the filesystem. When a pipeline branches, Senechal performs a **Zero-Copy Clone** (using hardlinks) to isolate workspaces while saving disk space.
+
 ---
 
 ## 3. Work Queue
@@ -408,7 +415,7 @@ Plugins manage their own OAuth token lifecycle. The core does not understand OAu
 
 ---
 
-## 6. Protocol (v1)
+## 6. Protocol (v2)
 
 ### 6.1 Request Envelope (core → plugin)
 
@@ -416,11 +423,13 @@ Single JSON object written to plugin's stdin:
 
 ```json
 {
-  "protocol": 1,
+  "protocol": 2,
   "job_id": "uuid",
   "command": "poll | handle | health | init",
   "config": {},
   "state": {},
+  "context": {},
+  "workspace_dir": "/path/to/workspace",
   "event": {},
   "deadline_at": "ISO8601"
 }
@@ -428,6 +437,8 @@ Single JSON object written to plugin's stdin:
 
 - `event` — present only for `handle`.
 - `state` — the plugin's full state blob.
+- `context` — shared metadata (Baggage) carried across the pipeline chain.
+- `workspace_dir` — local filesystem directory for ephemeral artifacts.
 - `deadline_at` — informational. Plugins MAY use it to abandon long-running work early. The core enforces the real deadline externally.
 
 ### 6.2 Response Envelope (plugin → core)
@@ -946,11 +957,11 @@ senechal-gw/
 |-------|--------|-------|--------|
 | 1. Skeleton | 0 | Go scaffold, CLI, config loader, SQLite state, plugin discovery | ✅ Complete |
 | 2. Core Loop | 1 | Work queue, heartbeat scheduler with fuzzy intervals, dispatch loop, plugin protocol, crash recovery | ✅ Complete |
-| 3. API Triggers | 2 | HTTP server with chi router, POST /trigger and GET /job endpoints, Bearer token auth, job result storage | 🔄 In Progress |
-| 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | Planned |
-| 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | Planned |
-| 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | Planned |
-| 7. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | Planned |
+| 3. API Triggers | 2 | HTTP server with chi router, POST /trigger and GET /job endpoints, Bearer token auth, job result storage | ✅ Complete |
+| 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | ✅ Complete |
+| 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | ✅ Complete |
+| 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |
+| 7. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | 🔄 In Progress |
 | 8. First Plugins | 6 | Port Withings & Garmin from existing Senechal, notify plugin | Planned |
 
 **Note:** Phase 3 (API Triggers) was prioritized before Routing and Webhooks to enable LLM-driven automation via curl-based triggers. This allows external systems to programmatically enqueue jobs and retrieve results immediately, accelerating the path to production use cases.

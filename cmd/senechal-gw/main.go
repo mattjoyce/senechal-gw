@@ -49,14 +49,18 @@ func main() {
 	// --- NOUNS ---
 	case "system":
 		os.Exit(runSystemNoun(args))
-	case "config":
-		os.Exit(runConfigNoun(args))
-	case "job":
-		os.Exit(runJobNoun(args))
-	case "plugin":
-		os.Exit(runPluginNoun(args))
-
-	// --- ROOT ALIASES (Backward Compatibility) ---
+	        case "config":
+	                os.Exit(runConfigNoun(args))
+	        case "job":
+	                os.Exit(runJobNoun(args))
+	        case "plugin":
+	                os.Exit(runPluginNoun(args))
+	        case "trigger":
+	                printTriggerHelp()
+	                os.Exit(0)
+	
+	        // --- ROOT ALIASES (Backward Compatibility) ---
+	
 	case "start":
 		os.Exit(runStart(args))
 	case "inspect":
@@ -104,11 +108,44 @@ Plugin Commands:
   plugin list       Show discovered plugins (planned)
   plugin run <name> Manual execution (planned)
 
+Manual Triggering:
+  trigger           Show instructions for triggering plugins via API
+
 General:
   version           Show version information
   help              Show this help message
 
 Use 'senechal-gw <noun> help' for resource-specific flags.
+`)
+}
+
+func printTriggerHelp() {
+        fmt.Print(`Manual Plugin Triggering (via API)
+
+Plugins are triggered via the REST API. This allows for programmatic control 
+from LLMs, scripts, and external services.
+
+Endpoint:
+  POST /trigger/{plugin}/{command}
+
+Headers:
+  Authorization: Bearer <token>
+  Content-Type: application/json
+
+Body:
+  {
+    "payload": {
+      "key": "value"
+    }
+  }
+
+Example (curl):
+  curl -X POST http://localhost:8080/trigger/echo/poll \
+    -H "Authorization: Bearer my-token" \
+    -H "Content-Type: application/json" \
+    -d '{"payload": {"message": "Hello"}}'
+
+For more details, see docs/API_REFERENCE.md.
 `)
 }
 
