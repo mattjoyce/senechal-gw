@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
+	"github.com/mattjoyce/senechal-gw/internal/protocol"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
 )
 
@@ -234,6 +235,77 @@ func TestHandleTrigger_Success(t *testing.T) {
 	if resp.Command != "poll" {
 		t.Errorf("expected command poll, got %s", resp.Command)
 	}
+}
+
+func TestHandleTrigger_HandleWrapsPayload(t *testing.T) {
+	var capturedPayload json.RawMessage
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			capturedPayload = req.Payload
+			return "job-123", nil
+		},
+	}
+
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "handle", Type: plugin.CommandTypeWrite},
+				},
+			},
+		},
+	}
+
+	server := newTestServer(q, reg)
+
+	t.Run("non-empty body", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"payload": {"key": "val"}}`)
+		req := httptest.NewRequest(http.MethodPost, "/trigger/echo/handle", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-key-123")
+
+		rr := httptest.NewRecorder()
+		server.setupRoutes().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("expected status 202, got %d", rr.Code)
+		}
+
+		var event protocol.Event
+		if err := json.Unmarshal(capturedPayload, &event); err != nil {
+			t.Fatalf("failed to unmarshal wrapped event: %v", err)
+		}
+		if event.Type != "api.trigger" {
+			t.Errorf("expected type api.trigger, got %q", event.Type)
+		}
+		if event.Payload["key"] != "val" {
+			t.Errorf("expected payload key=val, got %v", event.Payload)
+		}
+	})
+
+	t.Run("empty body", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/trigger/echo/handle", nil)
+		req.Header.Set("Authorization", "Bearer test-key-123")
+
+		rr := httptest.NewRecorder()
+		server.setupRoutes().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("expected status 202, got %d", rr.Code)
+		}
+
+		var event protocol.Event
+		if err := json.Unmarshal(capturedPayload, &event); err != nil {
+			t.Fatalf("failed to unmarshal wrapped event: %v", err)
+		}
+		if event.Type != "api.trigger" {
+			t.Errorf("expected type api.trigger, got %q", event.Type)
+		}
+		if len(event.Payload) != 0 {
+			t.Errorf("expected empty payload, got %v", event.Payload)
+		}
+	})
 }
 
 type streamWriter struct {

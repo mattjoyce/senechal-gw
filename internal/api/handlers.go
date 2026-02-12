@@ -76,14 +76,16 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	// For handle commands, wrap payload in Event envelope so the dispatcher
 	// can unmarshal it the same way as routed events.
 	enqueuePayload := req.Payload
-	if commandName == "handle" && len(req.Payload) > 0 {
+	if commandName == "handle" {
 		event := protocol.Event{
 			Type:    "api.trigger",
 			Payload: make(map[string]any),
 		}
-		if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
-			s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
-			return
+		if len(req.Payload) > 0 {
+			if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
+				s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
+				return
+			}
 		}
 		enqueuePayload, _ = json.Marshal(event)
 	}
