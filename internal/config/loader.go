@@ -30,7 +30,17 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	if info.IsDir() {
-		// Directory provided - look for config.yaml inside
+		// Check if this is a CONFIG_SPEC directory (has config.yaml + indicators)
+		if IsConfigSpecDir(absPath) {
+			cfg, warnings, err := LoadDir(absPath)
+			if err != nil {
+				return nil, err
+			}
+			// Log warnings (caller can inspect cfg for details)
+			_ = warnings
+			return cfg, nil
+		}
+		// Fallback: directory provided - look for config.yaml inside
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
@@ -149,6 +159,10 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 	}
 
 	if info.IsDir() {
+		// Directory mode: return the single root directory
+		if IsConfigSpecDir(absPath) {
+			return []string{absPath}, nil
+		}
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
@@ -375,11 +389,12 @@ func verifyScopeFilesRecursively(paths []string) error {
 
 		// Verify each scope file in this directory
 		for _, path := range files {
-			basename := filepath.Base(path)
-			expectedHash, ok := checksums.Hashes[basename]
+			// LoadChecksums migrates v1 keys to absolute paths, so look up by absolute path
+			absPath, _ := filepath.Abs(path)
+			expectedHash, ok := checksums.Hashes[absPath]
 			if !ok {
 				return fmt.Errorf("scope file %s has no hash in checksums at %s\n"+
-					"Run: senechal-gw config hash-update --config-dir %s", basename, dir, dir)
+					"Run: senechal-gw config hash-update --config-dir %s", filepath.Base(path), dir, dir)
 			}
 
 			if err := VerifyFileHash(path, expectedHash); err != nil {
