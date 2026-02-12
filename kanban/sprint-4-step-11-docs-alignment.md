@@ -16,6 +16,7 @@ Update the core documentation to reflect the current implementation of Protocol 
 - `SPEC.md`: Incorporate the Governance Hybrid (Control vs. Data Plane) into the Architecture overview.
 - `USER_GUIDE.md`: Update "Plugin Development Guide" examples (Bash/Python) to use Protocol v2 (handling `workspace_dir` and `context`).
 - `USER_GUIDE.md`: Add a section on "Operational Integrity" using `config check` and `config lock`.
+- `USER_GUIDE.md`: Document that `POST /trigger/{plugin}/handle` payloads are automatically wrapped in an `api.trigger` event (Card #68).
 - Ensure consistency between `PIPELINES.md` and the main `USER_GUIDE.md`.
 
 ## Narrative
