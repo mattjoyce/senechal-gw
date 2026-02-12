@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
+	"github.com/mattjoyce/senechal-gw/internal/protocol"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
 )
 
@@ -72,11 +73,26 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// For handle commands, wrap payload in Event envelope so the dispatcher
+	// can unmarshal it the same way as routed events.
+	enqueuePayload := req.Payload
+	if commandName == "handle" && len(req.Payload) > 0 {
+		event := protocol.Event{
+			Type:    "api.trigger",
+			Payload: make(map[string]any),
+		}
+		if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
+			s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
+			return
+		}
+		enqueuePayload, _ = json.Marshal(event)
+	}
+
 	// Enqueue job
 	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
 		Plugin:      pluginName,
 		Command:     commandName,
-		Payload:     req.Payload,
+		Payload:     enqueuePayload,
 		SubmittedBy: "api",
 	})
 	if err != nil {
