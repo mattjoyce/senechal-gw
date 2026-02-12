@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -16,12 +17,13 @@ type Router struct {
 	set          *dsl.Set
 	triggerIndex map[string][]string
 	successors   map[string]map[string][]string // pipeline -> from node -> to nodes
+	logger       *slog.Logger
 }
 
 var _ Engine = (*Router)(nil)
 
 // LoadFromConfigDir loads pipelines from <configDir>/pipelines and builds a Router.
-func LoadFromConfigDir(configDir string, registry *plugin.Registry) (*Router, error) {
+func LoadFromConfigDir(configDir string, registry *plugin.Registry, logger *slog.Logger) (Engine, error) {
 	set, err := dsl.LoadAndCompileDir(configDir)
 	if err != nil {
 		return nil, err
@@ -31,19 +33,23 @@ func LoadFromConfigDir(configDir string, registry *plugin.Registry) (*Router, er
 			return nil, err
 		}
 	}
-	return New(set), nil
+	return New(set, logger), nil
 }
 
 // New creates a Router from a compiled pipeline set.
-func New(set *dsl.Set) *Router {
+func New(set *dsl.Set, logger *slog.Logger) *Router {
 	if set == nil {
 		set = &dsl.Set{Pipelines: map[string]*dsl.Pipeline{}}
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	r := &Router{
 		set:          set,
 		triggerIndex: make(map[string][]string),
 		successors:   make(map[string]map[string][]string),
+		logger:       logger.With("component", "router"),
 	}
 
 	for name, pipeline := range set.Pipelines {
@@ -65,6 +71,14 @@ func New(set *dsl.Set) *Router {
 	return r
 }
 
+// PipelineCount returns the number of loaded pipelines.
+func (r *Router) PipelineCount() int {
+	if r.set == nil {
+		return 0
+	}
+	return len(r.set.Pipelines)
+}
+
 // Next resolves downstream dispatches for one emitted event.
 func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 	if err := ctx.Err(); err != nil {
@@ -75,33 +89,50 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 		return nil, fmt.Errorf("event.type is required")
 	}
 
+	r.logger.Debug("resolving routes for event", "type", eventType, "source_plugin", req.SourcePlugin)
+
 	var out []Dispatch
 
 	// Intra-pipeline transitions: if current step/pipeline are known, walk outgoing edges.
 	if req.SourcePipeline != "" && req.SourceStepID != "" {
 		next := r.successors[req.SourcePipeline][req.SourceStepID]
-		for _, nodeID := range next {
-			dispatches, err := r.resolveNodeDispatches(req.SourcePipeline, nodeID, req)
-			if err != nil {
-				return nil, err
+		if len(next) > 0 {
+			r.logger.Debug("matched intra-pipeline transition",
+				"pipeline", req.SourcePipeline,
+				"from_step", req.SourceStepID,
+				"next_steps", len(next))
+
+			for _, nodeID := range next {
+				dispatches, err := r.resolveNodeDispatches(req.SourcePipeline, nodeID, req)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, dispatches...)
 			}
-			out = append(out, dispatches...)
 		}
 	}
 
 	// Root triggers: event type can start one or more pipelines.
-	for _, pipelineName := range r.triggerIndex[eventType] {
-		pipeline := r.set.Pipelines[pipelineName]
-		if pipeline == nil {
-			continue
-		}
-		for _, nodeID := range pipeline.EntryNodeIDs {
-			dispatches, err := r.resolveNodeDispatches(pipelineName, nodeID, req)
-			if err != nil {
-				return nil, err
+	if pipelines, ok := r.triggerIndex[eventType]; ok {
+		r.logger.Debug("matched root trigger pipelines", "event_type", eventType, "count", len(pipelines))
+		for _, pipelineName := range pipelines {
+			pipeline := r.set.Pipelines[pipelineName]
+			if pipeline == nil {
+				continue
 			}
-			out = append(out, dispatches...)
+			r.logger.Info("triggering pipeline", "name", pipelineName, "event_type", eventType)
+			for _, nodeID := range pipeline.EntryNodeIDs {
+				dispatches, err := r.resolveNodeDispatches(pipelineName, nodeID, req)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, dispatches...)
+			}
 		}
+	}
+
+	if len(out) > 0 {
+		r.logger.Info("routing event resulting in child jobs", "type", eventType, "jobs", len(out))
 	}
 
 	return dedupeDispatches(out), nil
