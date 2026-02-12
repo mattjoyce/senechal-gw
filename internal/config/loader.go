@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -525,18 +527,9 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("plugin %q: schedule.every is required", name)
 		}
 
-		// Validate schedule.every values (MVP subset)
-		validIntervals := []string{"5m", "15m", "30m", "hourly", "2h", "6h", "daily", "weekly", "monthly"}
-		valid := false
-		for _, interval := range validIntervals {
-			if plugin.Schedule.Every == interval {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("plugin %q: schedule.every must be one of %v (got %q)",
-				name, validIntervals, plugin.Schedule.Every)
+		// Validate schedule.every with flexible parser.
+		if _, err := ParseInterval(plugin.Schedule.Every); err != nil {
+			return fmt.Errorf("plugin %q: %w", name, err)
 		}
 
 		// Check for unresolved env vars in config (security: no secrets leaked in logs)
@@ -596,18 +589,60 @@ func mergePluginDefaults(plugin PluginConf) PluginConf {
 }
 
 // ParseInterval converts schedule interval strings to durations.
-// Returns 0 for special cases like "daily", "weekly", "monthly" (handled by scheduler).
+// Supported formats:
+// - Go durations (e.g., "5m", "13h")
+// - Extended day/week suffixes (e.g., "3d", "2w")
+// - Human aliases ("hourly", "daily", "weekly", "monthly")
 func ParseInterval(interval string) (time.Duration, error) {
-	// Direct duration strings
-	switch interval {
-	case "hourly":
-		return 1 * time.Hour, nil
-	case "daily", "weekly", "monthly":
-		return 0, nil // Special handling in scheduler
+	normalized := strings.TrimSpace(strings.ToLower(interval))
+	if normalized == "" {
+		return 0, fmt.Errorf("invalid schedule interval %q: value cannot be empty", interval)
 	}
 
-	// Try parsing as duration (e.g., "5m", "2h")
-	d, err := time.ParseDuration(interval)
+	// Named aliases.
+	switch normalized {
+	case "hourly":
+		return 1 * time.Hour, nil
+	case "daily":
+		return 24 * time.Hour, nil
+	case "weekly":
+		return 7 * 24 * time.Hour, nil
+	case "monthly":
+		// Calendar-aware monthly scheduling is out of MVP scope.
+		return 30 * 24 * time.Hour, nil
+	}
+
+	// Extended suffixes for days and weeks.
+	if strings.HasSuffix(normalized, "d") || strings.HasSuffix(normalized, "w") {
+		unit := normalized[len(normalized)-1]
+		valueStr := normalized[:len(normalized)-1]
+		value, err := strconv.ParseFloat(valueStr, 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid schedule interval %q: %w", interval, err)
+		}
+		if value <= 0 {
+			return 0, fmt.Errorf("schedule interval must be positive: %q", interval)
+		}
+
+		var scale time.Duration
+		switch unit {
+		case 'd':
+			scale = 24 * time.Hour
+		case 'w':
+			scale = 7 * 24 * time.Hour
+		default:
+			return 0, fmt.Errorf("invalid schedule interval %q", interval)
+		}
+
+		d := time.Duration(value * float64(scale))
+		if d <= 0 {
+			return 0, fmt.Errorf("schedule interval must be positive: %q", interval)
+		}
+		return d, nil
+	}
+
+	// Standard Go duration strings.
+	d, err := time.ParseDuration(normalized)
 	if err != nil {
 		return 0, fmt.Errorf("invalid schedule interval %q: %w", interval, err)
 	}

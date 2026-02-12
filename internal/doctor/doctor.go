@@ -14,9 +14,9 @@ import (
 
 // Result holds the outcome of a validation run.
 type Result struct {
-	Valid    bool      `json:"valid"`
-	Errors   []Issue   `json:"errors,omitempty"`
-	Warnings []Issue   `json:"warnings,omitempty"`
+	Valid    bool    `json:"valid"`
+	Errors   []Issue `json:"errors,omitempty"`
+	Warnings []Issue `json:"warnings,omitempty"`
 }
 
 // Issue describes a single validation error or warning.
@@ -328,9 +328,8 @@ func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 				fmt.Sprintf("invalid schedule interval %q: %v", pc.Schedule.Every, err))
 			continue
 		}
-		// ParseInterval returns 0 for daily/weekly/monthly (handled by scheduler).
-		// Only warn for very short intervals if it's a direct duration.
-		if interval > 0 && interval.Minutes() < 1 {
+		// Only warn for very short intervals.
+		if interval.Minutes() < 1 {
 			d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedule.every", name),
 				fmt.Sprintf("schedule interval %q is very short (< 1m)", pc.Schedule.Every))
 		}

@@ -1,6 +1,6 @@
 ---
 id: 82
-status: todo
+status: done
 priority: Normal
 tags: [scheduler, config, enhancement]
 ---
@@ -37,7 +37,10 @@ plugins:
 ```
 
 ## Success Criteria
-- [ ] Remove the hardcoded `validIntervals` whitelist in `loader.go`.
-- [ ] Update `ParseInterval` to handle standard Go durations and "day" suffixes.
-- [ ] Ensure the scheduler correctly calculates the next run for arbitrary durations.
-- [ ] Add unit tests for non-standard intervals (e.g., 7m, 3d, 13h).
+- [x] Remove the hardcoded `validIntervals` whitelist in `loader.go`.
+- [x] Update `ParseInterval` to handle standard Go durations and "day" suffixes.
+- [x] Ensure the scheduler correctly calculates the next run for arbitrary durations.
+- [x] Add unit tests for non-standard intervals (e.g., 7m, 3d, 13h).
+
+## Narrative
+- 2026-02-13: Implemented flexible schedule parsing by removing loader whitelist validation and validating `schedule.every` through shared `config.ParseInterval`. Added support for `d` and `w` suffixes (for example `3d`, `2w`) plus existing aliases (`hourly`, `daily`, `weekly`, `monthly`). Scheduler now delegates interval parsing to the same config parser to keep behavior consistent across validation and runtime. Added/updated tests in config and scheduler suites for `7m`, `13h`, `3d`, and related invalid values. (by @assistant)
