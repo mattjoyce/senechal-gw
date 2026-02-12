@@ -108,7 +108,7 @@ The main CLI (`cmd/senechal-gw/main.go`) has only 9.6% test coverage, yet this i
 - `config check` schedule validation false warnings
 - `job inspect --json` flag not working
 - `config set` command broken
-- No `--help` at verb level
+- No `--help` at action level
 
 **All could've been caught with CLI tests.**
 

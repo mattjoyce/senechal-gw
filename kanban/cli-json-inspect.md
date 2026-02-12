@@ -9,7 +9,7 @@ tags: [compliance, cli, observability]
 
 # Feature: Implement mandatory --json for `job inspect`
 
-Per `docs/CLI_DESIGN_PRINCIPLES.md`, all "Read" verbs must support a `--json` flag for machine-readability by LLM operators. `job inspect` currently only supports human-readable output.
+Per `docs/CLI_DESIGN_PRINCIPLES.md`, all "Read" actions must support a `--json` flag for machine-readability by LLM operators. `job inspect` currently only supports human-readable output.
 
 ## Acceptance Criteria
 - `senechal-gw job inspect <id> --json` returns structured JSON representing the execution lineage.

@@ -98,7 +98,7 @@ After building the `senechal-gw` executable, you can start the gateway.
 
 To ensure predictability and safety, all Senechal CLI commands follow these standards:
 
-- **NOUN VERB Hierarchy:** Commands are organized by resource (e.g., `job inspect`, `config lock`).
+- **NOUN ACTION Hierarchy:** Commands are organized by resource (e.g., `job inspect`, `config lock`).
 - **Verbosity:** Use `-v` or `--verbose` to see internal logic and state transitions.
 - **Dry Run:** Use `--dry-run` for any mutation to preview changes without committing them.
 - **Machine-Readability:** Use `--json` to get structured data for scripts or LLMs.

@@ -809,7 +809,7 @@ senechal-gw queue              # show pending/active jobs
 To ensure predictability and safety for both human and LLM operators, all CLI commands MUST adhere to the standards defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
 
 Core requirements:
-- **Hierarchy:** Strict **NOUN VERB** pattern.
+- **Hierarchy:** Strict **NOUN ACTION** pattern.
 - **Verbosity:** mandatory `-v` / `--verbose` flags.
 - **Safety:** mandatory `--dry-run` for mutations.
 - **Machine-Readability:** mandatory `--json` for status and inspection.

@@ -115,7 +115,7 @@ Never work on multiple cards in the same branch.
 ### Commit Format
 
 ```
-<component>: <verb> <what>
+<component>: <action> <what>
 
 Implements #39
 ```
