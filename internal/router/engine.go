@@ -217,6 +217,22 @@ func dedupeDispatches(in []Dispatch) []Dispatch {
 	return out
 }
 
+// PipelineInfo describes a loaded pipeline for observability.
+type PipelineInfo struct {
+	Name    string
+	Trigger string
+}
+
+// PipelineSummary returns info about all loaded pipelines.
+func (r *Router) PipelineSummary() []PipelineInfo {
+	var out []PipelineInfo
+	for name, pipeline := range r.set.Pipelines {
+		out = append(out, PipelineInfo{Name: name, Trigger: pipeline.Trigger})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {
 	for pipelineName, pipeline := range set.Pipelines {
 		for _, node := range pipeline.Nodes {
