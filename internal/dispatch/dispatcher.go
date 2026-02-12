@@ -226,6 +226,19 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
 			return
 		}
+
+		// GOVERNANCE HYBRID MERGE:
+		// Automatically merge accumulated context into the event payload
+		// so plugins only have to look in one place. Immediate event data wins.
+		if event.Payload == nil {
+			event.Payload = make(map[string]any)
+		}
+		for k, v := range requestContext {
+			if _, exists := event.Payload[k]; !exists {
+				event.Payload[k] = v
+			}
+		}
+
 		req.Event = &event
 	}
 

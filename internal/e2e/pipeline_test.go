@@ -71,25 +71,30 @@ echo '{"status":"ok","events":[{"type":"test.processed","payload":{"status":"com
 	createPlugin(t, pluginsDir, "processor", processScript)
 
 	// Hop 3: Notifier (Verifies original baggage AND the artifact)
-	notifyScript := `#!/bin/bash
-input=$(cat)
-ws_dir=$(echo "$input" | sed -n 's/.*"workspace_dir":"\([^"]*\)".*/\1/p')
+	notifyScript := `#!/usr/bin/env python3
+import sys, json, os
+try:
+    req = json.load(sys.stdin)
+    payload = req.get("event", {}).get("payload", {})
+    context = req.get("context", {})
+    ws_dir = req.get("workspace_dir", "")
 
-# Check for original baggage (origin_user)
-if [[ "$input" != *"matt"* ]]; then
-  echo '{"status":"error","error":"missing baggage: origin_user"}'
-  exit 0
-fi
+    # 1. Check artifact
+    if not os.path.exists(os.path.join(ws_dir, "result.txt")):
+        print(json.dumps({"status":"error","error":"missing artifact"}))
+        sys.exit(0)
 
-# Check for artifact from Hop 2
-if [ ! -f "$ws_dir/result.txt" ]; then
-  echo '{"status":"error","error":"missing artifact: result.txt"}'
-  exit 0
-fi
+    # 2. Check CORE MERGE (Baggage should be in payload)
+    if payload.get("origin_user") != "matt":
+        print(json.dumps({"status":"error","error":f"baggage not merged into payload: {payload}"}))
+        sys.exit(0)
 
-echo '{"status":"ok","logs":[{"level":"info","message":"verified all hops"}]}'
+    print(json.dumps({"status":"ok","logs":[{"level":"info","message":"verified all"}]}))
+except Exception as e:
+    print(json.dumps({"status":"error","error":str(e)}))
 `
 	createPlugin(t, pluginsDir, "notifier", notifyScript)
+	// Update createPlugin to support different shebangs if needed, or just chmod
 
 	// 3. Define Pipeline
 	pipelineYAML := `pipelines:
