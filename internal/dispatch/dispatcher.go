@@ -141,8 +141,9 @@ func (d *Dispatcher) processNextJob(ctx context.Context) error {
 
 // executeJob runs a single job by spawning the plugin subprocess.
 func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
-	jobLogger := log.WithJob(job.ID).With("plugin", job.Plugin, "command", job.Command)
-	jobLogger.Info("executing job", "attempt", job.Attempt)
+	jobLogger := d.logger.With("job_id", job.ID, "plugin", job.Plugin, "command", job.Command)
+	jobLogger.Info("job started", "attempt", job.Attempt)
+	startTime := time.Now()
 
 	// Get plugin from registry
 	plug, ok := d.registry.Get(job.Plugin)
@@ -313,7 +314,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Mark job as succeeded
-	jobLogger.Info("job completed successfully")
+	jobLogger.Info("job completed", "status", "succeeded", "duration", time.Since(startTime).String())
 	d.completeJob(ctx, job.ID, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
