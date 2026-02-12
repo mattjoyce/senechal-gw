@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/mattjoyce/senechal-gw/internal/config"
+	"github.com/mattjoyce/senechal-gw/internal/storage"
 )
 
 func captureOutputWithExitCode(t *testing.T, run func() int) (int, string, string) {
@@ -224,5 +228,156 @@ plugins:
 	}
 	if reloaded.Plugins["echo"].Enabled {
 		t.Fatal("plugin:echo.enabled should remain false after failed apply")
+	}
+}
+
+func TestRunSystemStatusJSONHealthy(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	_ = db.Close()
+
+	configYAML := `
+service:
+  tick_interval: 30s
+  log_level: info
+state:
+  path: ` + dbPath + `
+plugins_dir: ` + filepath.Join(tmpDir, "plugins") + `
+plugins: {}
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemStatus([]string{"--config", configPath, "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemStatus() code = %d, stderr: %s", code, stderr)
+	}
+
+	var report struct {
+		Healthy bool `json:"healthy"`
+		Checks  []struct {
+			Name string `json:"name"`
+			OK   bool   `json:"ok"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("failed to parse JSON status output: %v\noutput=%s", err, stdout)
+	}
+	if !report.Healthy {
+		t.Fatalf("expected healthy=true, got false; output=%s", stdout)
+	}
+	if len(report.Checks) < 4 {
+		t.Fatalf("expected at least 4 checks, got %d", len(report.Checks))
+	}
+}
+
+func TestRunSystemStatusConfigLoadFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("invalid: [yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemStatus([]string{"--config", configPath})
+	})
+	if code == 0 {
+		t.Fatalf("runSystemStatus() should fail for invalid config; stdout=%s", stdout)
+	}
+	if !strings.Contains(stdout, "config_load: FAIL") {
+		t.Fatalf("expected config_load failure in output; stdout=%s", stdout)
+	}
+	if !strings.Contains(stdout, "state_db: FAIL") || !strings.Contains(stdout, "pid_lock: FAIL") {
+		t.Fatalf("expected dependent checks to fail when config load fails; stdout=%s", stdout)
+	}
+}
+
+func TestRunSystemStatusDetectsActivePIDLock(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	_ = db.Close()
+
+	configYAML := `
+service:
+  tick_interval: 30s
+  log_level: info
+state:
+  path: ` + dbPath + `
+plugins_dir: ` + filepath.Join(tmpDir, "plugins") + `
+plugins: {}
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfigForTool(configPath)
+	if err != nil {
+		t.Fatalf("loadConfigForTool: %v", err)
+	}
+	lockPath := getPIDLockPath(cfg)
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemStatus([]string{"--config", configPath, "--json"})
+	})
+	if code == 0 {
+		t.Fatalf("runSystemStatus() should fail when active pid lock exists; stderr=%s stdout=%s", stderr, stdout)
+	}
+
+	var report struct {
+		Healthy bool `json:"healthy"`
+		Checks  []struct {
+			Name      string `json:"name"`
+			OK        bool   `json:"ok"`
+			ActivePID int    `json:"active_pid"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("failed to parse JSON status output: %v\noutput=%s", err, stdout)
+	}
+	if report.Healthy {
+		t.Fatalf("expected healthy=false when active lock exists; output=%s", stdout)
+	}
+
+	foundPIDCheck := false
+	for _, c := range report.Checks {
+		if c.Name == "pid_lock" {
+			foundPIDCheck = true
+			if c.OK {
+				t.Fatalf("expected pid_lock check to fail when active pid exists; output=%s", stdout)
+			}
+			if c.ActivePID != os.Getpid() {
+				t.Fatalf("expected active_pid=%d, got %d", os.Getpid(), c.ActivePID)
+			}
+		}
+	}
+	if !foundPIDCheck {
+		t.Fatalf("expected pid_lock check in output; output=%s", stdout)
 	}
 }
