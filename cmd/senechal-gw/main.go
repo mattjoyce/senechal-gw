@@ -159,35 +159,49 @@ func runConfigNoun(args []string) int {
 // ... (skipping to verb implementations)
 
 func runConfigSet(args []string) int {
-	fs := flag.NewFlagSet("set", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	dryRun := fs.Bool("dry-run", false, "Preview changes without applying them")
-	apply := fs.Bool("apply", false, "Apply changes to physical files")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+	var configPath string
+	var dryRun, apply bool
+	
+	fs := flag.NewFlagSet("set", flag.ContinueOnError)
+	fs.StringVar(&configPath, "config", "", "Path to configuration")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview changes")
+	fs.BoolVar(&apply, "apply", false, "Apply changes")
+
+	var kvPair string
+	var remainingArgs []string
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") && strings.Contains(arg, "=") && kvPair == "" {
+			kvPair = arg
+		} else {
+			remainingArgs = append(remainingArgs, arg)
+		}
+	}
+
+	if err := fs.Parse(remainingArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
 
-	if fs.NArg() != 1 || !strings.Contains(fs.Arg(0), "=") {
+	if kvPair == "" {
 		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config set <path>=<value> [--dry-run | --apply]\n")
 		return 1
 	}
 
-	if !*dryRun && !*apply {
+	if !dryRun && !apply {
 		fmt.Println("Error: either --dry-run or --apply must be specified for 'config set'.")
 		return 1
 	}
 
-	parts := strings.SplitN(fs.Arg(0), "=", 2)
+	parts := strings.SplitN(kvPair, "=", 2)
 	path, value := parts[0], parts[1]
 
-	cfg, err := loadConfigForTool(*configPath)
+	cfg, err := loadConfigForTool(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
 	}
 
-	if *dryRun {
+	if dryRun {
 		// In-memory test without persistence
 		err := cfg.SetPath(path, value, false)
 		if err != nil {
@@ -495,32 +509,47 @@ func runStart(args []string) int {
 }
 
 func runInspect(args []string) int {
-	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	jsonOut := fs.Bool("json", false, "Output report in structured JSON format")
-	
-	// Support both: inspect <id> --json  AND  inspect --json <id>
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse inspect flags: %v\n", err)
+	// Custom flag parsing because we want to support flags AFTER the job ID
+	// like 'senechal-gw job inspect <id> --json'
+	var configPath string
+	var jsonOut bool
+
+	// Create a new flag set but don't parse everything at once
+	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	fs.StringVar(&configPath, "config", "", "Path to configuration")
+	fs.BoolVar(&jsonOut, "json", false, "Output report in JSON")
+
+	// Filter out positional jobID and then parse remaining flags
+	var jobID string
+	var remainingArgs []string
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") && jobID == "" {
+			jobID = arg
+		} else {
+			remainingArgs = append(remainingArgs, arg)
+		}
+	}
+
+	if err := fs.Parse(remainingArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
 
-	if fs.NArg() < 1 {
+	if jobID == "" {
 		fmt.Fprintf(os.Stderr, "Usage: senechal-gw job inspect <job_id> [--config PATH] [--json]\n")
 		return 1
 	}
-	jobID := fs.Arg(0)
 
-	if *configPath == "" {
+	if configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
 			return 1
 		}
-		*configPath = discovered
+		configPath = discovered
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		return 1
@@ -534,7 +563,7 @@ func runInspect(args []string) int {
 	defer db.Close()
 
 	var report string
-	if *jsonOut {
+	if jsonOut {
 		report, err = inspect.BuildJSONReport(context.Background(), db, cfg.State.Path, jobID)
 	} else {
 		report, err = inspect.BuildReport(context.Background(), db, cfg.State.Path, jobID)
@@ -550,25 +579,36 @@ func runInspect(args []string) int {
 }
 
 func runConfigCheck(args []string) int {
+	var configPath string
+	var strict, jsonOut bool
+	var format string
+
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	strict := fs.Bool("strict", false, "Treat warnings as errors")
-	format := fs.String("format", "human", "Output format (human, json)")
+	fs.StringVar(&configPath, "config", "", "Path to configuration")
+	fs.BoolVar(&strict, "strict", false, "Treat warnings as errors")
+	fs.StringVar(&format, "format", "human", "Output format (human, json)")
+	// Handle -json alias for format=json
+	fs.BoolVar(&jsonOut, "json", false, "Output in JSON")
+
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
 
-	if *configPath == "" {
+	if jsonOut {
+		format = "json"
+	}
+
+	if configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
 			return 1
 		}
-		*configPath = discovered
+		configPath = discovered
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
 		return 1
@@ -583,7 +623,7 @@ func runConfigCheck(args []string) int {
 	doc := doctor.New(cfg, registry)
 	result := doc.Validate()
 
-	switch *format {
+	switch format {
 	case "json":
 		out, err := doctor.FormatJSON(result)
 		if err != nil {
@@ -598,35 +638,39 @@ func runConfigCheck(args []string) int {
 	if !result.Valid {
 		return 1
 	}
-	if *strict && len(result.Warnings) > 0 {
+	if strict && len(result.Warnings) > 0 {
 		return 2
 	}
 	return 0
 }
 
 func runConfigHashUpdate(args []string) int {
+	var configPath, configDir string
+	var verbose, verboseShort, dryRun bool
+
 	fs := flag.NewFlagSet("lock", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to root config file or directory")
-	configDir := fs.String("config-dir", "", "Path to config directory")
-	verbose := fs.Bool("verbose", false, "Show per-file hash progress")
-	verboseShort := fs.Bool("v", false, "Show per-file hash progress (shorthand)")
-	dryRun := fs.Bool("dry-run", false, "Compute hashes without writing .checksums")
+	fs.StringVar(&configPath, "config", "", "Path to configuration")
+	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
+	fs.BoolVar(&verbose, "verbose", false, "Verbose output")
+	fs.BoolVar(&verboseShort, "v", false, "Verbose output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Dry run")
+
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
-	isVerbose := *verbose || *verboseShort
+	isVerbose := verbose || verboseShort
 
-	if *configPath != "" && *configDir != "" {
+	if configPath != "" && configDir != "" {
 		fmt.Fprintf(os.Stderr, "Error: use only one of --config or --config-dir\n")
 		return 1
 	}
 
 	var targetDirs []string
-	if *configDir != "" {
-		targetDirs = []string{*configDir}
+	if configDir != "" {
+		targetDirs = []string{configDir}
 	} else {
-		resolvedConfigPath := *configPath
+		resolvedConfigPath := configPath
 		if resolvedConfigPath == "" {
 			discovered, err := config.DiscoverConfigDir()
 			if err != nil {
@@ -646,7 +690,7 @@ func runConfigHashUpdate(args []string) int {
 
 	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
 	for _, dir := range targetDirs {
-		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, *dryRun)
+		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 			return 1
@@ -660,7 +704,7 @@ func runConfigHashUpdate(args []string) int {
 				}
 				fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
 			}
-			if *dryRun {
+			if dryRun {
 				fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
 			} else {
 				fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
@@ -668,7 +712,7 @@ func runConfigHashUpdate(args []string) int {
 		}
 	}
 
-	if *dryRun {
+	if dryRun {
 		fmt.Printf("Dry run completed for %d directory/ies (no files written):\n", len(targetDirs))
 	} else {
 		fmt.Printf("Successfully locked configuration in %d directory/ies:\n", len(targetDirs))
@@ -679,7 +723,6 @@ func runConfigHashUpdate(args []string) int {
 
 	return 0
 }
-
 func getPIDLockPath(cfg *config.Config) string {
 	dbPath := cfg.State.Path
 	dbDir := filepath.Dir(dbPath)
