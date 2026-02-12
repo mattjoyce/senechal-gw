@@ -18,9 +18,9 @@ validIntervals := []string{"5m", "15m", "30m", "hourly", "2h", "6h", "daily", "w
 
 ## Proposed Change
 Refactor the validation and parsing logic to support:
-1.  **Arbitrary Go Durations**: Any string parseable by `time.ParseDuration` (e.g., `7m`, `1h30m`, `48h`).
+1.  **Extended Duration Parsing**: Use a community-standard module like `github.com/xhit/go-str2duration`. This library acts as a drop-in replacement for `time.ParseDuration` but adds support for `d` (days) and `w` (weeks).
 2.  **Extended Human Aliases**: Support common terms like `daily`, `weekly`, `monthly` by translating them into logical offsets (already partially supported in the scheduler but restricted in the loader).
-3.  **Day-based Durations**: Support `1d`, `3d`, etc., which are common in automation but not supported by Go's default `time.ParseDuration`.
+3.  **Removal of Whitelist**: Eliminate the hardcoded `validIntervals` whitelist in `loader.go`.
 
 ## Examples of Desired Config
 ```yaml
