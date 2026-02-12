@@ -44,7 +44,7 @@ Inspect failed: job "86beb9ef-a18f-4032-9a3f-e08be3e76783" has no event_context_
 **From card #61 specification:**
 - `senechal-gw job inspect <id> --json` returns structured JSON
 - JSON output includes baggage, artifacts, and job metadata for each hop
-- Follows CLI design principle: all "Read" verbs must support `--json`
+- Follows CLI design principle: all "Read" actions must support `--json`
 
 **Example expected output:**
 ```json

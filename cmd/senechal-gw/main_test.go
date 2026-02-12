@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, string) {
+func captureOutputWithExitCode(t *testing.T, run func() int) (int, string, string) {
 	t.Helper()
 
 	oldStdout := os.Stdout
@@ -27,7 +27,7 @@ func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, strin
 	os.Stdout = stdoutW
 	os.Stderr = stderrW
 
-	code := runConfigHashUpdate(args)
+	code := run()
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
@@ -41,6 +41,13 @@ func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, strin
 	_ = stderrR.Close()
 
 	return code, string(stdoutBytes), string(stderrBytes)
+}
+
+func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, string) {
+	t.Helper()
+	return captureOutputWithExitCode(t, func() int {
+		return runConfigHashUpdate(args)
+	})
 }
 
 func TestRunConfigHashUpdateVerboseDryRunShortFlag(t *testing.T) {
@@ -118,5 +125,69 @@ include:
 
 	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); err != nil {
 		t.Fatalf("expected .checksums to be written: %v", err)
+	}
+}
+
+func TestRunConfigNounActionHelp(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigNoun([]string{"check", "--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runConfigNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: senechal-gw config check") {
+		t.Fatalf("stdout missing action help usage: %s", stdout)
+	}
+}
+
+func TestRunConfigNounHelpTerminology(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigNoun([]string{"--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runConfigNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: senechal-gw config <action>") {
+		t.Fatalf("stdout missing action terminology: %s", stdout)
+	}
+	if strings.Contains(stdout, "<verb>") {
+		t.Fatalf("stdout should not reference <verb>: %s", stdout)
+	}
+}
+
+func TestRunJobNounActionHelp(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runJobNoun([]string{"inspect", "--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runJobNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: senechal-gw job inspect") {
+		t.Fatalf("stdout missing inspect action help usage: %s", stdout)
+	}
+}
+
+func TestRunSystemNounActionHelp(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemNoun([]string{"start", "--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: senechal-gw system start") {
+		t.Fatalf("stdout missing start action help usage: %s", stdout)
+	}
+}
+
+func TestPrintUsageUsesActionTerminology(t *testing.T) {
+	_, stdout, _ := captureOutputWithExitCode(t, func() int {
+		printUsage()
+		return 0
+	})
+	if !strings.Contains(stdout, "senechal-gw <noun> <action> [flags]") {
+		t.Fatalf("usage missing action terminology: %s", stdout)
+	}
+	if strings.Contains(stdout, "<noun> <verb>") {
+		t.Fatalf("usage should not reference verb terminology: %s", stdout)
 	}
 }

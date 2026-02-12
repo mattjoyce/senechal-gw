@@ -14,7 +14,7 @@ Comprehensive review of senechal-gw CLI commands from an LLM operator perspectiv
 **Overall Assessment: Good foundation, needs polish**
 
 ✅ **Strengths:**
-- Clear NOUN VERB structure
+- Clear NOUN ACTION structure
 - Machine-readable JSON output formats
 - Good error messages with hints
 - Proper exit codes
@@ -23,7 +23,7 @@ Comprehensive review of senechal-gw CLI commands from an LLM operator perspectiv
 ❌ **Issues Found:**
 1. **CRITICAL BUG**: Schedule validation incorrectly warns "daily is very short (< 1m)"
 2. `--json` flag doesn't work for `job inspect`
-3. No `--help` support at verb level (`config check --help` fails)
+3. No `--help` support at action level (`config check --help` fails)
 4. `config set` command appears broken/unimplemented
 
 ## Detailed Testing Results
@@ -252,7 +252,7 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
 1. **Structured Output:** JSON format makes parsing easy
 2. **Exit Codes:** Proper use of exit codes for success/failure
 3. **Error Messages:** Include hints and actionable information
-4. **NOUN VERB Pattern:** Consistent command structure
+4. **NOUN ACTION Pattern:** Consistent command structure
 5. **Validation:** Catches configuration errors before runtime
 6. **Lineage Tracking:** Job inspect provides excellent debugging capability
 
@@ -260,8 +260,8 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
 
 1. **Help System:**
    - `config check --help` doesn't work (should show flags)
-   - `config help` shows verbs but not flag details
-   - Need per-verb help documentation
+   - `config help` shows actions but not flag details
+   - Need per-action help documentation
 
 2. **Missing Features:**
    - No `--verbose` flag for detailed diagnostics
@@ -274,12 +274,12 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
    - No way to suppress specific warning categories
 
 4. **Discovery:**
-   - Hidden verbs (`show`, `get`, `set`) not listed in main help
+   - Hidden actions (`show`, `get`, `set`) not listed in main help
    - "planned" commands (`plugin list`, `plugin run`) clutter help
 
 ### Recommendations for LLM-Friendly Improvements
 
-1. **Add `--help` to all verbs:**
+1. **Add `--help` to all actions:**
    ```bash
    senechal-gw config check --help
    # Should show: -config, -format, -strict
@@ -304,7 +304,7 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
    - `config set --dry-run` - preview changes without writing
 
 6. **Improve help discoverability:**
-   - List all verbs in `config help` with their flags
+   - List all actions in `config help` with their flags
    - Remove "planned" commands from main help or mark clearly as unimplemented
 
 ## Priority Issues for Dev Team
@@ -314,8 +314,8 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
 | **P0** | Schedule validation bug (daily < 1m) | Confusing false warnings |
 | **P1** | `config set` broken/unimplemented | Cannot update config programmatically |
 | **P1** | `--json` flag broken for `job inspect` | LLM parsing impossible |
-| **P2** | No `--help` at verb level | Poor discoverability |
-| **P3** | Hidden verbs not in main help | Discovery issue |
+| **P2** | No `--help` at action level | Poor discoverability |
+| **P3** | Hidden actions not in main help | Discovery issue |
 
 ## Test Coverage
 
@@ -334,4 +334,4 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
 
 ## Narrative
 
-- 2026-02-12: Conducted comprehensive CLI review from LLM operator perspective. Tested config commands (check, show, get, lock, set) and job inspect. Found critical schedule validation bug where "daily" incorrectly warns as "< 1m". Discovered config set is broken/unimplemented and --json flag doesn't work for job inspect. Overall assessment: good foundation with clear NOUN VERB structure and proper exit codes, but needs polish for production LLM operator use. The job inspect command is particularly excellent for debugging pipeline lineage and baggage flow. Created detailed recommendations for improving help system, validation, and programmatic access. (by @test-admin)
+- 2026-02-12: Conducted comprehensive CLI review from LLM operator perspective. Tested config commands (check, show, get, lock, set) and job inspect. Found critical schedule validation bug where "daily" incorrectly warns as "< 1m". Discovered config set is broken/unimplemented and --json flag doesn't work for job inspect. Overall assessment: good foundation with clear NOUN ACTION structure and proper exit codes, but needs polish for production LLM operator use. The job inspect command is particularly excellent for debugging pipeline lineage and baggage flow. Created detailed recommendations for improving help system, validation, and programmatic access. (by @test-admin)

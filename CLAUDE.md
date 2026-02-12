@@ -126,7 +126,7 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never in config 
 
 **Quick Reference:**
 - **Branching:** Individual feature branches per component (`feature/config-loader`, `feature/state-queue`)
-- **Commits:** `<component>: <verb> <what>` (never attribute Claude/AI)
+- **Commits:** `<component>: <action> <what>` (never attribute Claude/AI)
 - **Work Assignment:** 3-agent split defined in COORDINATION.md with dependency graph
 - **Merge Order:** Skeleton → Foundation (parallel) → Integration (collaborative)
 

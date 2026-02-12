@@ -77,7 +77,7 @@ func printUsage() {
 	fmt.Print(`senechal-gw - Lightweight YAML-configured integration gateway
 
 Usage:
-  senechal-gw <noun> <verb> [flags]
+  senechal-gw <noun> <action> [flags]
 
 Core Resources (Nouns):
   system    Gateway lifecycle and health
@@ -112,56 +112,100 @@ Use 'senechal-gw <noun> help' for resource-specific flags.
 
 func runSystemNoun(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw system <verb>\nVerbs: start, status\n")
+		printSystemNounHelp(os.Stderr)
 		return 1
 	}
-	switch args[0] {
+	if isHelpToken(args[0]) {
+		printSystemNounHelp(os.Stdout)
+		return 0
+	}
+
+	action := args[0]
+	actionArgs := args[1:]
+
+	switch action {
 	case "start":
-		return runStart(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printSystemStartHelp()
+			return 0
+		}
+		return runStart(actionArgs)
 	case "status":
+		if hasHelpFlag(actionArgs) {
+			printSystemStatusHelp()
+			return 0
+		}
 		fmt.Println("system status is not yet implemented")
 		return 0
 	case "help":
-		fmt.Println("Usage: senechal-gw system start")
+		printSystemNounHelp(os.Stdout)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown system verb: %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown system action: %s\n", action)
 		return 1
 	}
 }
 
 func runConfigNoun(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config <verb>\nVerbs: lock, check, show, get, set\n")
+		printConfigNounHelp(os.Stderr)
 		return 1
 	}
-	switch args[0] {
+
+	if isHelpToken(args[0]) {
+		printConfigNounHelp(os.Stdout)
+		return 0
+	}
+
+	action := args[0]
+	actionArgs := args[1:]
+
+	switch action {
 	case "lock", "hash-update": // Alias for backward compat
-		return runConfigHashUpdate(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printConfigLockHelp()
+			return 0
+		}
+		return runConfigHashUpdate(actionArgs)
 	case "check":
-		return runConfigCheck(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printConfigCheckHelp()
+			return 0
+		}
+		return runConfigCheck(actionArgs)
 	case "show":
-		return runConfigShow(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printConfigShowHelp()
+			return 0
+		}
+		return runConfigShow(actionArgs)
 	case "get":
-		return runConfigGet(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printConfigGetHelp()
+			return 0
+		}
+		return runConfigGet(actionArgs)
 	case "set":
-		return runConfigSet(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printConfigSetHelp()
+			return 0
+		}
+		return runConfigSet(actionArgs)
 	case "help":
-		fmt.Println("Usage: senechal-gw config <verb> [--config PATH]")
-		fmt.Println("Verbs: lock, check, show, get, set")
+		printConfigNounHelp(os.Stdout)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown config verb: %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown config action: %s\n", action)
 		return 1
 	}
 }
 
-// ... (skipping to verb implementations)
+// ... (skipping to action implementations)
 
 func runConfigSet(args []string) int {
 	var configPath string
 	var dryRun, apply bool
-	
+
 	fs := flag.NewFlagSet("set", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview changes")
@@ -223,7 +267,7 @@ func runConfigSet(args []string) int {
 	return 0
 }
 
-// ... (skipping to verb implementations)
+// ... (skipping to action implementations)
 
 func runConfigShow(args []string) int {
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
@@ -310,40 +354,156 @@ func loadConfigForTool(configPath string) (*config.Config, error) {
 
 func runJobNoun(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw job <verb>\nVerbs: inspect\n")
+		printJobNounHelp(os.Stderr)
 		return 1
 	}
-	switch args[0] {
+
+	if isHelpToken(args[0]) {
+		printJobNounHelp(os.Stdout)
+		return 0
+	}
+
+	action := args[0]
+	actionArgs := args[1:]
+
+	switch action {
 	case "inspect":
-		return runInspect(args[1:])
+		if hasHelpFlag(actionArgs) {
+			printJobInspectHelp()
+			return 0
+		}
+		return runInspect(actionArgs)
 	case "help":
-		fmt.Println("Usage: senechal-gw job inspect <job_id>")
+		printJobNounHelp(os.Stdout)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown job verb: %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown job action: %s\n", action)
 		return 1
 	}
 }
 
 func runPluginNoun(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw plugin <verb>\nVerbs: list, run\n")
+		printPluginNounHelp(os.Stderr)
 		return 1
 	}
-	switch args[0] {
+
+	if isHelpToken(args[0]) {
+		printPluginNounHelp(os.Stdout)
+		return 0
+	}
+
+	action := args[0]
+	actionArgs := args[1:]
+
+	switch action {
 	case "list":
+		if hasHelpFlag(actionArgs) {
+			printPluginListHelp()
+			return 0
+		}
 		fmt.Println("plugin list is not yet implemented")
 		return 0
 	case "run":
+		if hasHelpFlag(actionArgs) {
+			printPluginRunHelp()
+			return 0
+		}
 		fmt.Println("plugin run is not yet implemented")
 		return 0
+	case "help":
+		printPluginNounHelp(os.Stdout)
+		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown plugin verb: %s\n", args[0])
+		fmt.Fprintf(os.Stderr, "Unknown plugin action: %s\n", action)
 		return 1
 	}
 }
 
-// --- VERB IMPLEMENTATIONS ---
+func isHelpToken(token string) bool {
+	return token == "help" || token == "--help" || token == "-h"
+}
+
+func hasHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return true
+		}
+	}
+	return false
+}
+
+func printSystemNounHelp(w *os.File) {
+	fmt.Fprintln(w, "Usage: senechal-gw system <action>")
+	fmt.Fprintln(w, "Actions: start, status")
+}
+
+func printConfigNounHelp(w *os.File) {
+	fmt.Fprintln(w, "Usage: senechal-gw config <action> [flags]")
+	fmt.Fprintln(w, "Actions: lock, check, show, get, set")
+}
+
+func printJobNounHelp(w *os.File) {
+	fmt.Fprintln(w, "Usage: senechal-gw job <action>")
+	fmt.Fprintln(w, "Actions: inspect")
+}
+
+func printPluginNounHelp(w *os.File) {
+	fmt.Fprintln(w, "Usage: senechal-gw plugin <action>")
+	fmt.Fprintln(w, "Actions: list, run")
+}
+
+func printSystemStartHelp() {
+	fmt.Println("Usage: senechal-gw system start [--config PATH]")
+	fmt.Println("Start the gateway service in the foreground.")
+}
+
+func printSystemStatusHelp() {
+	fmt.Println("Usage: senechal-gw system status")
+	fmt.Println("Show global gateway health (planned).")
+}
+
+func printConfigLockHelp() {
+	fmt.Println("Usage: senechal-gw config lock [--config PATH | --config-dir PATH] [-v|--verbose] [--dry-run]")
+	fmt.Println("Authorize current configuration state by regenerating scope file integrity hashes.")
+}
+
+func printConfigCheckHelp() {
+	fmt.Println("Usage: senechal-gw config check [--config PATH] [--format human|json] [--strict] [--json]")
+	fmt.Println("Validate configuration syntax, policy, and integrity.")
+}
+
+func printConfigShowHelp() {
+	fmt.Println("Usage: senechal-gw config show [entity] [--config PATH] [--json]")
+	fmt.Println("Show full resolved configuration or a filtered entity node.")
+}
+
+func printConfigGetHelp() {
+	fmt.Println("Usage: senechal-gw config get <path> [--config PATH] [--json]")
+	fmt.Println("Read a single value from the resolved configuration.")
+}
+
+func printConfigSetHelp() {
+	fmt.Println("Usage: senechal-gw config set <path>=<value> [--config PATH] [--dry-run | --apply]")
+	fmt.Println("Set a configuration value with either preview or apply mode.")
+}
+
+func printJobInspectHelp() {
+	fmt.Println("Usage: senechal-gw job inspect <job_id> [--config PATH] [--json]")
+	fmt.Println("Inspect job lineage, baggage, and workspace artifacts.")
+}
+
+func printPluginListHelp() {
+	fmt.Println("Usage: senechal-gw plugin list")
+	fmt.Println("Show discovered plugins (planned).")
+}
+
+func printPluginRunHelp() {
+	fmt.Println("Usage: senechal-gw plugin run <name>")
+	fmt.Println("Execute a plugin manually (planned).")
+}
+
+// --- ACTION IMPLEMENTATIONS ---
 
 func runStart(args []string) int {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)

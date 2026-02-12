@@ -12,8 +12,8 @@ This document defines the interface standards for the `senechal-gw` CLI. All com
 
 Senechal is designed to be operated by both humans and LLMs. The CLI should speak the language of **Governance and Intent**, not mechanical implementation details.
 
-### 1.1 NOUN VERB Hierarchy
-All commands MUST follow a strict `NOUN VERB` pattern. 
+### 1.1 NOUN ACTION Hierarchy
+All commands MUST follow a strict `NOUN ACTION` pattern. 
 *   **Good:** `senechal-gw job inspect`, `senechal-gw config seal`
 *   **Bad:** `senechal-gw inspect-job`, `senechal-gw hash-update`
 
@@ -34,7 +34,7 @@ The CLI is the primary "API" for an LLM operator. It must provide:
 *   `job`: Instances of execution (lineage, logs, status).
 *   `system`: Global gateway state (status, health, reload).
 
-### 2.2 The Semantic Verbs (Intents)
+### 2.2 The Semantic Actions (Intents)
 *   **check**: Validate logic, syntax, and integrity (e.g., `config check`).
 *   **lock**: Authorize current state by updating integrity manifests/hashes (e.g., `config lock`).
 *   **get / set**: Retrieve or modify specific configuration nodes using a path syntax (e.g., `config set plugin:withings.enabled=true`).
@@ -74,8 +74,8 @@ Every subcommand MUST implement these flags where relevant:
 | Flag | Purpose | Requirement |
 | :--- | :--- | :--- |
 | `-v, --verbose` | Expose internal logic, path resolution, and baggage merges. | Mandatory for all. |
-| `--dry-run` | Preview mutations without committing changes. | Mandatory for all "Write" verbs (`set`, `lock`, `run`). |
-| `--json` | Return machine-readable structured data. | Mandatory for all "Read" verbs. |
+| `--dry-run` | Preview mutations without committing changes. | Mandatory for all "Write" actions (`set`, `lock`, `run`). |
+| `--json` | Return machine-readable structured data. | Mandatory for all "Read" actions. |
 
 ---
 
