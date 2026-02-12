@@ -1,6 +1,6 @@
 ---
 id: 80
-status: todo
+status: done
 priority: High
 tags: [bug, cli, json, llm-operator, observability]
 ---
@@ -197,3 +197,4 @@ After fix, verify:
 ## Narrative
 
 - 2026-02-12: Re-discovered during comprehensive CLI testing. This bug was originally reported in card #74 (CLI review) but marked as implemented in card #61 (by @gemini). However, testing shows the --json flag still doesn't produce JSON output. Could not fully verify the exact failure mode during testing because jobs created via /trigger endpoint lack event_context_id (required for lineage inspection). Card #74 reported it showed "usage message" instead of JSON. This blocks LLM operator automation for job lineage analysis, which is a critical observability feature. The human-readable output works excellently (as noted in card #74), but programmatic access is broken. (by @test-admin)
+- 2026-02-13: Fixed fallback behavior for jobs that do not have `event_context_id` (common for direct trigger jobs). `job inspect --json` now returns valid structured JSON with `hops: 0` and empty `steps` instead of failing hard. Added regression coverage in inspect report tests. (by @assistant)

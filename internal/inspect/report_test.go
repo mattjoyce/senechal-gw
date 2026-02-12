@@ -135,3 +135,50 @@ func TestBuildJSONReport(t *testing.T) {
 		t.Errorf("step_id = %s, want %s", report.Steps[0].StepID, "step_a")
 	}
 }
+
+func TestBuildJSONReportWithoutContextID(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := queue.New(db)
+
+	jobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	out, err := BuildJSONReport(ctx, db, dbPath, jobID)
+	if err != nil {
+		t.Fatalf("BuildJSONReport: %v", err)
+	}
+
+	var report Report
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v", err)
+	}
+
+	if report.JobID != jobID {
+		t.Errorf("job_id = %s, want %s", report.JobID, jobID)
+	}
+	if report.ContextID != "" {
+		t.Errorf("context_id = %q, want empty", report.ContextID)
+	}
+	if report.Hops != 0 {
+		t.Errorf("hops = %d, want 0", report.Hops)
+	}
+	if len(report.Steps) != 0 {
+		t.Errorf("steps = %d, want 0", len(report.Steps))
+	}
+}

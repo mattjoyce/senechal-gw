@@ -126,25 +126,29 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 	if err != nil {
 		return nil, err
 	}
-	if !rootJob.contextID.Valid {
-		return nil, fmt.Errorf("job %q has no event_context_id", jobID)
-	}
-
-	contextStore := state.NewContextStore(db)
-	lineage, err := contextStore.Lineage(ctx, rootJob.contextID.String)
-	if err != nil {
-		return nil, fmt.Errorf("load context lineage: %w", err)
-	}
 
 	report := &Report{
 		JobID:     rootJob.id,
 		Plugin:    rootJob.plugin,
 		Command:   rootJob.command,
 		Status:    rootJob.status,
-		ContextID: rootJob.contextID.String,
-		Hops:      len(lineage),
-		Steps:     make([]Step, 0, len(lineage)),
+		ContextID: "",
+		Hops:      0,
+		Steps:     make([]Step, 0),
 	}
+	if !rootJob.contextID.Valid {
+		return report, nil
+	}
+
+	report.ContextID = rootJob.contextID.String
+
+	contextStore := state.NewContextStore(db)
+	lineage, err := contextStore.Lineage(ctx, rootJob.contextID.String)
+	if err != nil {
+		return nil, fmt.Errorf("load context lineage: %w", err)
+	}
+	report.Hops = len(lineage)
+	report.Steps = make([]Step, 0, len(lineage))
 
 	workspaceBaseDir := workspaceBaseDirFromStatePath(statePath)
 	for idx, node := range lineage {
