@@ -213,3 +213,7 @@ Extend `internal/e2e/pipeline_test.go` with a test that uses temp directories fo
 - [ ] Output filename generation: timestamp-based? derive from input filename?
 - [ ] obsave plugin: confirm correct source path
 - [ ] Max file size limit for file_handler read? (prevent accidentally reading huge files)
+
+## Narrative
+
+- 2026-02-12: Started implementing card #62. Created Pythonic file_handler plugin with comprehensive error handling, type hints, security validation (realpath-based path checking). Set up Docker test environment. Discovered and fixed multiple issues: fabric manifest format (#63), fabric command mismatch (#66), API trigger failure (#68). After rebasing to get Sprint 4 routing implementation, discovered routing requires Pipeline DSL files in `pipelines/` directory, not the legacy `routes:` config. Created `pipelines/file-to-report.yaml` with pipeline definition. Updated Dockerfile to copy pipelines directory to container. Successfully validated E2E routing: file_handler → fabric routing works correctly. Router matched `file.read` event, created downstream job with proper traceability (event_context_id, pipeline/step metadata). Fabric job failed due to missing fabric binary (expected, external tool), but routing infrastructure validated successfully. Next: Either install fabric binary in container for full 3-hop test, or create mock fabric for testing purposes. (by @test-admin)

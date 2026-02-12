@@ -33,6 +33,9 @@ COPY --from=builder /build/senechal-gw .
 # Copy plugins directory
 COPY --chown=senechal:senechal plugins/ ./plugins/
 
+# Copy pipelines directory if it exists
+COPY --chown=senechal:senechal pipelines ./pipelines
+
 # Create data directory for state persistence
 RUN mkdir -p /app/data && chown -R senechal:senechal /app/data
 

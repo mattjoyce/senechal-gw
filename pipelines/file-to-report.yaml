@@ -1,0 +1,8 @@
+pipelines:
+  - name: file-to-report
+    on: file.read
+    steps:
+      - id: analyze
+        uses: fabric
+      - id: save
+        uses: file_handler
