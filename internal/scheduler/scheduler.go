@@ -259,35 +259,6 @@ func calculateJitteredInterval(baseInterval time.Duration, jitter time.Duration)
 }
 
 // parseScheduleEvery converts the 'every' string from config to a base duration.
-// For "daily", "weekly", "monthly", it returns a special indicator as these need
-// calendar-aware scheduling.
 func parseScheduleEvery(every string) (time.Duration, error) {
-	switch every {
-	case "5m":
-		return 5 * time.Minute, nil
-	case "15m":
-		return 15 * time.Minute, nil
-	case "30m":
-		return 30 * time.Minute, nil
-	case "hourly":
-		return 1 * time.Hour, nil
-	case "2h":
-		return 2 * time.Hour, nil
-	case "6h":
-		return 6 * time.Hour, nil
-	case "daily":
-		return 24 * time.Hour, nil // Special handling will adjust to specific time
-	case "weekly":
-		return 7 * 24 * time.Hour, nil // Special handling will adjust
-	case "monthly":
-		return 30 * 24 * time.Hour, nil // Approximation, special handling will adjust
-	default:
-		// Attempt to parse as a generic duration if it's not a named interval
-		d, err := time.ParseDuration(every)
-		if err == nil {
-			return d, nil
-		}
-	}
-	return 0, fmt.Errorf("unsupported schedule interval: %s", every)
+	return config.ParseInterval(every)
 }
-
