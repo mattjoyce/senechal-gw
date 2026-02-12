@@ -483,6 +483,7 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 			return fmt.Errorf("resolve routes for event %q: %w", ev.Type, err)
 		}
 		if len(nextDispatches) == 0 {
+			logger.Debug("no route matched for event", "event_type", ev.Type, "source_plugin", job.Plugin)
 			continue
 		}
 

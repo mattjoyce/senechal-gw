@@ -591,6 +591,12 @@ func runStart(args []string) int {
 		return 1
 	}
 
+	pipelines := routerEngine.PipelineSummary()
+	logger.Info("pipeline discovery complete", "config_dir", configDir, "pipelines_loaded", len(pipelines))
+	for _, p := range pipelines {
+		logger.Info("pipeline registered", "name", p.Name, "trigger", p.Trigger)
+	}
+
 	sched := scheduler.New(cfg, q, logger)
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
 
