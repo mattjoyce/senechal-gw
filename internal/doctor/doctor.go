@@ -328,7 +328,9 @@ func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 				fmt.Sprintf("invalid schedule interval %q: %v", pc.Schedule.Every, err))
 			continue
 		}
-		if interval.Minutes() < 1 {
+		// ParseInterval returns 0 for daily/weekly/monthly (handled by scheduler).
+		// Only warn for very short intervals if it's a direct duration.
+		if interval > 0 && interval.Minutes() < 1 {
 			d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedule.every", name),
 				fmt.Sprintf("schedule interval %q is very short (< 1m)", pc.Schedule.Every))
 		}

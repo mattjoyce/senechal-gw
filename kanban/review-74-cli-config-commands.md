@@ -1,6 +1,6 @@
 ---
 id: 74
-status: todo
+status: done
 priority: Normal
 tags: [cli, config, review, ux, llm-operator]
 ---
