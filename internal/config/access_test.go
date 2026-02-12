@@ -47,8 +47,8 @@ func TestGetPath(t *testing.T) {
 			want: "5m",
 		},
 		{
-			name: "invalid path",
-			path: "service.missing",
+			name:    "invalid path",
+			path:    "service.missing",
 			wantErr: true,
 		},
 		{
@@ -76,7 +76,7 @@ func TestGetPath(t *testing.T) {
 func TestGetEntity(t *testing.T) {
 	cfg := &Config{
 		Plugins: map[string]PluginConf{
-			"echo": {Enabled: true},
+			"echo":   {Enabled: true},
 			"fabric": {Enabled: false},
 		},
 	}

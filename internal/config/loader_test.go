@@ -686,8 +686,8 @@ plugins:
 		t.Fatal(err)
 	}
 
-	// Generate checksums for tokens.yaml
-	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml"}); err != nil {
+	// Generate checksums for config.yaml and tokens.yaml
+	if err := GenerateChecksums(tmpDir, []string{"config.yaml", "tokens.yaml"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -761,19 +761,21 @@ include:
 		t.Fatalf("DiscoverScopeDirs() failed: %v", err)
 	}
 
-	if len(dirs) != 2 {
-		t.Fatalf("DiscoverScopeDirs() returned %d dirs, want 2: %v", len(dirs), dirs)
+	if len(dirs) != 4 {
+		t.Fatalf("DiscoverScopeDirs() returned %d files, want 4: %v", len(dirs), dirs)
 	}
 
-	got := map[string]bool{
-		dirs[0]: true,
-		dirs[1]: true,
+	got := make(map[string]bool)
+	for _, d := range dirs {
+		got[d] = true
 	}
-	if !got[secretsDir] {
-		t.Errorf("DiscoverScopeDirs() missing secrets dir: %s", secretsDir)
+	tokensPath := filepath.Join(secretsDir, "tokens.yaml")
+	webhooksPath := filepath.Join(hooksDir, "webhooks.yaml")
+	if !got[tokensPath] {
+		t.Errorf("DiscoverScopeDirs() missing tokens file: %s", tokensPath)
 	}
-	if !got[hooksDir] {
-		t.Errorf("DiscoverScopeDirs() missing hooks dir: %s", hooksDir)
+	if !got[webhooksPath] {
+		t.Errorf("DiscoverScopeDirs() missing webhooks file: %s", webhooksPath)
 	}
 }
 
@@ -795,10 +797,10 @@ service:
 	}
 
 	if len(dirs) != 1 {
-		t.Fatalf("DiscoverScopeDirs() returned %d dirs, want 1: %v", len(dirs), dirs)
+		t.Fatalf("DiscoverScopeDirs() returned %d files, want 1: %v", len(dirs), dirs)
 	}
-	if dirs[0] != tmpDir {
-		t.Errorf("DiscoverScopeDirs() = %q, want %q", dirs[0], tmpDir)
+	if dirs[0] != configPath {
+		t.Errorf("DiscoverScopeDirs() = %q, want %q", dirs[0], configPath)
 	}
 }
 

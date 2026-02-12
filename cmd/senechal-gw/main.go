@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 
@@ -161,7 +162,7 @@ func runConfigNoun(args []string) int {
 func runConfigSet(args []string) int {
 	var configPath string
 	var dryRun, apply bool
-	
+
 	fs := flag.NewFlagSet("set", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview changes")
@@ -650,7 +651,7 @@ func runConfigHashUpdate(args []string) int {
 
 	fs := flag.NewFlagSet("lock", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
-	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
+	fs.StringVar(&configDir, "config-dir", "", "Path to config directory (legacy)")
 	fs.BoolVar(&verbose, "verbose", false, "Verbose output")
 	fs.BoolVar(&verboseShort, "v", false, "Verbose output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Dry run")
@@ -661,48 +662,44 @@ func runConfigHashUpdate(args []string) int {
 	}
 	isVerbose := verbose || verboseShort
 
-	if configPath != "" && configDir != "" {
-		fmt.Fprintf(os.Stderr, "Error: use only one of --config or --config-dir\n")
+	// 1. Resolve starting config path
+	resolvedConfigPath := configPath
+	if resolvedConfigPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		resolvedConfigPath = discovered
+	}
+
+	// 2. Discover all files in the include tree
+	allFiles, err := config.DiscoverAllConfigFiles(resolvedConfigPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to discover configuration tree: %v\n", err)
 		return 1
 	}
 
-	var targetDirs []string
-	if configDir != "" {
-		targetDirs = []string{configDir}
-	} else {
-		resolvedConfigPath := configPath
-		if resolvedConfigPath == "" {
-			discovered, err := config.DiscoverConfigDir()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
-				return 1
-			}
-			resolvedConfigPath = discovered
-		}
-
-		dirs, err := config.DiscoverScopeDirs(resolvedConfigPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to resolve scope directories: %v\n", err)
-			return 1
-		}
-		targetDirs = dirs
+	// 3. Group files by directory for .checksums generation
+	dirToFiles := make(map[string][]string)
+	for _, f := range allFiles {
+		dir := filepath.Dir(f)
+		dirToFiles[dir] = append(dirToFiles[dir], filepath.Base(f))
 	}
 
-	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
-	for _, dir := range targetDirs {
-		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
+	// 4. Generate reports per directory
+	for dir, files := range dirToFiles {
+		report, err := config.GenerateChecksumsWithReport(dir, files, dryRun)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 			return 1
 		}
 		if isVerbose {
 			fmt.Printf("Processing directory: %s\n", dir)
-			for _, file := range report.Files {
-				if file.Exists {
-					fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
-					continue
-				}
-				fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
+			sort.Strings(files) // Ensure deterministic order for tests
+			for _, filename := range files {
+				hash, _ := config.ComputeBlake3Hash(filepath.Join(dir, filename))
+				fmt.Printf("  HASH %s: %s\n", filename, hash)
 			}
 			if dryRun {
 				fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
@@ -713,12 +710,9 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	if dryRun {
-		fmt.Printf("Dry run completed for %d directory/ies (no files written):\n", len(targetDirs))
+		fmt.Printf("Dry run completed for %d configuration file(s) (no files written).\n", len(allFiles))
 	} else {
-		fmt.Printf("Successfully locked configuration in %d directory/ies:\n", len(targetDirs))
-	}
-	for _, dir := range targetDirs {
-		fmt.Printf("  - %s\n", dir)
+		fmt.Printf("Successfully locked %d configuration file(s).\n", len(allFiles))
 	}
 
 	return 0

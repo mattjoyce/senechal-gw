@@ -9,11 +9,11 @@ import (
 func TestGenerateChecksumsWithReportDryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.yaml"), []byte("key: value\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	report, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, true)
+	report, err := GenerateChecksumsWithReport(tmpDir, []string{"a.yaml", "b.yaml"}, true)
 	if err != nil {
 		t.Fatalf("GenerateChecksumsWithReport() failed: %v", err)
 	}
@@ -27,10 +27,10 @@ func TestGenerateChecksumsWithReportDryRun(t *testing.T) {
 	}
 
 	if !report.Files[0].Exists || report.Files[0].Hash == "" {
-		t.Fatal("tokens.yaml should exist with computed hash")
+		t.Fatal("a.yaml should exist with computed hash")
 	}
 	if report.Files[1].Exists || report.Files[1].Hash != "" {
-		t.Fatal("webhooks.yaml should be reported as missing without hash")
+		t.Fatal("b.yaml should be reported as missing without hash")
 	}
 
 	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); !os.IsNotExist(err) {
@@ -41,14 +41,14 @@ func TestGenerateChecksumsWithReportDryRun(t *testing.T) {
 func TestGenerateChecksumsWithReportWritesChecksums(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.yaml"), []byte("key: value\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte("listen: :8080\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "b.yaml"), []byte("listen: :8080\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	report, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, false)
+	report, err := GenerateChecksumsWithReport(tmpDir, []string{"a.yaml", "b.yaml"}, false)
 	if err != nil {
 		t.Fatalf("GenerateChecksumsWithReport() failed: %v", err)
 	}

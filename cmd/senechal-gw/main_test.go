@@ -69,9 +69,6 @@ include:
 	if !strings.Contains(stdout, "HASH tokens.yaml:") {
 		t.Fatalf("stdout missing tokens hash line: %s", stdout)
 	}
-	if !strings.Contains(stdout, "SKIP webhooks.yaml: not found (optional)") {
-		t.Fatalf("stdout missing optional skip line: %s", stdout)
-	}
 	if !strings.Contains(stdout, "DRY-RUN .checksums:") {
 		t.Fatalf("stdout missing dry-run line: %s", stdout)
 	}
@@ -112,7 +109,7 @@ include:
 	if !strings.Contains(stdout, "WROTE .checksums:") {
 		t.Fatalf("stdout missing wrote checksums line: %s", stdout)
 	}
-	if !strings.Contains(stdout, "Successfully locked configuration") {
+	if !strings.Contains(stdout, "Successfully locked") {
 		t.Fatalf("stdout missing success summary: %s", stdout)
 	}
 

@@ -116,7 +116,7 @@ type WebhooksConfig struct {
 type WebhookEndpoint struct {
 	Path            string `yaml:"path"`
 	Plugin          string `yaml:"plugin"`
-	Secret          string `yaml:"secret,omitempty"`    // Legacy: direct secret (deprecated)
+	Secret          string `yaml:"secret,omitempty"`     // Legacy: direct secret (deprecated)
 	SecretRef       string `yaml:"secret_ref,omitempty"` // Preferred: reference to tokens.yaml
 	SignatureHeader string `yaml:"signature_header"`
 	MaxBodySize     string `yaml:"max_body_size"`

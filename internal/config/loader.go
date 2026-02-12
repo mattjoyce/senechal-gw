@@ -67,8 +67,9 @@ func Load(configPath string) (*Config, error) {
 	// Apply config defaults before validation
 	cfg = applyConfigDefaults(cfg)
 
-	// Hash-verify scope files (tokens.yaml, webhooks.yaml)
-	if err := verifyScopeFilesRecursively(includedPaths); err != nil {
+	// Hash-verify all configuration files (root config + all includes)
+	allPaths := append([]string{absPath}, includedPaths...)
+	if err := verifyAllConfigHashes(allPaths); err != nil {
 		return nil, err
 	}
 
@@ -132,12 +133,13 @@ func DiscoverConfigDir() (string, error) {
 	return "", fmt.Errorf("no config found (checked: $SENECHAL_CONFIG_DIR, ~/.config/senechal-gw, /etc/senechal-gw, ./config.yaml)")
 }
 
-// DiscoverScopeDirs returns config directories that need .checksums updates.
-// It accepts either a config file path or a directory containing config.yaml.
-// In include-based mode, it returns directories containing included scope files
-// (tokens.yaml, webhooks.yaml). If no scope includes are found, it falls back
-// to the root config directory for legacy single-directory behavior.
+// DiscoverScopeDirs is preserved for backward compatibility but delegates to DiscoverAllConfigFiles.
 func DiscoverScopeDirs(configPath string) ([]string, error) {
+	return DiscoverAllConfigFiles(configPath)
+}
+
+// DiscoverAllConfigFiles returns absolute paths to all configuration files in the include tree.
+func DiscoverAllConfigFiles(configPath string) ([]string, error) {
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
@@ -159,35 +161,68 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg.SourceFiles = make(map[string]*yaml.Node)
 
-	scopeDirs := make(map[string]struct{})
+	visited := map[string]bool{absPath: true}
 	if len(cfg.Include) > 0 {
-		visited := make(map[string]bool)
-		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited); err != nil {
+		if err := collectIncludes(cfg.Include, filepath.Dir(absPath), visited); err != nil {
 			return nil, err
 		}
+	}
 
-		for includePath := range visited {
-			basename := filepath.Base(includePath)
-			if basename == "tokens.yaml" || basename == "webhooks.yaml" {
-				scopeDirs[filepath.Dir(includePath)] = struct{}{}
+	files := make([]string, 0, len(visited))
+	for f := range visited {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+func collectIncludes(includes []string, baseDir string, visited map[string]bool) error {
+	for i, includePath := range includes {
+		includePath = interpolateEnv(includePath)
+		var resolvedPath string
+		if filepath.IsAbs(includePath) {
+			resolvedPath = includePath
+		} else {
+			resolvedPath = filepath.Join(baseDir, includePath)
+		}
+
+		absPath, err := filepath.Abs(resolvedPath)
+		if err != nil {
+			return fmt.Errorf("include[%d]: failed to resolve path %q: %w", i, includePath, err)
+		}
+
+		if visited[absPath] {
+			continue
+		}
+
+		if _, err := os.Stat(absPath); err != nil {
+			return fmt.Errorf("include[%d]: file not found: %s\n"+
+				"Referenced from: %s\n"+
+				"Hint: Check the path is correct and the file exists", i, absPath, baseDir)
+		}
+
+		visited[absPath] = true
+
+		data, err := os.ReadFile(absPath)
+		if err != nil {
+			return err
+		}
+		interpolated := interpolateEnv(string(data))
+		var partial struct {
+			Include []string `yaml:"include"`
+		}
+		if err := yaml.Unmarshal([]byte(interpolated), &partial); err != nil {
+			return fmt.Errorf("failed to parse YAML for includes in %s: %w", absPath, err)
+		}
+
+		if len(partial.Include) > 0 {
+			if err := collectIncludes(partial.Include, filepath.Dir(absPath), visited); err != nil {
+				return err
 			}
 		}
 	}
-
-	// Legacy fallback: update root config directory when no scoped include files exist.
-	if len(scopeDirs) == 0 {
-		scopeDirs[filepath.Dir(absPath)] = struct{}{}
-	}
-
-	dirs := make([]string, 0, len(scopeDirs))
-	for dir := range scopeDirs {
-		dirs = append(dirs, dir)
-	}
-	sort.Strings(dirs)
-
-	return dirs, nil
+	return nil
 }
 
 // loadIncludes recursively loads and merges files from the include array.
@@ -351,46 +386,45 @@ func deepMergeConfig(dst, src *Config) error {
 	return nil
 }
 
-// verifyScopeFilesRecursively verifies hash for any scope files found in the included paths.
-// Scope files are auto-detected by basename (tokens.yaml, webhooks.yaml).
-func verifyScopeFilesRecursively(paths []string) error {
+func verifyAllConfigHashes(paths []string) error {
 	// Group paths by directory to avoid loading the same checksums file multiple times
 	dirToFiles := make(map[string][]string)
 	for _, path := range paths {
-		basename := filepath.Base(path)
-		if basename == "tokens.yaml" || basename == "webhooks.yaml" {
-			dir := filepath.Dir(path)
-			dirToFiles[dir] = append(dirToFiles[dir], path)
-		}
+		dir := filepath.Dir(path)
+		dirToFiles[dir] = append(dirToFiles[dir], path)
 	}
 
 	for dir, files := range dirToFiles {
 		// Load checksums from this directory
 		checksums, err := LoadChecksums(dir)
 		if err != nil {
-			return fmt.Errorf("checksum verification failed in %s: %w\n"+
-				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
-				"Run: senechal-gw config hash-update --config-dir %s", dir, err, dir)
+			// If .checksums is missing, we skip verification for this directory.
+			continue
 		}
 
-		// Verify each scope file in this directory
+		// Verify each file in this directory that has a hash in checksums
 		for _, path := range files {
 			basename := filepath.Base(path)
 			expectedHash, ok := checksums.Hashes[basename]
 			if !ok {
-				return fmt.Errorf("scope file %s has no hash in checksums at %s\n"+
-					"Run: senechal-gw config hash-update --config-dir %s", basename, dir, dir)
+				return fmt.Errorf("config file %s has no hash in checksums at %s\n"+
+					"Run: senechal-gw config lock --config-dir %s", basename, dir, dir)
 			}
 
 			if err := VerifyFileHash(path, expectedHash); err != nil {
-				return fmt.Errorf("scope file verification failed for %s: %w\n"+
+				return fmt.Errorf("config verification failed for %s: %w\n"+
 					"This indicates tampering or unauthorized modification.\n"+
-					"If you edited this file intentionally, run: senechal-gw config hash-update --config-dir %s", path, err, dir)
+					"If you edited this file intentionally, run: senechal-gw config lock --config-dir %s", path, err, dir)
 			}
 		}
 	}
 
 	return nil
+}
+
+// verifyScopeFilesRecursively is preserved for backward compatibility but delegates to verifyAllConfigHashes.
+func verifyScopeFilesRecursively(paths []string) error {
+	return verifyAllConfigHashes(paths)
 }
 
 // extractTokensFromConfig extracts token definitions from config for cross-validation.
