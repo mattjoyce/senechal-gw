@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/storage"
 	"github.com/mattjoyce/senechal-gw/internal/webhook"
 	"github.com/mattjoyce/senechal-gw/internal/workspace"
+	"gopkg.in/yaml.v3"
 )
 
 const version = "0.1.0-mvp"
@@ -129,7 +131,7 @@ func runSystemNoun(args []string) int {
 
 func runConfigNoun(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config <verb>\nVerbs: lock, check\n")
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config <verb>\nVerbs: lock, check, show, get\n")
 		return 1
 	}
 	switch args[0] {
@@ -137,14 +139,103 @@ func runConfigNoun(args []string) int {
 		return runConfigHashUpdate(args[1:])
 	case "check":
 		return runConfigCheck(args[1:])
+	case "show":
+		return runConfigShow(args[1:])
+	case "get":
+		return runConfigGet(args[1:])
 	case "help":
 		fmt.Println("Usage: senechal-gw config <verb> [--config PATH]")
-		fmt.Println("Verbs: lock, check")
+		fmt.Println("Verbs: lock, check, show, get")
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown config verb: %s\n", args[0])
 		return 1
 	}
+}
+
+// ... (skipping to verb implementations)
+
+func runConfigShow(args []string) int {
+	fs := flag.NewFlagSet("show", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return 1
+	}
+
+	cfg, err := loadConfigForTool(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
+		return 1
+	}
+
+	var result any = cfg
+	if fs.NArg() > 0 {
+		entity := fs.Arg(0)
+		res, err := cfg.GetPath(entity)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+		result = res
+	}
+
+	if *jsonOut {
+		data, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		data, _ := yaml.Marshal(result)
+		fmt.Print(string(data))
+	}
+	return 0
+}
+
+func runConfigGet(args []string) int {
+	fs := flag.NewFlagSet("get", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintf(os.Stderr, "Usage: senechal-gw config get <path> [--json]\n")
+		return 1
+	}
+	path := fs.Arg(0)
+
+	cfg, err := loadConfigForTool(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
+		return 1
+	}
+
+	val, err := cfg.GetPath(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return 1
+	}
+
+	if *jsonOut {
+		data, _ := json.MarshalIndent(val, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		fmt.Printf("%v\n", val)
+	}
+	return 0
+}
+
+func loadConfigForTool(configPath string) (*config.Config, error) {
+	if configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		configPath = discovered
+	}
+	return config.Load(configPath)
 }
 
 func runJobNoun(args []string) int {

@@ -1,0 +1,101 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// GetPath retrieves a value from the configuration using a dot-notation path.
+func (c *Config) GetPath(path string) (any, error) {
+	// 1. Resolve Entity Addressing (type:name)
+	if strings.Contains(path, ":") {
+		return c.GetEntity(path)
+	}
+
+	// 2. Convert to map for generic traversal
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
+
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	// 3. Traverse
+	return getValue(m, path)
+}
+
+// GetEntity retrieves a first-class entity (plugin, pipeline, etc.) by type:name.
+func (c *Config) GetEntity(address string) (any, error) {
+	parts := strings.SplitN(address, ":", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid entity address format %q (expected type:name)", address)
+	}
+
+	entityType, name := parts[0], parts[1]
+
+	switch entityType {
+	case "plugin":
+		if name == "*" {
+			return c.Plugins, nil
+		}
+		p, ok := c.Plugins[name]
+		if !ok {
+			return nil, fmt.Errorf("plugin %q not found", name)
+		}
+		return p, nil
+
+	case "pipeline":
+		// Note: Pipelines are not yet in the main Config struct in some versions,
+		// but per ROUTING_SPEC they should be. Checking current types.go.
+		// For now, support what's in the struct.
+		return nil, fmt.Errorf("entity type %q not yet fully implemented in accessor", entityType)
+
+	case "webhook":
+		if c.Webhooks == nil {
+			return nil, fmt.Errorf("no webhooks configured")
+		}
+		if name == "*" {
+			return c.Webhooks.Endpoints, nil
+		}
+		for _, ep := range c.Webhooks.Endpoints {
+			// Webhooks don't have names in types.go yet, usually identified by path or plugin.
+			// Using plugin name as proxy for now if path doesn't match.
+			if ep.Path == name || ep.Plugin == name {
+				return ep, nil
+			}
+		}
+		return nil, fmt.Errorf("webhook %q not found", name)
+
+	default:
+		return nil, fmt.Errorf("unsupported entity type %q", entityType)
+	}
+}
+
+func getValue(m map[string]any, path string) (any, error) {
+	parts := strings.Split(path, ".")
+	var current any = m
+
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+
+		m, ok := current.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("path %q breaks at %q (not a map)", path, part)
+		}
+
+		val, exists := m[part]
+		if !exists {
+			return nil, fmt.Errorf("path %q: key %q not found", path, part)
+		}
+		current = val
+	}
+
+	return current, nil
+}
