@@ -63,7 +63,7 @@ include:
 		t.Fatalf("runConfigHashUpdate() code = %d, stderr: %s", code, stderr)
 	}
 
-	if !strings.Contains(stdout, "Processing directory:") {
+	if !strings.Contains(stdout, "Processing directory") {
 		t.Fatalf("stdout missing verbose directory progress: %s", stdout)
 	}
 	if !strings.Contains(stdout, "HASH tokens.yaml:") {

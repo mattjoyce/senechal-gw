@@ -688,26 +688,60 @@ func runConfigHashUpdate(args []string) int {
 		targetDirs = dirs
 	}
 
-	scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
 	for _, dir := range targetDirs {
-		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-			return 1
-		}
-		if isVerbose {
-			fmt.Printf("Processing directory: %s\n", dir)
-			for _, file := range report.Files {
-				if file.Exists {
-					fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
-					continue
-				}
-				fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
+		// Check if this is a CONFIG_SPEC directory
+		if config.IsConfigSpecDir(dir) {
+			files, err := config.DiscoverConfigFiles(dir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to discover config files in %s: %v\n", dir, err)
+				return 1
 			}
-			if dryRun {
-				fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
-			} else {
-				fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
+
+			if isVerbose {
+				fmt.Printf("Processing directory (v2 manifest): %s\n", dir)
+				for _, f := range files.AllFiles() {
+					tier := "operational"
+					if files.FileTier(f) == config.TierHighSecurity {
+						tier = "high-security"
+					}
+					fmt.Printf("  DISCOVER [%s] %s\n", tier, f)
+				}
+			}
+
+			if err := config.GenerateChecksumsFromDiscovery(files, dryRun); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
+				return 1
+			}
+
+			if isVerbose {
+				if dryRun {
+					fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", filepath.Join(dir, ".checksums"))
+				} else {
+					fmt.Printf("  WROTE .checksums: %s\n", filepath.Join(dir, ".checksums"))
+				}
+			}
+		} else {
+			// Legacy include-based mode
+			scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+			report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
+				return 1
+			}
+			if isVerbose {
+				fmt.Printf("Processing directory (v1 manifest): %s\n", dir)
+				for _, file := range report.Files {
+					if file.Exists {
+						fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
+						continue
+					}
+					fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
+				}
+				if dryRun {
+					fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
+				} else {
+					fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
+				}
 			}
 		}
 	}

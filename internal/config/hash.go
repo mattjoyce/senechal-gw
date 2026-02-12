@@ -124,13 +124,15 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 }
 
 // LoadChecksums reads the .checksums file from a config directory.
+// Supports v1 (filename keys) and v2 (absolute path keys) manifests.
+// v1 manifests are transparently upgraded: filename keys are resolved to absolute paths.
 func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 	checksumPath := filepath.Join(configDir, ".checksums")
 
 	data, err := os.ReadFile(checksumPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("checksums file not found (run 'senechal-gw config hash-update')")
+			return nil, fmt.Errorf("checksums file not found (run 'senechal-gw config lock')")
 		}
 		return nil, fmt.Errorf("failed to read checksums: %w", err)
 	}
@@ -140,11 +142,60 @@ func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 		return nil, fmt.Errorf("failed to parse checksums: %w", err)
 	}
 
-	if manifest.Version != 1 {
+	switch manifest.Version {
+	case 1:
+		// Migrate v1 filename keys to absolute paths for uniform lookup
+		absDir, _ := filepath.Abs(configDir)
+		migrated := make(map[string]string, len(manifest.Hashes))
+		for key, hash := range manifest.Hashes {
+			if filepath.IsAbs(key) {
+				migrated[key] = hash
+			} else {
+				migrated[filepath.Join(absDir, key)] = hash
+			}
+		}
+		manifest.Hashes = migrated
+	case 2:
+		// v2 already uses absolute paths — nothing to do
+	default:
 		return nil, fmt.Errorf("unsupported checksums version: %d", manifest.Version)
 	}
 
 	return &manifest, nil
+}
+
+// GenerateChecksumsFromDiscovery computes BLAKE3 hashes for all discovered files
+// and writes a v2 manifest with absolute path keys.
+func GenerateChecksumsFromDiscovery(files *ConfigFiles, dryRun bool) error {
+	manifest := ChecksumManifest{
+		Version:     2,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Hashes:      make(map[string]string),
+	}
+
+	for _, path := range files.AllFiles() {
+		hash, err := ComputeBlake3Hash(path)
+		if err != nil {
+			return fmt.Errorf("failed to hash %s: %w", path, err)
+		}
+		manifest.Hashes[path] = hash
+	}
+
+	if dryRun {
+		return nil
+	}
+
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal checksums: %w", err)
+	}
+
+	checksumPath := filepath.Join(files.Root, ".checksums")
+	if err := os.WriteFile(checksumPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write checksums: %w", err)
+	}
+
+	return nil
 }
 
 // VerifyScopeFiles verifies all scope files against their checksums.
