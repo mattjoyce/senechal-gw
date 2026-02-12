@@ -56,6 +56,24 @@ func captureRunConfigHashUpdate(t *testing.T, args []string) (int, string, strin
 	})
 }
 
+func setVersionMetadataForTest(t *testing.T, v, commit, built string) {
+	t.Helper()
+
+	origVersion := version
+	origCommit := gitCommit
+	origBuildDate := buildDate
+
+	version = v
+	gitCommit = commit
+	buildDate = built
+
+	t.Cleanup(func() {
+		version = origVersion
+		gitCommit = origCommit
+		buildDate = origBuildDate
+	})
+}
+
 func TestRunConfigHashUpdateVerboseDryRunShortFlag(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -195,6 +213,56 @@ func TestPrintUsageUsesActionTerminology(t *testing.T) {
 	}
 	if strings.Contains(stdout, "<noun> <verb>") {
 		t.Fatalf("usage should not reference verb terminology: %s", stdout)
+	}
+}
+
+func TestRunCLIRootVersionFlag(t *testing.T) {
+	setVersionMetadataForTest(t, "1.2.3", "abc1234567890", "2026-02-12T11:30:00Z")
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runCLI([]string{"--version"})
+	})
+	if code != 0 {
+		t.Fatalf("runCLI() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "senechal-gw 1.2.3") {
+		t.Fatalf("stdout missing semantic version: %s", stdout)
+	}
+	if !strings.Contains(stdout, "commit: abc123456789") {
+		t.Fatalf("stdout missing short commit: %s", stdout)
+	}
+	if !strings.Contains(stdout, "built_at: 2026-02-12T11:30:00Z") {
+		t.Fatalf("stdout missing build time: %s", stdout)
+	}
+}
+
+func TestRunVersionJSONOutputIncludesMetadata(t *testing.T) {
+	setVersionMetadataForTest(t, "2.0.0-rc.1", "aabbccddeeff001122334455", "2026-02-12T11:30:00-05:00")
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runVersion([]string{"--json"})
+	})
+	if code != 0 {
+		t.Fatalf("runVersion() code = %d, stderr: %s", code, stderr)
+	}
+
+	var out struct {
+		Version   string `json:"version"`
+		Commit    string `json:"commit"`
+		BuildTime string `json:"build_time"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("failed to parse version JSON: %v\noutput=%s", err, stdout)
+	}
+
+	if out.Version != "2.0.0-rc.1" {
+		t.Fatalf("version = %q, want %q", out.Version, "2.0.0-rc.1")
+	}
+	if out.Commit != "aabbccddeeff" {
+		t.Fatalf("commit = %q, want %q", out.Commit, "aabbccddeeff")
+	}
+	if out.BuildTime != "2026-02-12T16:30:00Z" {
+		t.Fatalf("build_time = %q, want %q", out.BuildTime, "2026-02-12T16:30:00Z")
 	}
 }
 

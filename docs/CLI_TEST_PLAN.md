@@ -458,9 +458,13 @@ grep -E "(lock|check|show|get|set)" <(./senechal-gw config help)
 
 ### Test 8.4: Version info
 ```bash
-./senechal-gw version
-# Expected: Version information
-[[ -n "$(./senechal-gw version)" ]]
+./senechal-gw --version
+# Expected: Contains version, commit, and built_at lines
+grep -E "(^senechal-gw |^commit:|^built_at:)" <(./senechal-gw --version)
+
+./senechal-gw version --json
+# Expected: Machine-readable version metadata keys
+grep -E "\"version\"|\"commit\"|\"build_time\"" <(./senechal-gw version --json)
 ```
 
 **Pass Criteria:** All 4 tests pass

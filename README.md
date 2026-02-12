@@ -81,6 +81,7 @@ print(json.dumps({
 ## 📚 Documentation
 
 - [User Guide](docs/USER_GUIDE.md) - Installation, Configuration, and CLI usage.
+- [Versioning](docs/VERSIONING.md) - SemVer policy and build metadata injection.
 - [Plugin Development](docs/USER_GUIDE.md#10-plugin-development-guide) - Protocol details and examples.
 - [Technical Specification](SPEC.md) - Deep dive into architecture and internals.
 - [Architecture Decisions (RFCs)](RFC/) - Discussion on core design choices.
