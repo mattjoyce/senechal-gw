@@ -1,20 +1,20 @@
 ---
 id: 81
-status: todo
+status: done
 priority: Medium
 tags: [improvement, cli, ux, discoverability, llm-operator]
 ---
 
-# IMPROVEMENT: Add --help support at verb level
+# IMPROVEMENT: Add --help support at action level
 
 ## Description
 
-CLI commands don't support `--help` at the verb level. Users cannot discover flags for specific commands without reading source code or documentation. This was reported in card #74 and remains unfixed.
+CLI commands don't support `--help` at the action level. Users cannot discover flags for specific commands without reading source code or documentation. This was reported in card #74 and remained unfixed.
 
 ## Impact
 
 - **Severity**: Medium - UX and discoverability issue
-- **Scope**: All CLI verbs
+- **Scope**: All CLI actions
 - **User Experience**: Poor discoverability, trial-and-error usage
 
 ## Current Behavior
@@ -22,14 +22,14 @@ CLI commands don't support `--help` at the verb level. Users cannot discover fla
 ```bash
 # Attempt to get help for specific command
 $ ./senechal-gw config check --help
-Unknown config verb: --help
-❌ Treats --help as a verb name
+Unknown config action: --help
+❌ Treats --help as an action name
 
 # Noun-level help works
 $ ./senechal-gw config help
-Usage: senechal-gw config <verb> [--config PATH]
-Verbs: lock, check, show, get, set
-⚠️ Lists verbs but not flags
+Usage: senechal-gw config <action> [--config PATH]
+Actions: lock, check, show, get, set
+⚠️ Lists actions but not flags
 
 # No way to discover flags for 'config check'
 # User must guess or read source code
@@ -37,7 +37,7 @@ Verbs: lock, check, show, get, set
 
 ## Expected Behavior
 
-**Verb-level help should work:**
+**Action-level help should work:**
 
 ```bash
 # Get help for specific command
@@ -90,17 +90,17 @@ Exit Codes:
 
 ## Affected Commands
 
-**Config verbs:**
+**Config actions:**
 - `config check` - Need: --config, --format, --strict
 - `config show` - Need: --config
 - `config get` - Need: --config, <path>
 - `config set` - Need: --config, --dry-run, --apply, <path>=<value>
 - `config lock` - Need: --config, -v/--verbose
 
-**Job verbs:**
+**Job actions:**
 - `job inspect` - Need: --config, --json, <job_id>
 
-**System verbs:**
+**System actions:**
 - `system start` - Need: --config, --log-level, flags
 
 ## Implementation Approach
@@ -190,7 +190,7 @@ func init() {
 ## Testing Recommendations
 
 After implementation, verify:
-1. ✅ All verbs support `--help` flag
+1. ✅ All actions support `--help` flag
 2. ✅ Help text includes flag descriptions
 3. ✅ Help text includes examples
 4. ✅ Help text explains exit codes
@@ -201,3 +201,4 @@ After implementation, verify:
 ## Narrative
 
 - 2026-02-12: Re-confirmed during comprehensive CLI testing. This issue was originally reported in card #74 but remains unfixed. Running `./senechal-gw config check --help` produces "Unknown config verb: --help" because the parser treats --help as a verb name. The noun-level help (`config help`) works but only lists verb names without flag documentation. Users must guess flags or read source code. This is a discoverability issue affecting both human users and LLM operators. Recommendation: Use Cobra framework for automatic --help generation or implement manual help handler that recognizes --help flag before verb parsing. Medium priority - doesn't block functionality but significantly impacts UX. (by @test-admin)
+- 2026-02-12: Implemented action-level `--help`/`-h` handling across noun dispatchers and renamed user-facing CLI terminology from `verb` to `action` in command usage and errors. Added CLI tests for `config`, `job`, and `system` action help output. (by @assistant)

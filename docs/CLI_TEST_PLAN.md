@@ -444,16 +444,16 @@ grep -E "(system|config|job|plugin)" <(./senechal-gw --help)
 ### Test 8.2: Noun-level help
 ```bash
 ./senechal-gw config help
-# Expected: Lists all config verbs
+# Expected: Lists all config actions
 grep -E "(lock|check|show|get|set)" <(./senechal-gw config help)
 ```
 
-### Test 8.3: 🐛 Improvement #81 - Verb-level help
+### Test 8.3: Improvement #81 - Action-level help
 ```bash
 ./senechal-gw config check --help 2>&1
 # Expected: Shows flags for config check
-# KNOWN ISSUE: Returns "Unknown config verb: --help" (improvement #81)
-# Status: 🐛 FAIL (expected until implemented)
+# Expected: Contains "Usage: senechal-gw config check"
+# Status: ✅ PASS
 ```
 
 ### Test 8.4: Version info
@@ -463,7 +463,7 @@ grep -E "(lock|check|show|get|set)" <(./senechal-gw config help)
 [[ -n "$(./senechal-gw version)" ]]
 ```
 
-**Pass Criteria:** 3/4 tests pass (test 8.3 expected to fail - improvement not yet implemented)
+**Pass Criteria:** All 4 tests pass
 
 ---
 
@@ -478,13 +478,12 @@ grep -E "(lock|check|show|get|set)" <(./senechal-gw config help)
 5. [ ] All Test Suite 5 tests pass (config lock)
 6. [ ] Test Suite 6: 2/4 pass (bug #80 tracked, context ID limitation documented)
 7. [ ] All Test Suite 7 tests pass (system start)
-8. [ ] Test Suite 8: 3/4 pass (improvement #81 tracked)
+8. [ ] All Test Suite 8 tests pass
 
 **Known failures to track:**
 - Test 4.3: Bug #78 (config set no backup)
 - Test 4.4: Bug #79 (config set no validation)
 - Test 6.3: Bug #80 (job inspect --json)
-- Test 8.3: Improvement #81 (verb-level --help)
 
 **When bugs are fixed:**
 - Update test expectations from "🐛 FAIL" to "✅ PASS"

@@ -7,9 +7,9 @@ assignee: "@gemini"
 tags: [maintenance, cli, refactor]
 ---
 
-# Refactor CLI to NOUN VERB Hierarchy
+# Refactor CLI to NOUN ACTION Hierarchy
 
-Refactor `cmd/senechal-gw/main.go` to strictly enforce the NOUN VERB pattern defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
+Refactor `cmd/senechal-gw/main.go` to strictly enforce the NOUN ACTION pattern defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
 
 ---
 Switch to to main, and rebase.
@@ -20,7 +20,7 @@ Create a PR
 ---
 
 ## Acceptance Criteria
-- Commands follow NOUN VERB:
+- Commands follow NOUN ACTION:
     - `config lock` (replaces `hash-update`)
     - `job inspect <id>` (replaces `inspect <id>`)
     - `system start` (replaces `start`)
