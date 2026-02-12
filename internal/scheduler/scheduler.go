@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog" // Import slog
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -81,7 +82,15 @@ func (s *Scheduler) tickLoop(ctx context.Context) {
 func (s *Scheduler) tick(ctx context.Context) {
 	s.logger.Debug("Scheduler tick")
 
-	for pluginName, pluginConf := range s.cfg.Plugins {
+	// Sort plugin names for deterministic iteration (critical for testing)
+	var pluginNames []string
+	for name := range s.cfg.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+
+	for _, pluginName := range pluginNames {
+		pluginConf := s.cfg.Plugins[pluginName]
 		if !pluginConf.Enabled {
 			continue
 		}

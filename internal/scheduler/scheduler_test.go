@@ -247,20 +247,7 @@ func TestSchedulerTick(t *testing.T) {
 	t.Run("Normal tick operations", func(t *testing.T) {
 		logBuf.Reset()
 
-		// Expect enqueue for enabled_plugin_short_interval
-		mockQueue.EXPECT().Enqueue(
-			gomock.Any(),
-			gomock.Any(),
-		).DoAndReturn(func(_ context.Context, req queue.EnqueueRequest) (string, error) {
-			assert.Equal(t, "enabled_plugin_short_interval", req.Plugin)
-			assert.Equal(t, "poll", req.Command)
-			assert.NotNil(t, req.DedupeKey)
-			assert.Equal(t, "poll:enabled_plugin_short_interval", *req.DedupeKey)
-			assert.Equal(t, 3, req.MaxAttempts)
-			return "job_id_short", nil
-		}).Times(1)
-
-		// Expect enqueue for enabled_plugin_long_interval
+		// Expect enqueue for enabled_plugin_long_interval (alphabetically first)
 		mockQueue.EXPECT().Enqueue(
 			gomock.Any(),
 			gomock.Any(),
@@ -273,6 +260,18 @@ func TestSchedulerTick(t *testing.T) {
 			return "job_id_long", nil
 		}).Times(1)
 
+		// Expect enqueue for enabled_plugin_short_interval
+		mockQueue.EXPECT().Enqueue(
+			gomock.Any(),
+			gomock.Any(),
+		).DoAndReturn(func(_ context.Context, req queue.EnqueueRequest) (string, error) {
+			assert.Equal(t, "enabled_plugin_short_interval", req.Plugin)
+			assert.Equal(t, "poll", req.Command)
+			assert.NotNil(t, req.DedupeKey)
+			assert.Equal(t, "poll:enabled_plugin_short_interval", *req.DedupeKey)
+			assert.Equal(t, 3, req.MaxAttempts)
+			return "job_id_short", nil
+		}).Times(1)
 
 		// Expect PruneJobLogs to be called
 		mockQueue.EXPECT().PruneJobLogs(ctx, cfg.Service.JobLogRetention).Return(nil).Times(1)
