@@ -1,6 +1,6 @@
 ---
 id: 76
-status: todo
+status: cancelled
 priority: Normal
 tags: [bug, config, lock, technical-debt]
 ---
@@ -173,3 +173,4 @@ After fix, verify:
 ## Narrative
 
 - 2026-02-12: Discovered during CLI testing. User ran `config lock -v` and saw misleading "SKIP tokens.yaml: not found (optional)" messages for files not referenced in their config. Investigation revealed hardcoded filenames in loader.go (lines 173, 361) and lock command. This is technical debt from the migration to flexible includes. The system should dynamically discover included files from the config, not hardcode specific filenames. User correctly identified: "build a monolithic config, then process. always." - parse the config tree, discover all includes, then lock those files. No assumptions about filenames. (by @test-admin)
+- 2026-02-12: **CANCELLED** - User requested cancellation. Issue will not be fixed at this time. (by @test-admin)
