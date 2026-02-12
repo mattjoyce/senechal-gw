@@ -17,6 +17,9 @@ type Config struct {
 	Routes      []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks    *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
 	SourceFiles map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
+	Tokens      []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
+	Pipelines   []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
+	ConfigDir   string                `yaml:"-"`                  // Directory mode: root config directory
 }
 
 // ServiceConfig defines core service settings.
@@ -114,6 +117,7 @@ type WebhooksConfig struct {
 
 // WebhookEndpoint defines a single webhook endpoint.
 type WebhookEndpoint struct {
+	Name            string `yaml:"name,omitempty"`       // Directory mode: endpoint name
 	Path            string `yaml:"path"`
 	Plugin          string `yaml:"plugin"`
 	Secret          string `yaml:"secret,omitempty"`    // Legacy: direct secret (deprecated)
@@ -142,6 +146,121 @@ type PluginsFileConfig struct {
 // RoutesFileConfig is the structure of routes.yaml.
 type RoutesFileConfig struct {
 	Routes []RouteConfig `yaml:"routes"`
+}
+
+// TokenEntry defines an API token with scoped permissions (directory mode tokens.yaml).
+type TokenEntry struct {
+	Name       string `yaml:"name"`
+	Key        string `yaml:"key"`
+	ScopesFile string `yaml:"scopes_file,omitempty"`
+	ScopesHash string `yaml:"scopes_hash,omitempty"`
+}
+
+// TokensFileConfig wraps token entries for standalone tokens.yaml.
+type TokensFileConfig struct {
+	Tokens []TokenEntry `yaml:"tokens"`
+}
+
+// WebhooksFileConfig wraps webhook endpoints for standalone webhooks.yaml.
+type WebhooksFileConfig struct {
+	Webhooks []WebhookEndpoint `yaml:"webhooks"`
+}
+
+// PipelineEntry defines a named pipeline triggered by an event type.
+type PipelineEntry struct {
+	Name string `yaml:"name"`
+	On   string `yaml:"on"`
+}
+
+// PipelinesFileConfig wraps pipeline entries for standalone pipelines/*.yaml.
+type PipelinesFileConfig struct {
+	Pipelines []PipelineEntry `yaml:"pipelines"`
+}
+
+// IntegrityTier classifies files by security sensitivity.
+type IntegrityTier int
+
+const (
+	// TierOperational files warn on mismatch but allow loading.
+	TierOperational IntegrityTier = iota
+	// TierHighSecurity files hard-fail on mismatch.
+	TierHighSecurity
+)
+
+// IntegrityResult captures the outcome of integrity verification.
+type IntegrityResult struct {
+	Passed   bool
+	Warnings []string
+	Errors   []string
+}
+
+// ConfigFiles represents the discovered file manifest for directory mode.
+type ConfigFiles struct {
+	Root      string   // Config directory root (absolute)
+	Config    string   // config.yaml path (absolute)
+	Plugins   []string // plugins/*.yaml paths (absolute, sorted)
+	Pipelines []string // pipelines/*.yaml paths (absolute, sorted)
+	Webhooks  string   // webhooks.yaml path (absolute, empty if missing)
+	Tokens    string   // tokens.yaml path (absolute, empty if missing)
+	Routes    string   // routes.yaml path (absolute, empty if missing)
+	Scopes    []string // scopes/*.json paths (absolute, sorted)
+}
+
+// FileTier returns the integrity tier for a given file path.
+func (cf *ConfigFiles) FileTier(path string) IntegrityTier {
+	if path == cf.Tokens || path == cf.Webhooks {
+		return TierHighSecurity
+	}
+	for _, s := range cf.Scopes {
+		if path == s {
+			return TierHighSecurity
+		}
+	}
+	return TierOperational
+}
+
+// AllFiles returns all discovered file paths.
+func (cf *ConfigFiles) AllFiles() []string {
+	var files []string
+	files = append(files, cf.Config)
+	files = append(files, cf.Plugins...)
+	files = append(files, cf.Pipelines...)
+	if cf.Webhooks != "" {
+		files = append(files, cf.Webhooks)
+	}
+	if cf.Tokens != "" {
+		files = append(files, cf.Tokens)
+	}
+	if cf.Routes != "" {
+		files = append(files, cf.Routes)
+	}
+	files = append(files, cf.Scopes...)
+	return files
+}
+
+// HighSecurityFiles returns only high-security tier file paths.
+func (cf *ConfigFiles) HighSecurityFiles() []string {
+	var files []string
+	if cf.Tokens != "" {
+		files = append(files, cf.Tokens)
+	}
+	if cf.Webhooks != "" {
+		files = append(files, cf.Webhooks)
+	}
+	files = append(files, cf.Scopes...)
+	return files
+}
+
+// OperationalFiles returns only operational tier file paths.
+func (cf *ConfigFiles) OperationalFiles() []string {
+	var files []string
+	files = append(files, cf.Config)
+	files = append(files, cf.Plugins...)
+	files = append(files, cf.Pipelines...)
+	if cf.Routes != "" {
+		files = append(files, cf.Routes)
+	}
+	return files
 }
 
 // Defaults returns a Config with sensible defaults for MVP.
