@@ -585,10 +585,13 @@ func runStart(args []string) int {
 		return 1
 	}
 
-	routerEngine, err := router.LoadFromConfigDir(configDir, registry)
+	routerEngine, err := router.LoadFromConfigDir(configDir, registry, logger)
 	if err != nil {
 		logger.Error("failed to load router pipelines", "config_dir", configDir, "error", err)
 		return 1
+	}
+	if r, ok := routerEngine.(*router.Router); ok {
+		logger.Info("router initialized", "pipelines", r.PipelineCount(), "config_dir", configDir)
 	}
 
 	sched := scheduler.New(cfg, q, logger)

@@ -112,7 +112,7 @@ except Exception as e:
 
 	// 4. Discover and Load
 	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...interface{}) {})
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry)
+	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
 	if err != nil {
 		t.Fatalf("failed to load router: %v", err)
 	}

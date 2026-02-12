@@ -169,8 +169,18 @@ type WebhooksFileConfig struct {
 
 // PipelineEntry defines a named pipeline triggered by an event type.
 type PipelineEntry struct {
-	Name string `yaml:"name"`
-	On   string `yaml:"on"`
+	Name  string      `yaml:"name"`
+	On    string      `yaml:"on"`
+	Steps []StepEntry `yaml:"steps,omitempty"`
+}
+
+// StepEntry is a single step in a pipeline.
+type StepEntry struct {
+	ID    string      `yaml:"id,omitempty"`
+	Uses  string      `yaml:"uses,omitempty"`
+	Call  string      `yaml:"call,omitempty"`
+	Steps []StepEntry `yaml:"steps,omitempty"`
+	Split []StepEntry `yaml:"split,omitempty"`
 }
 
 // PipelinesFileConfig wraps pipeline entries for standalone pipelines/*.yaml.

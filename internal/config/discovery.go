@@ -47,6 +47,11 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk pipelines/: %w", err)
 	}
+	// Also include top-level pipelines.yaml if it exists
+	if path := filepath.Join(absDir, "pipelines.yaml"); fileExists(path) {
+		cf.Pipelines = append(cf.Pipelines, path)
+		sort.Strings(cf.Pipelines)
+	}
 
 	// Walk scopes/*.json
 	cf.Scopes, err = walkJSONDir(filepath.Join(absDir, "scopes"))

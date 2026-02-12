@@ -538,7 +538,7 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 		t.Fatalf("WriteFile(chain.yaml): %v", err)
 	}
 
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry)
+	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
 	if err != nil {
 		t.Fatalf("LoadFromConfigDir: %v", err)
 	}

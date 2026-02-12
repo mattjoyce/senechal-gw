@@ -22,7 +22,7 @@ func TestRouterNextRootTrigger(t *testing.T) {
 		t.Fatalf("CompileSpecs: %v", err)
 	}
 
-	r := New(set)
+	r := New(set, nil)
 	out, err := r.Next(context.Background(), Request{
 		SourceJobID: "job-a",
 		Event: protocol.Event{
@@ -59,7 +59,7 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 		t.Fatalf("CompileSpecs: %v", err)
 	}
 
-	r := New(set)
+	r := New(set, nil)
 	out, err := r.Next(context.Background(), Request{
 		SourceJobID:    "job-b",
 		SourcePipeline: "chain",
