@@ -580,6 +580,8 @@ The `senechal-gw` executable provides a structured command hierarchy for interac
 -   `senechal-gw config get <path>`: Retrieves a specific value using dot-notation (e.g., `config get service.name`).
 -   `senechal-gw config set <path>=<value>`: Modifies a configuration value. Requires `--dry-run` or `--apply`.
 -   `senechal-gw job inspect <id>`: Shows the full lineage, baggage, and artifacts for a job.
+-   `senechal-gw --version` or `senechal-gw version`: Shows semantic version, commit, and build timestamp metadata.
+-   `senechal-gw --version --json`: Emits machine-readable version metadata.
 -   `senechal-gw system status`: Shows the state of discovered plugins, queue depth, and health (planned).
 -   `senechal-gw system reload`: Sends a `SIGHUP` signal to reload configuration without restart (planned).
 -   `senechal-gw plugin list`: Lists all discovered plugins and their current status (planned).

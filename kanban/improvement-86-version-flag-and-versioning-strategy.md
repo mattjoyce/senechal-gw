@@ -1,6 +1,6 @@
 ---
 id: 86
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [improvement, cli, release, versioning]
@@ -35,3 +35,4 @@ When I run `senechal-gw --version`, I want reliable version/build metadata and a
 
 ## Narrative
 - 2026-02-12: Card created to formalize both UX (`--version`) and release/process versioning strategy before broader CLI/operator automation. (by @assistant)
+- 2026-02-13: Implemented root `--version` plus `version --json`, added build metadata fallbacks (ldflags then Go VCS build info), and documented SemVer/release injection process in `docs/VERSIONING.md`. (by @assistant)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,51 +35,160 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const version = "0.1.0-mvp"
+var (
+	version   = "0.1.0-dev"
+	gitCommit = "unknown"
+	buildDate = "unknown"
+)
 
 func main() {
-	if len(os.Args) < 2 {
+	os.Exit(runCLI(os.Args[1:]))
+}
+
+func runCLI(cliArgs []string) int {
+	if len(cliArgs) < 1 {
 		printUsage()
-		os.Exit(1)
+		return 1
 	}
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
+	cmd := cliArgs[0]
+	args := cliArgs[1:]
+
+	if cmd == "--version" {
+		return runVersion(args)
+	}
 
 	switch cmd {
 	// --- NOUNS ---
 	case "system":
-		os.Exit(runSystemNoun(args))
-	        case "config":
-	                os.Exit(runConfigNoun(args))
-	        case "job":
-	                os.Exit(runJobNoun(args))
-	        case "plugin":
-	                os.Exit(runPluginNoun(args))
-	        case "trigger":
-	                printTriggerHelp()
-	                os.Exit(0)
-	
-	        // --- ROOT ALIASES (Backward Compatibility) ---
-	
+		return runSystemNoun(args)
+	case "config":
+		return runConfigNoun(args)
+	case "job":
+		return runJobNoun(args)
+	case "plugin":
+		return runPluginNoun(args)
+	case "trigger":
+		printTriggerHelp()
+		return 0
+
+	// --- ROOT ALIASES (Backward Compatibility) ---
 	case "start":
-		os.Exit(runStart(args))
+		return runStart(args)
 	case "inspect":
-		os.Exit(runInspect(args))
+		return runInspect(args)
 	case "doctor": // Alias for backward compat with Claude's branch
-		os.Exit(runConfigCheck(args))
+		return runConfigCheck(args)
 	case "version":
-		fmt.Printf("senechal-gw version %s\n", version)
-		os.Exit(0)
+		return runVersion(args)
 	case "help", "--help", "-h":
 		printUsage()
-		os.Exit(0)
+		return 0
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
-		os.Exit(1)
+		return 1
 	}
+}
+
+type versionInfo struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildTime string `json:"build_time"`
+}
+
+func runVersion(args []string) int {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "Output version metadata as JSON")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintln(os.Stderr, "Usage: senechal-gw version [--json]")
+		return 1
+	}
+
+	info := currentVersionInfo()
+
+	if *jsonOut {
+		data, err := json.MarshalIndent(info, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to render version JSON: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	fmt.Printf("senechal-gw %s\n", info.Version)
+	fmt.Printf("commit: %s\n", info.Commit)
+	fmt.Printf("built_at: %s\n", info.BuildTime)
+	return 0
+}
+
+func currentVersionInfo() versionInfo {
+	info := versionInfo{
+		Version:   strings.TrimSpace(version),
+		Commit:    "unknown",
+		BuildTime: "unknown",
+	}
+
+	if info.Version == "" {
+		info.Version = "0.0.0-dev"
+	}
+
+	resolvedCommit := strings.TrimSpace(gitCommit)
+	if resolvedCommit == "" || resolvedCommit == "unknown" {
+		resolvedCommit = strings.TrimSpace(readBuildSetting("vcs.revision"))
+	}
+	if resolvedCommit != "" {
+		info.Commit = shortenCommit(resolvedCommit)
+	}
+
+	resolvedBuildTime := strings.TrimSpace(buildDate)
+	if resolvedBuildTime == "" || resolvedBuildTime == "unknown" {
+		resolvedBuildTime = strings.TrimSpace(readBuildSetting("vcs.time"))
+	}
+	if normalizedBuildTime, ok := normalizeBuildTimeUTC(resolvedBuildTime); ok {
+		info.BuildTime = normalizedBuildTime
+	}
+
+	return info
+}
+
+func shortenCommit(commit string) string {
+	if len(commit) <= 12 {
+		return commit
+	}
+	return commit[:12]
+}
+
+func normalizeBuildTimeUTC(raw string) (string, bool) {
+	if raw == "" || raw == "unknown" {
+		return "", false
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return "", false
+	}
+
+	return t.UTC().Format(time.RFC3339), true
+}
+
+func readBuildSetting(key string) string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == key {
+			return setting.Value
+		}
+	}
+	return ""
 }
 
 func printUsage() {
@@ -112,6 +222,7 @@ Manual Triggering:
   trigger           Show instructions for triggering plugins via API
 
 General:
+  --version         Show version information
   version           Show version information
   help              Show this help message
 
@@ -120,7 +231,7 @@ Use 'senechal-gw <noun> help' for resource-specific flags.
 }
 
 func printTriggerHelp() {
-        fmt.Print(`Manual Plugin Triggering (via API)
+	fmt.Print(`Manual Plugin Triggering (via API)
 
 Plugins are triggered via the REST API. This allows for programmatic control 
 from LLMs, scripts, and external services.
