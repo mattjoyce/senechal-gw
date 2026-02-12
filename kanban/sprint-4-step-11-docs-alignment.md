@@ -18,7 +18,9 @@ Update the core documentation to reflect the current implementation of Protocol 
 - `USER_GUIDE.md`: Add a section on "Operational Integrity" using `config check` and `config lock`.
 - `USER_GUIDE.md`: Document that `POST /trigger/{plugin}/handle` payloads are automatically wrapped in an `api.trigger` event (Card #68).
 - `USER_GUIDE.md`: Document the new `config show`, `config get`, and `config set` affordances for surgical system administration (Cards #69, #70).
+- `USER_GUIDE.md`: Document flexible scheduler intervals including Go durations plus `d`/`w` suffixes (`7m`, `13h`, `3d`, `2w`) and aliases (`hourly`, `daily`, `weekly`, `monthly`) from Card #82.
 - Ensure consistency between `PIPELINES.md` and the main `USER_GUIDE.md`.
 
 ## Narrative
 - 2026-02-12: Created to align developer-facing docs with the Sprint 4 implementation. (by @gemini)
+- 2026-02-13: Added docs task to capture flexible scheduler interval support introduced in card #82 so user-facing docs reflect new schedule options. (by @assistant)
