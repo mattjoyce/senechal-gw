@@ -47,8 +47,8 @@ func TestGetPath(t *testing.T) {
 			want: "5m",
 		},
 		{
-			name: "invalid path",
-			path: "service.missing",
+			name:    "invalid path",
+			path:    "service.missing",
 			wantErr: true,
 		},
 		{
@@ -76,7 +76,7 @@ func TestGetPath(t *testing.T) {
 func TestGetEntity(t *testing.T) {
 	cfg := &Config{
 		Plugins: map[string]PluginConf{
-			"echo": {Enabled: true},
+			"echo":   {Enabled: true},
 			"fabric": {Enabled: false},
 		},
 	}
@@ -139,4 +139,34 @@ plugins:
 		}
 		assert.False(t, reloaded.Plugins["echo"].Enabled)
 	})
+}
+
+func TestSetPathRollbackOnValidationFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	initialYAML := `
+service:
+  name: test-gw
+plugins:
+  echo:
+    enabled: false
+`
+	err := os.WriteFile(configPath, []byte(initialYAML), 0644)
+	assert.NoError(t, err)
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	err = cfg.SetPath("plugin:echo.enabled", "true", true)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "validation failed")
+
+	// File should remain valid and unchanged for this field.
+	reloaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load reloaded failed: %v", err)
+	}
+	assert.False(t, reloaded.Plugins["echo"].Enabled)
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -173,21 +174,10 @@ func (c *Config) SetPath(path, value string, persist bool) error {
 		}
 	}
 
-	// 2. Identify which file owns the root of this path
-	// For simplicity, we try the root config first
-	targetFile := ""
-	for f := range c.SourceFiles {
-		if strings.HasSuffix(f, "config.yaml") {
-			targetFile = f
-			break
-		}
-	}
+	// 2. Identify which file owns the root of this path.
+	targetFile := c.resolveTargetFile()
 	if targetFile == "" {
-		// Fallback to first file if no config.yaml found
-		for f := range c.SourceFiles {
-			targetFile = f
-			break
-		}
+		return fmt.Errorf("no valid configuration source found")
 	}
 
 	rootNode := c.SourceFiles[targetFile]
@@ -208,7 +198,12 @@ func (c *Config) SetPath(path, value string, persist bool) error {
 		return nil
 	}
 
-	return c.saveFile(targetFile, rootNode)
+	candidate, err := yaml.Marshal(rootNode)
+	if err != nil {
+		return err
+	}
+
+	return c.persistWithValidation(targetFile, candidate)
 }
 
 func guessTag(v string) string {
@@ -238,4 +233,52 @@ func (c *Config) saveFile(path string, node *yaml.Node) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+func (c *Config) resolveTargetFile() string {
+	for f := range c.SourceFiles {
+		if strings.HasSuffix(f, "config.yaml") {
+			return f
+		}
+	}
+	for f := range c.SourceFiles {
+		return f
+	}
+	return ""
+}
+
+func (c *Config) resolveRootConfigPath(fallback string) string {
+	for f := range c.SourceFiles {
+		if filepath.Base(f) == "config.yaml" {
+			return f
+		}
+	}
+	return fallback
+}
+
+func (c *Config) persistWithValidation(targetFile string, candidate []byte) error {
+	original, err := os.ReadFile(targetFile)
+	if err != nil {
+		return fmt.Errorf("failed to read original config file: %w", err)
+	}
+
+	mode := os.FileMode(0644)
+	if info, statErr := os.Stat(targetFile); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+
+	if err := os.WriteFile(targetFile, candidate, mode); err != nil {
+		return fmt.Errorf("failed to persist config change: %w", err)
+	}
+
+	rootPath := c.resolveRootConfigPath(targetFile)
+	if _, err := Load(rootPath); err != nil {
+		restoreErr := os.WriteFile(targetFile, original, mode)
+		if restoreErr != nil {
+			return fmt.Errorf("validation failed (%v) and rollback failed (%v)", err, restoreErr)
+		}
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	return nil
 }
