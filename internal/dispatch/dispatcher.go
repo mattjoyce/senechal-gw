@@ -66,64 +66,34 @@ func New(
 }
 
 // Start runs the main dispatch loop. It dequeues jobs serially and executes them one at a time.
-
 // This is a blocking call that runs until ctx is cancelled.
-
 func (d *Dispatcher) Start(ctx context.Context) error {
+	d.logger.Info("dispatch loop started")
+	defer d.logger.Info("dispatch loop stopped")
 
-        d.logger.Info("dispatch loop started")
+	ticker := time.NewTicker(1 * time.Second) // Poll queue every second
+	defer ticker.Stop()
 
-        defer d.logger.Info("dispatch loop stopped")
-
-
-
-        ticker := time.NewTicker(1 * time.Second) // Poll queue every second
-
-        defer ticker.Stop()
-
-
-
-        for {
-
-                select {
-
-                case <-ctx.Done():
-
-                        return ctx.Err()
-
-                case <-ticker.C:
-
-                        // Attempt to dequeue and execute one job
-
-                        if err := d.processNextJob(ctx); err != nil {
-
-                                d.logger.Error("failed to process job", "error", err)
-
-                                // Continue processing - don't crash the loop on individual job errors
-
-                        }
-
-                }
-
-        }
-
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			// Attempt to dequeue and execute one job
+			if err := d.processNextJob(ctx); err != nil {
+				d.logger.Error("failed to process job", "error", err)
+				// Continue processing - don't crash the loop on individual job errors
+			}
+		}
+	}
 }
-
-
 
 // ExecuteJob runs a single job by spawning the plugin subprocess.
-
 func (d *Dispatcher) ExecuteJob(ctx context.Context, job *queue.Job) {
-
-        d.executeJob(ctx, job)
-
+	d.executeJob(ctx, job)
 }
 
-
-
 // processNextJob dequeues the next job and executes it.
-
-
 func (d *Dispatcher) processNextJob(ctx context.Context) error {
 	job, err := d.queue.Dequeue(ctx)
 	if err != nil {
@@ -143,14 +113,13 @@ func (d *Dispatcher) processNextJob(ctx context.Context) error {
 func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	jobLogger := d.logger.With("job_id", job.ID, "plugin", job.Plugin, "command", job.Command)
 	jobLogger.Info("job started", "attempt", job.Attempt)
-	startTime := time.Now()
 
 	// Get plugin from registry
 	plug, ok := d.registry.Get(job.Plugin)
 	if !ok {
 		errMsg := fmt.Sprintf("plugin %q not found in registry", job.Plugin)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -158,7 +127,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if !plug.SupportsCommand(job.Command) {
 		errMsg := fmt.Sprintf("plugin %q does not support command %q", job.Plugin, job.Command)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -173,7 +142,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get plugin state: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -182,7 +151,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err := json.Unmarshal(pluginState, &stateMap); err != nil {
 		errMsg := fmt.Sprintf("failed to unmarshal plugin state: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -194,7 +163,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to prepare workspace: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -202,7 +171,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to load event context: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -224,7 +193,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := json.Unmarshal(job.Payload, &event); err != nil {
 			errMsg := fmt.Sprintf("failed to unmarshal event payload: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, nil, &errMsg, nil)
+			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 			return
 		}
 
@@ -251,14 +220,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			errMsg := fmt.Sprintf("plugin execution timed out after %v", timeout)
 			jobLogger.Warn(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusTimedOut, nil, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusTimedOut, nil, &errMsg, &stderr)
 			return
 		}
 
 		// Handle other spawn errors
 		errMsg := fmt.Sprintf("plugin spawn failed: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 		return
 	}
 
@@ -266,7 +235,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp == nil {
 		errMsg := "plugin returned nil response"
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 		return
 	}
 
@@ -279,7 +248,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp.Status == "error" {
 		jobLogger.Warn("plugin returned error", "error", resp.Error)
 		errMsg := resp.Error
-		d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 		// TODO: Handle retry logic based on resp.ShouldRetry() - not in MVP
 		return
 	}
@@ -290,14 +259,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to marshal state updates: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 
 		if _, err := d.state.ShallowMerge(ctx, job.Plugin, updatesJSON); err != nil {
 			errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 		jobLogger.Debug("applied state updates", "updates", resp.StateUpdates)
@@ -308,14 +277,13 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := d.routeEvents(ctx, job, resp.Events, jobLogger); err != nil {
 			errMsg := fmt.Sprintf("failed to route events: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, job.ID, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 	}
 
 	// Mark job as succeeded
-	jobLogger.Info("job completed", "status", "succeeded", "duration", time.Since(startTime).String())
-	d.completeJob(ctx, job.ID, queue.StatusSucceeded, rawResp, nil, &stderr)
+	d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -345,7 +313,7 @@ func (d *Dispatcher) spawnPlugin(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	logger.Debug("spawning plugin", "entrypoint", entrypoint, "timeout", timeout)
+	logger.Info("plugin executing", "entrypoint", entrypoint, "timeout", timeout)
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -637,8 +605,14 @@ func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string)
 	}
 }
 
-// completeJob marks a job as complete with the given status.
-func (d *Dispatcher) completeJob(ctx context.Context, jobID string, status queue.Status, result json.RawMessage, lastError, stderr *string) {
+// completeJob marks a job as complete with the given status and logs the outcome.
+func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID string, startTime *time.Time, status queue.Status, result json.RawMessage, lastError, stderr *string) {
+	duration := time.Duration(0)
+	if startTime != nil {
+		duration = time.Since(*startTime)
+	}
+	logger.Info("job completed", "status", string(status), "duration", duration.String())
+
 	if err := d.queue.CompleteWithResult(ctx, jobID, status, result, lastError, stderr); err != nil {
 		d.logger.Error("failed to complete job", "job_id", jobID, "error", err)
 	}
