@@ -426,6 +426,11 @@ func applyConfigDefaults(cfg *Config) *Config {
 		cfg.Service.JobLogRetention = defaults.Service.JobLogRetention
 	}
 
+	// Handle database alias
+	if cfg.State.Path == "" && cfg.Database.Path != "" {
+		cfg.State.Path = cfg.Database.Path
+	}
+
 	// Apply state defaults if not set
 	if cfg.State.Path == "" {
 		cfg.State.Path = defaults.State.Path

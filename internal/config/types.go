@@ -11,6 +11,7 @@ type Config struct {
 	Include     []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
 	Service     ServiceConfig         `yaml:"service"`
 	State       StateConfig           `yaml:"state"`
+	Database    StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
 	API         APIConfig             `yaml:"api,omitempty"`
 	PluginsDir  string                `yaml:"plugins_dir"`
 	Plugins     map[string]PluginConf `yaml:"plugins"`
