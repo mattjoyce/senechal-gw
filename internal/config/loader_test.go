@@ -156,6 +156,22 @@ plugins:
 			wantErr: true,
 		},
 		{
+			name: "custom schedule interval",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  test:
+    enabled: true
+    schedule:
+      every: 7m
+`,
+			wantErr: false,
+		},
+		{
 			name: "disabled plugin skips validation",
 			yaml: `
 service:
@@ -357,15 +373,21 @@ func TestParseInterval(t *testing.T) {
 		{"5 minutes", "5m", 5 * time.Minute, false},
 		{"15 minutes", "15m", 15 * time.Minute, false},
 		{"30 minutes", "30m", 30 * time.Minute, false},
+		{"7 minutes", "7m", 7 * time.Minute, false},
 		{"hourly", "hourly", 1 * time.Hour, false},
+		{"13 hours", "13h", 13 * time.Hour, false},
 		{"2 hours", "2h", 2 * time.Hour, false},
 		{"6 hours", "6h", 6 * time.Hour, false},
-		{"daily", "daily", 0, false},     // Special case
-		{"weekly", "weekly", 0, false},   // Special case
-		{"monthly", "monthly", 0, false}, // Special case
+		{"3 days", "3d", 3 * 24 * time.Hour, false},
+		{"2 weeks", "2w", 14 * 24 * time.Hour, false},
+		{"daily", "daily", 24 * time.Hour, false},
+		{"weekly", "weekly", 7 * 24 * time.Hour, false},
+		{"monthly", "monthly", 30 * 24 * time.Hour, false},
 		{"invalid", "invalid", 0, true},
 		{"negative", "-5m", 0, true},
 		{"zero", "0s", 0, true},
+		{"invalid days", "xd", 0, true},
+		{"invalid weeks", "1.2.3w", 0, true},
 	}
 
 	for _, tt := range tests {

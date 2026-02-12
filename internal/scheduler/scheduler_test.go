@@ -82,9 +82,13 @@ func TestParseScheduleEvery(t *testing.T) {
 		{"5m", "5m", 5 * time.Minute, false},
 		{"15m", "15m", 15 * time.Minute, false},
 		{"30m", "30m", 30 * time.Minute, false},
+		{"7m", "7m", 7 * time.Minute, false},
 		{"hourly", "hourly", 1 * time.Hour, false},
 		{"2h", "2h", 2 * time.Hour, false},
+		{"13h", "13h", 13 * time.Hour, false},
 		{"6h", "6h", 6 * time.Hour, false},
+		{"3d", "3d", 3 * 24 * time.Hour, false},
+		{"2w", "2w", 14 * 24 * time.Hour, false},
 		{"daily", "daily", 24 * time.Hour, false},
 		{"weekly", "weekly", 7 * 24 * time.Hour, false},
 		{"monthly", "monthly", 30 * 24 * time.Hour, false}, // Approximation
