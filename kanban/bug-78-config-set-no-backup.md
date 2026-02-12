@@ -1,11 +1,11 @@
 ---
 id: 78
-status: todo
+status: cancelled
 priority: High
 tags: [bug, cli, config, safety, data-loss]
 ---
 
-# BUG: config set doesn't create backup before modifying
+# CANCELLED: config set doesn't create backup before modifying
 
 ## Description
 
@@ -110,3 +110,7 @@ After fix, verify:
 ## Narrative
 
 - 2026-02-12: Discovered during comprehensive CLI testing. The `config set --apply` command successfully modifies config files but doesn't create safety backups first. Tested by setting plugins.echo.enabled=true and checking for config.yaml.bak - no backup file created. This violates the card #38 specification requirement for "atomic file operations with backups". Combined with bug #79 (no validation), this creates a data loss risk when invalid values corrupt the config. (by @test-admin)
+
+## Cancellation Note
+
+- 2026-02-12: **CANCELLED** - No design spec requires backups for current `config set` implementation. Card #38 (which mentions backups) is in BACKLOG and describes a different, more extensive CLI system. Current `config set` is simpler and doesn't need to follow card #38 requirements. Bug #79 (validation) remains valid as config corruption is a real issue. (by @test-admin)
