@@ -1,6 +1,6 @@
 ---
 id: 83
-status: todo
+status: done
 priority: High
 tags: [bug, logging, observability, dispatch, testing]
 ---

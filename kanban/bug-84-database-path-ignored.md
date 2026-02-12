@@ -1,6 +1,6 @@
 ---
 id: 84
-status: todo
+status: done
 priority: Medium
 tags: [bug, config, database, paths]
 ---
