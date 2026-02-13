@@ -1,8 +1,9 @@
 ---
 type: improvement
 id: 90
-status: todo
+status: done
 created: 2026-02-13
+completed: 2026-02-13
 ---
 
 # Rename to Protocol 2
