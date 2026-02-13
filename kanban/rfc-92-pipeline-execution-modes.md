@@ -79,8 +79,6 @@ pipelines:
 | `timeout` | duration | `30s` | Max wait time for synchronous pipelines |
 | `steps[].id` | string | (optional) | Unique identifier for the step |
 | `steps[].uses` | string | (required) | Plugin command to execute |
-| `steps[].async` | boolean | `false` | If true, step runs fire-and-forget within a sync pipeline |
-| `steps[].parallel` | []Step | (optional) | Alias for `split`, runs steps in parallel |
 
 ## How It Works
 
@@ -138,18 +136,21 @@ This preserves event-driven architecture while enabling sync API responses.
 
 ## Implementation Plan
 
-### Phase 0: Revised Technical Requirements (NEW)
+### Phase 0: Technical Requirements & Corrective Actions
 
-1.  **Schema Extensions (`internal/config/types.go`):**
-    *   **Pipeline Level:** Add `ExecutionMode` (`async`|`synchronous`) and `Timeout`.
-    *   **Step Level:** Add `ID`, `Parallel` (alias for `Split`), and `Async` (fire-and-forget flag).
-2.  **The "Guarded Bridge" (`internal/dispatch/dispatcher.go`):**
-    *   Implement `WaitForJobTree` using a channel-based listener (non-blocking for the engine).
-    *   Aggregator logic to collect `stdout` and `artifacts` from the entire `job_queue` subtree.
-3.  **API Handler Refactor (`cmd/senechal-gw/api/handlers.go`):**
-    *   Blocking logic for `synchronous` pipelines with a global Semaphore guard.
-4.  **DSL-to-Event Routing (`internal/router/engine.go`):**
-    *   Automatically chain `Step N` completion events to `Step N+1` triggers.
+1.  **Trigger-to-Pipeline Mapping:**
+    *   Update `internal/api/handlers.go` to lookup pipelines using the `{plugin}.{command}` pattern as the trigger event.
+    *   Add `GetPipelineByTrigger(event string)` to the `router.Engine` interface.
+2.  **API Timeout Calibration:**
+    *   Modify `internal/api/server.go` to support extended `WriteTimeout` (up to 5m) for synchronous requests to prevent premature connection drops.
+3.  **Terminal Status Handling:**
+    *   Update `checkJobTreeComplete` logic in `internal/dispatch/dispatcher.go` to include all terminal states: `succeeded`, `failed`, `timed_out`, `dead`, and `cancelled`.
+4.  **Structured Result Aggregation:**
+    *   The `SyncResponse` will return an array of `protocol.Result` objects for all jobs in the tree, ensuring consistent data structures for clients.
+5.  **Schema Extensions (`internal/router/dsl/types.go`):**
+    *   Add `ExecutionMode` (`async`|`synchronous`) and `Timeout` to the runtime pipeline types.
+6.  **Guarded Bridge Implementation:**
+    *   Add a non-blocking completion listener to `internal/dispatch/dispatcher.go` that triggers when the last job in a `ContextID` tree reaches a terminal state.
 
 ### Phase 1: Config Schema (Week 1, Day 1-2)
 
@@ -306,15 +307,15 @@ func (d *Dispatcher) checkJobTreeComplete(rootJobID string) bool {
 
 **Files to modify**:
 
-#### `cmd/senechal-gw/api/handlers.go`
+#### `internal/api/handlers.go`
 
 ```go
-func (h *Handler) TriggerPlugin(w http.ResponseWriter, r *http.Request) {
-    // Parse request, queue job (existing logic)
-    jobID := h.dispatcher.QueueJob(pluginName, commandName, payload)
+func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
+    // ... existing validation and enqueue logic ...
 
-    // Lookup pipeline to check execution mode
-    pipeline := h.router.GetPipelineForTrigger(pluginName, commandName)
+    // Lookup pipeline by trigger event (e.g., "fabric.handle")
+    triggerEvent := fmt.Sprintf("%s.%s", pluginName, commandName)
+    pipeline := s.router.GetPipelineByTrigger(triggerEvent)
 
     // Default to async if no pipeline config
     if pipeline == nil || pipeline.ExecutionMode == config.ExecutionModeAsync {
@@ -377,7 +378,7 @@ func (h *Handler) TriggerPlugin(w http.ResponseWriter, r *http.Request) {
 
 **Files to modify**:
 
-#### `cmd/senechal-gw/api/types.go`
+#### `internal/api/types.go`
 
 ```go
 // AsyncResponse for async pipelines (existing, unchanged)
@@ -526,12 +527,13 @@ http.ListenAndServe(":8081", syncHandler)   // Sync endpoints
 
 ### Core Implementation
 
-- [ ] `internal/config/types.go` - Add ExecutionMode, Timeout fields
+- [ ] `internal/config/types.go` - Add ExecutionMode, Timeout fields for YAML
+- [ ] `internal/router/dsl/types.go` - Add ExecutionMode, Timeout fields for runtime
 - [ ] `internal/config/loader.go` - Parse execution_mode, timeout
 - [ ] `internal/dispatch/dispatcher.go` - Add WaitForJobTree, completion notifications
-- [ ] `cmd/senechal-gw/api/handlers.go` - Check execution mode, wait for sync pipelines
-- [ ] `cmd/senechal-gw/api/types.go` - Add SyncResponse, TimeoutResponse types
-- [ ] `cmd/senechal-gw/api/server.go` - Add semaphore for rate limiting
+- [ ] `internal/api/handlers.go` - Check execution mode, wait for sync pipelines
+- [ ] `internal/api/types.go` - Add SyncResponse, TimeoutResponse types
+- [ ] `internal/api/server.go` - Add semaphore for rate limiting, adjust WriteTimeout
 
 ### Configuration
 
@@ -653,3 +655,4 @@ pipelines:
 - 2026-02-13: RFC-92 updated with detailed implementation, async default, explicit opt-in approach. Addresses all critique concerns while enabling interactive use cases.
 - 2026-02-13: Technical Critique: RFC-92 is the superior approach because it preserves the event-driven core. Tying the "wait" to the API boundary rather than the internal dispatcher loop prevents architectural regression. Recommendation: 1) Ensure Phase 5 (Semaphores) is prioritized to prevent HTTP pool exhaustion. 2) Define a strict aggregation schema for the `SyncResponse` to handle `split` and parallel branch results consistently. 3) Treat sync mode as a "guarded bridge" between synchronous clients and the async engine. (by @assistant)
 - 2026-02-13: Notation & Technical Requirements Update: Defined "GitHub-like" notation for pipelines (e.g., YouTube summary). Refined implementation plan to include "Guarded Bridge" dispatcher logic and "DSL-to-Event" routing automation. (by @assistant)
+- 2026-02-13: Technical Finalization: Corrected implementation targets to match `internal/api` and `internal/router`. Addressed critical gaps in trigger mapping (`plugin.command`), server timeouts, and job terminal states. Narrowed scope by deferring step-level DSL keywords (`async/parallel`) to focus on the core synchronous API response goal. Ready for implementation. (by @assistant)
