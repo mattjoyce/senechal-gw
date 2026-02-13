@@ -26,7 +26,7 @@ func TestEchoPlugin_DiscoveryAndProtocolOK(t *testing.T) {
 	if !ok {
 		t.Fatalf("echo plugin not discovered")
 	}
-	if p.Protocol != 1 {
+	if p.Protocol != 2 {
 		t.Fatalf("unexpected protocol: %d", p.Protocol)
 	}
 	if !p.SupportsCommand("poll") {
@@ -86,7 +86,7 @@ func runEcho(ctx context.Context, root string, cfg map[string]any) (*protocol.Re
 	script := filepath.Join(root, "plugins", "echo", "run.sh")
 
 	req := &protocol.Request{
-		Protocol:   1,
+		Protocol:   2,
 		JobID:      "test-job",
 		Command:    "poll",
 		Config:     cfg,

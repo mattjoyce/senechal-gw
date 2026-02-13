@@ -17,7 +17,7 @@ func TestEncodeRequest(t *testing.T) {
 		{
 			name: "valid poll request",
 			req: &Request{
-				Protocol:   1,
+				Protocol:   2,
 				JobID:      "test-job-123",
 				Command:    "poll",
 				Config:     map[string]any{"key": "value"},
@@ -26,7 +26,7 @@ func TestEncodeRequest(t *testing.T) {
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, output string) {
-				if !strings.Contains(output, `"protocol":1`) {
+				if !strings.Contains(output, `"protocol":2`) {
 					t.Error("missing protocol field")
 				}
 				if !strings.Contains(output, `"job_id":"test-job-123"`) {
@@ -40,7 +40,7 @@ func TestEncodeRequest(t *testing.T) {
 		{
 			name: "unsupported protocol version",
 			req: &Request{
-				Protocol: 2,
+				Protocol: 3,
 				JobID:    "test",
 				Command:  "poll",
 			},
@@ -49,7 +49,7 @@ func TestEncodeRequest(t *testing.T) {
 		{
 			name: "handle request with event",
 			req: &Request{
-				Protocol: 1,
+				Protocol: 2,
 				JobID:    "test-job-456",
 				Command:  "handle",
 				Config:   map[string]any{},

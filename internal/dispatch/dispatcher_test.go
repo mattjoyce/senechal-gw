@@ -73,7 +73,7 @@ func createTestPlugin(t *testing.T, pluginsDir, name, script string) *plugin.Plu
 	// Write manifest
 	manifest := fmt.Sprintf(`name: %s
 version: 1.0.0
-protocol: 1
+protocol: 2
 entrypoint: run.sh
 commands: [poll, handle, health]
 `, name)

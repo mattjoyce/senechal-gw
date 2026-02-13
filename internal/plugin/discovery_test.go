@@ -23,7 +23,7 @@ func TestDiscover(t *testing.T) {
 
 				manifest := `name: test-plugin
 version: 1.0.0
-protocol: 1
+protocol: 2
 entrypoint: run.sh
 commands: [poll, health]
 `
@@ -42,7 +42,7 @@ commands: [poll, health]
 				if !ok {
 					t.Fatal("test-plugin not found")
 				}
-				if plugin.Protocol != 1 {
+				if plugin.Protocol != 2 {
 					t.Error("protocol version mismatch")
 				}
 				if !plugin.SupportsCommand("poll") {
@@ -61,7 +61,7 @@ commands: [poll, health]
 
 					manifest := `name: ` + name + `
 version: 1.0.0
-protocol: 1
+protocol: 2
 entrypoint: run.sh
 commands: [poll]
 `
@@ -113,7 +113,7 @@ commands: [poll]
 
 				manifest := `name: non-exec
 version: 1.0.0
-protocol: 1
+protocol: 2
 entrypoint: run.sh
 commands: [poll]
 `
@@ -172,7 +172,7 @@ func TestValidateManifest(t *testing.T) {
 			name: "valid manifest",
 			manifest: &Manifest{
 				Name:       "test",
-				Protocol:   1,
+				Protocol:   2,
 				Entrypoint: "run.sh",
 				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
@@ -181,7 +181,7 @@ func TestValidateManifest(t *testing.T) {
 		{
 			name: "missing name",
 			manifest: &Manifest{
-				Protocol:   1,
+				Protocol:   2,
 				Entrypoint: "run.sh",
 				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
@@ -209,7 +209,7 @@ func TestValidateManifest(t *testing.T) {
 			name: "missing commands",
 			manifest: &Manifest{
 				Name:       "test",
-				Protocol:   1,
+				Protocol:   2,
 				Entrypoint: "run.sh",
 			},
 			wantErr: true,
@@ -218,7 +218,7 @@ func TestValidateManifest(t *testing.T) {
 			name: "path traversal in entrypoint",
 			manifest: &Manifest{
 				Name:       "test",
-				Protocol:   1,
+				Protocol:   2,
 				Entrypoint: "../evil/run.sh",
 				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
@@ -228,7 +228,7 @@ func TestValidateManifest(t *testing.T) {
 			name: "invalid command",
 			manifest: &Manifest{
 				Name:       "test",
-				Protocol:   1,
+				Protocol:   2,
 				Entrypoint: "run.sh",
 				Commands:   Commands{{Name: "invalid_command", Type: CommandTypeWrite}},
 			},
@@ -363,7 +363,7 @@ func TestDiscover_TypedCommandMetadata(t *testing.T) {
 
 	manifest := `name: test-plugin
 version: 1.0.0
-protocol: 1
+protocol: 2
 entrypoint: run.sh
 commands:
   - name: poll

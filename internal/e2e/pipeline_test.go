@@ -192,7 +192,7 @@ except Exception as e:
 func createPlugin(t *testing.T, dir, name, script string) {
 	pDir := filepath.Join(dir, name)
 	os.MkdirAll(pDir, 0755)
-	manifest := fmt.Sprintf("name: %s\nversion: 1.0.0\nprotocol: 1\nentrypoint: ./run.sh\ncommands: [poll, handle]", name)
+	manifest := fmt.Sprintf("name: %s\nversion: 1.0.0\nprotocol: 2\nentrypoint: ./run.sh\ncommands: [poll, handle]", name)
 	os.WriteFile(filepath.Join(pDir, "manifest.yaml"), []byte(manifest), 0644)
 	os.WriteFile(filepath.Join(pDir, "run.sh"), []byte(script), 0755)
 }

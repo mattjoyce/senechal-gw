@@ -386,6 +386,82 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	return nil
 }
 
+// GetJobTree retrieves all jobs in a tree starting from rootJobID (using recursive CTE).
+func (q *Queue) GetJobTree(ctx context.Context, rootJobID string) ([]*JobResult, error) {
+	rows, err := q.db.QueryContext(ctx, `
+WITH RECURSIVE job_tree AS (
+    SELECT id, status, plugin, command, last_error, started_at, completed_at, attempt
+    FROM job_queue WHERE id = ?
+    UNION ALL
+    SELECT jq.id, jq.status, jq.plugin, jq.command, jq.last_error, jq.started_at, jq.completed_at, jq.attempt
+    FROM job_queue jq
+    JOIN job_tree jt ON jq.parent_job_id = jt.id
+)
+SELECT
+  t.id, t.status, t.plugin, t.command, t.last_error, t.started_at, t.completed_at,
+  l.result
+FROM job_tree t
+LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt);
+`, rootJobID)
+	if err != nil {
+		return nil, fmt.Errorf("get job tree: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*JobResult
+	for rows.Next() {
+		var (
+			id          string
+			statusS     string
+			plugin      string
+			command     string
+			lastErrS    sql.NullString
+			startedAtS  sql.NullString
+			completedAt sql.NullString
+			resultS     sql.NullString
+		)
+		if err := rows.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS); err != nil {
+			return nil, fmt.Errorf("scan job tree row: %w", err)
+		}
+
+		var lastErr *string
+		if lastErrS.Valid {
+			lastErr = &lastErrS.String
+		}
+
+		var startedAt *time.Time
+		if startedAtS.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, startedAtS.String); err == nil {
+				startedAt = &t
+			}
+		}
+
+		var completedAtT *time.Time
+		if completedAt.Valid {
+			if t, err := time.Parse(time.RFC3339Nano, completedAt.String); err == nil {
+				completedAtT = &t
+			}
+		}
+
+		var result json.RawMessage
+		if resultS.Valid {
+			result = json.RawMessage(resultS.String)
+		}
+
+		results = append(results, &JobResult{
+			JobID:       id,
+			Status:      Status(statusS),
+			Plugin:      plugin,
+			Command:     command,
+			Result:      result,
+			LastError:   lastErr,
+			StartedAt:   startedAt,
+			CompletedAt: completedAtT,
+		})
+	}
+	return results, nil
+}
+
 // GetJobByID retrieves a job by its ID with result from job_log
 func (q *Queue) GetJobByID(ctx context.Context, jobID string) (*JobResult, error) {
 	if jobID == "" {

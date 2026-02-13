@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -41,6 +42,11 @@ type Dispatcher struct {
 	registry  *plugin.Registry
 	cfg       *config.Config
 	logger    *slog.Logger
+
+	// completions tracks jobs being waited on for synchronous execution.
+	// Map key is root job ID. Value is a channel that is closed when the tree is complete.
+	completions map[string]chan struct{}
+	mu          sync.RWMutex
 }
 
 // New creates a new Dispatcher.
@@ -54,14 +60,15 @@ func New(
 	cfg *config.Config,
 ) *Dispatcher {
 	return &Dispatcher{
-		queue:     q,
-		state:     st,
-		contexts:  contexts,
-		workspace: ws,
-		router:    rt,
-		registry:  reg,
-		cfg:       cfg,
-		logger:    log.WithComponent("dispatch"),
+		queue:       q,
+		state:       st,
+		contexts:    contexts,
+		workspace:   ws,
+		router:      rt,
+		registry:    reg,
+		cfg:         cfg,
+		logger:      log.WithComponent("dispatch"),
+		completions: make(map[string]chan struct{}),
 	}
 }
 
@@ -617,6 +624,96 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 	if err := d.queue.CompleteWithResult(ctx, jobID, status, result, lastError, stderr); err != nil {
 		d.logger.Error("failed to complete job", "job_id", jobID, "error", err)
 	}
+
+	// Notify any synchronous waiters
+	d.notifyCompletion(jobID)
+}
+
+// WaitForJobTree blocks until the root job and all its descendants are complete or timeout.
+func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
+	// Create completion channel
+	ch := make(chan struct{}, 1)
+
+	d.mu.Lock()
+	d.completions[rootJobID] = ch
+	d.mu.Unlock()
+
+	defer func() {
+		d.mu.Lock()
+		delete(d.completions, rootJobID)
+		d.mu.Unlock()
+	}()
+
+	// Initial check in case it's already done
+	complete, err := d.checkJobTreeComplete(ctx, rootJobID)
+	if err != nil {
+		return nil, fmt.Errorf("initial tree check: %w", err)
+	}
+	if complete {
+		return d.queue.GetJobTree(ctx, rootJobID)
+	}
+
+	// Set up timeout
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return nil, fmt.Errorf("timeout waiting for job tree completion")
+		case <-ch:
+			// Something in the tree finished, check if the whole tree is done
+			complete, err := d.checkJobTreeComplete(ctx, rootJobID)
+			if err != nil {
+				return nil, fmt.Errorf("tree completion check: %w", err)
+			}
+			if complete {
+				return d.queue.GetJobTree(ctx, rootJobID)
+			}
+		}
+	}
+}
+
+// notifyCompletion signals any waiters that a job has finished.
+func (d *Dispatcher) notifyCompletion(jobID string) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	// Currently we notify all waiters. Optimization: only notify waiters interested in this tree.
+	// To do that efficiently, we'd need to know the root of every jobID.
+	// For MVP, notifying all sync waiters (usually few) is acceptable.
+	for _, ch := range d.completions {
+		select {
+		case ch <- struct{}{}:
+		default:
+			// Channel already has a pending notification
+		}
+	}
+}
+
+// checkJobTreeComplete returns true if the root job and all its descendants are in terminal states.
+func (d *Dispatcher) checkJobTreeComplete(ctx context.Context, rootJobID string) (bool, error) {
+	// Query database for tree status
+	// We include timed_out, dead, cancelled (if added later) as terminal.
+	results, err := d.queue.GetJobTree(ctx, rootJobID)
+	if err != nil {
+		return false, err
+	}
+
+	if len(results) == 0 {
+		return false, fmt.Errorf("job %s not found", rootJobID)
+	}
+
+	for _, res := range results {
+		switch res.Status {
+		case queue.StatusQueued, queue.StatusRunning:
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 // truncateStderr truncates stderr to maxStderrBytes.
