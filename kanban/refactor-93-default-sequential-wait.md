@@ -384,3 +384,4 @@ await message.channel.send(result["result"]["stdout"])  # ✓ Works!
 
 ## Narrative
 - 2026-02-13: Created to adopt GitHub Actions pattern (sequential = wait by default). Solves interactive use case problem (Discord, web UIs) by making intuitive behavior the default. User feedback: "ok, Adopt GitHub Actions Pattern." (by @assistant)
+- 2026-02-13: Technical review complete. Findings: 1) Dispatcher requires `WaitForJob` and `waitForAll` methods to support blocking execution. 2) API handlers in `internal/api` must be updated to support the `?async=true` opt-out and blocking response. 3) Config schema needs extension for `execution_mode` and `parallel` steps (aliasing `split`). 4) Result aggregation logic is needed to collect artifacts and logs from the entire DAG subtree for the final response. Ready for Phase 1 implementation. (by @assistant)
