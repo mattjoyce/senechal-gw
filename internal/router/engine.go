@@ -217,17 +217,39 @@ func dedupeDispatches(in []Dispatch) []Dispatch {
 	return out
 }
 
-// PipelineInfo describes a loaded pipeline for observability.
-type PipelineInfo struct {
-	Name    string
-	Trigger string
+// GetPipelineByTrigger returns the first pipeline matched by a trigger event.
+func (r *Router) GetPipelineByTrigger(trigger string) *PipelineInfo {
+	r.logger.Debug("looking up pipeline by trigger", "trigger", trigger)
+	pipelines, ok := r.triggerIndex[trigger]
+	if !ok || len(pipelines) == 0 {
+		return nil
+	}
+
+	// For now, return the first one found.
+	name := pipelines[0]
+	pipeline := r.set.Pipelines[name]
+	if pipeline == nil {
+		return nil
+	}
+
+	return &PipelineInfo{
+		Name:          pipeline.Name,
+		Trigger:       pipeline.Trigger,
+		ExecutionMode: pipeline.ExecutionMode,
+		Timeout:       pipeline.Timeout,
+	}
 }
 
 // PipelineSummary returns info about all loaded pipelines.
 func (r *Router) PipelineSummary() []PipelineInfo {
 	var out []PipelineInfo
 	for name, pipeline := range r.set.Pipelines {
-		out = append(out, PipelineInfo{Name: name, Trigger: pipeline.Trigger})
+		out = append(out, PipelineInfo{
+			Name:          name,
+			Trigger:       pipeline.Trigger,
+			ExecutionMode: pipeline.ExecutionMode,
+			Timeout:       pipeline.Timeout,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

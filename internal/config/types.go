@@ -167,11 +167,23 @@ type WebhooksFileConfig struct {
 	Webhooks []WebhookEndpoint `yaml:"webhooks"`
 }
 
+// ExecutionMode defines how a pipeline should be triggered and its results returned.
+type ExecutionMode string
+
+const (
+	// ExecutionModeAsync returns 202 immediately.
+	ExecutionModeAsync ExecutionMode = "async"
+	// ExecutionModeSync blocks until the pipeline completes or times out.
+	ExecutionModeSync ExecutionMode = "synchronous"
+)
+
 // PipelineEntry defines a named pipeline triggered by an event type.
 type PipelineEntry struct {
-	Name  string      `yaml:"name"`
-	On    string      `yaml:"on"`
-	Steps []StepEntry `yaml:"steps,omitempty"`
+	Name          string        `yaml:"name"`
+	On            string        `yaml:"on"`
+	Steps         []StepEntry   `yaml:"steps,omitempty"`
+	ExecutionMode ExecutionMode `yaml:"execution_mode,omitempty"`
+	Timeout       time.Duration `yaml:"timeout,omitempty"`
 }
 
 // StepEntry is a single step in a pipeline.

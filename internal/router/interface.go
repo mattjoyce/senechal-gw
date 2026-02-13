@@ -2,9 +2,18 @@ package router
 
 import (
 	"context"
+	"time"
 
 	"github.com/mattjoyce/senechal-gw/internal/protocol"
 )
+
+// PipelineInfo describes a loaded pipeline's execution properties.
+type PipelineInfo struct {
+	Name          string
+	Trigger       string
+	ExecutionMode string
+	Timeout       time.Duration
+}
 
 // Request captures the control-plane inputs needed to calculate fan-out in the
 // Governance Hybrid model.
@@ -36,4 +45,6 @@ type Dispatch struct {
 // Engine maps an emitted event to downstream dispatches.
 type Engine interface {
 	Next(ctx context.Context, req Request) ([]Dispatch, error)
+	// GetPipelineByTrigger returns the first pipeline matched by a trigger event.
+	GetPipelineByTrigger(trigger string) *PipelineInfo
 }

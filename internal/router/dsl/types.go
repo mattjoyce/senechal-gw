@@ -1,5 +1,7 @@
 package dsl
 
+import "time"
+
 // FileSpec is one YAML file containing one or more pipelines.
 type FileSpec struct {
 	Pipelines []PipelineSpec `yaml:"pipelines"`
@@ -7,9 +9,11 @@ type FileSpec struct {
 
 // PipelineSpec defines a single pipeline entry in YAML.
 type PipelineSpec struct {
-	Name  string     `yaml:"name"`
-	On    string     `yaml:"on"`
-	Steps []StepSpec `yaml:"steps"`
+	Name          string        `yaml:"name"`
+	On            string        `yaml:"on"`
+	Steps         []StepSpec    `yaml:"steps"`
+	ExecutionMode string        `yaml:"execution_mode,omitempty"`
+	Timeout       time.Duration `yaml:"timeout,omitempty"`
 }
 
 // StepSpec is one DSL step. Exactly one execution field must be set:
@@ -51,6 +55,8 @@ type Edge struct {
 type Pipeline struct {
 	Name            string
 	Trigger         string
+	ExecutionMode   string
+	Timeout         time.Duration
 	Nodes           map[string]Node
 	Edges           []Edge
 	EntryNodeIDs    []string

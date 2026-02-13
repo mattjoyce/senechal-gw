@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zeebo/blake3"
 )
@@ -48,9 +49,17 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 	}
 
 	pipeline := &Pipeline{
-		Name:    name,
-		Trigger: trigger,
-		Nodes:   make(map[string]Node),
+		Name:          name,
+		Trigger:       trigger,
+		ExecutionMode: spec.ExecutionMode,
+		Timeout:       spec.Timeout,
+		Nodes:         make(map[string]Node),
+	}
+	if pipeline.ExecutionMode == "" {
+		pipeline.ExecutionMode = "async"
+	}
+	if pipeline.Timeout == 0 {
+		pipeline.Timeout = 30 * time.Second
 	}
 	builder := compileBuilder{
 		pipeline: pipeline,
