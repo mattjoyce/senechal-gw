@@ -632,3 +632,4 @@ pipelines:
 - 2026-02-13: Created to solve interactive use case problem (RFC-91)
 - 2026-02-13: Refactor-93 put on hold due to critique (breaking changes, HTTP blocking)
 - 2026-02-13: RFC-92 updated with detailed implementation, async default, explicit opt-in approach. Addresses all critique concerns while enabling interactive use cases.
+- 2026-02-13: Technical Critique: RFC-92 is the superior approach because it preserves the event-driven core. Tying the "wait" to the API boundary rather than the internal dispatcher loop prevents architectural regression. Recommendation: 1) Ensure Phase 5 (Semaphores) is prioritized to prevent HTTP pool exhaustion. 2) Define a strict aggregation schema for the `SyncResponse` to handle `split` and parallel branch results consistently. 3) Treat sync mode as a "guarded bridge" between synchronous clients and the async engine. (by @assistant)
