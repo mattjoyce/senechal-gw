@@ -1,6 +1,6 @@
 name: jina-reader
 version: 0.1.0
-protocol: 1
+protocol: 2
 entrypoint: run.py
 description: "Scrapes web pages via Jina Reader API and returns clean markdown"
 commands:

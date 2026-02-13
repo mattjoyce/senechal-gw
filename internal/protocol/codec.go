@@ -9,7 +9,7 @@ import (
 // EncodeRequest serializes a Request to JSON and writes it to w.
 // Returns an error if marshaling or writing fails.
 func EncodeRequest(w io.Writer, req *Request) error {
-	if req.Protocol != 1 {
+	if req.Protocol != 2 {
 		return fmt.Errorf("unsupported protocol version: %d", req.Protocol)
 	}
 
