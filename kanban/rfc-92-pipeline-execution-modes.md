@@ -3,519 +3,632 @@ id: 92
 status: backlog
 priority: High
 blocked_by: []
-tags: [architecture, pipelines, interactive, dag, critical]
+tags: [architecture, pipelines, interactive, dag, critical, implementation-ready]
 ---
 
-# RFC: Pipeline Execution Modes (Declarative Sync/Async)
+# RFC-92: Pipeline Execution Modes (Explicit Opt-In)
+
+## Status Update (2026-02-13)
+
+**Refactor-93 on hold** due to critique concerns. This RFC proposes alternative approach:
+- **Async by default** (preserves current event-driven architecture)
+- **Sync opt-in** (explicit per-pipeline)
+- **No breaking changes** (existing pipelines unchanged)
 
 ## Executive Summary
 
-**Problem**: senechal-gw's async-only architecture blocks interactive use cases (Discord bots, web UIs, CLI tools). See RFC-91 for full problem statement.
+**Problem**: senechal-gw's async-only execution blocks interactive use cases (Discord bots, web UIs, CLI tools). Users get "queued" responses but never receive actual results.
 
-**Proposed Solution**: Add `execution_mode` to pipeline config, leveraging existing DAG infrastructure to make pipelines wait for completion before returning results.
+**Solution**: Add optional `execution_mode: synchronous` to pipeline config. Pipelines explicitly declare whether they should wait for completion before returning results.
 
-**Why This Saves the Project**: Instead of bolting sync behavior onto HTTP endpoints (hacky), we make execution semantics a **first-class pipeline concern**. This is architecturally sound and reuses existing dispatcher parent-child tracking.
+**Key Principle**: **Async by default** (preserve event-driven architecture), **sync by opt-in** (enable interactive use cases).
 
 ## Design Philosophy
 
-### Core Insight
+### Preserve Event-Driven Architecture
 
-senechal-gw already has all the infrastructure needed:
-- ✓ Dispatcher tracks parent-child job relationships
-- ✓ Pipelines define multi-step workflows with `split`, `call`, `on_events`
-- ✓ Job completion is already tracked in database
-- ✓ Results are already captured (stdout, workspace artifacts)
+**Current architecture (keep this)**:
+- Events trigger pipelines
+- Steps emit events (`on_events`)
+- Dispatcher queues jobs asynchronously
+- Parent jobs don't block on children
 
-**Missing piece**: A way to declare "this pipeline should wait for its entire execution tree before returning control to the caller."
+**What we add**:
+- Optional synchronous wait at API boundary (trigger endpoints)
+- Internal event flow remains unchanged
+- Dispatcher still processes jobs asynchronously
+- Only difference: HTTP handler waits for completion before responding
 
-### Declarative > Imperative
+### When to Use Each Mode
 
-Rather than making clients say `?wait=true` on every request, let the **pipeline author** declare execution semantics:
-
-```yaml
-pipelines:
-  - name: interactive-fabric
-    on: fabric.handle
-    execution_mode: synchronous  # Author declares: "This is interactive"
-    timeout: 30s
-    steps:
-      - uses: fabric
-```
-
-This is **better than HTTP-level flags** because:
-1. Config documents pipeline behavior
-2. Client doesn't need to know implementation details
-3. Works naturally with complex multi-step workflows
-4. Aligns with senechal-gw's "YAML-configured" design philosophy
+| Mode | Use Cases | Example Pipelines |
+|------|-----------|-------------------|
+| **async** (default) | Batch processing, webhooks, long-running jobs, fire-and-forget | File uploads, scheduled jobs, background processing |
+| **synchronous** (opt-in) | Interactive commands, chat bots, CLI tools, web APIs | Discord commands, CLI queries, API endpoints that return results |
 
 ## Proposed Schema
 
-### Pipeline-Level Execution Mode
+### Pipeline Configuration
 
 ```yaml
 pipelines:
-  - name: <pipeline-name>
-    on: <event-trigger>
-    execution_mode: synchronous | async  # NEW field
-    timeout: <duration>  # NEW: Max wait time (e.g., "30s", "2m")
-    return_on_timeout: partial | job_id  # NEW: Behavior when timeout exceeded
+  # Async pipeline (default, no change to existing configs)
+  - name: batch-processor
+    on: file.upload
     steps:
-      - uses: <plugin>
+      - uses: processor
+      - uses: archiver
+
+  # Synchronous pipeline (explicit opt-in)
+  - name: discord-fabric
+    on: fabric.handle
+    execution_mode: synchronous  # NEW: Explicit sync mode
+    timeout: 30s                 # NEW: Max wait time
+    steps:
+      - uses: fabric
+      - uses: formatter
 ```
 
-### Step-Level Wait Control (Future Extension)
+### Configuration Fields
 
-```yaml
-steps:
-  - id: main
-    uses: fabric
-    wait_for_children: true  # NEW: Block until downstream steps complete
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `execution_mode` | `async` \| `synchronous` | `async` | How trigger endpoint behaves |
+| `timeout` | duration | `30s` | Max wait time for synchronous pipelines |
 
-  - uses: formatter
-    # Runs after 'main' completes (because main waits)
+## How It Works
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Trigger Endpoint                         │
+│  POST /trigger/fabric/handle                                │
+└────────────┬────────────────────────────────────────────────┘
+             │
+             ├──> Lookup pipeline config
+             │    - execution_mode: synchronous?
+             │    - timeout: 30s
+             │
+             ├──> Queue job (existing dispatcher)
+             │    - Job ID: abc-123
+             │    - Status: queued
+             │
+             ├──> If async: return 202 immediately ──────────┐
+             │                                                │
+             └──> If sync: wait for completion               │
+                  │                                           │
+                  ├─> Poll job status (100ms intervals)      │
+                  ├─> Check timeout                          │
+                  └─> Return results when complete           │
+                                                              │
+┌─────────────────────────────────────────────────────────────┘
+│                Event-Driven Execution (Unchanged)           │
+│  ┌──────────┐      ┌──────────┐      ┌──────────┐         │
+│  │  Job 1   │─────>│  Job 2   │─────>│  Job 3   │         │
+│  │ (fabric) │event │(formatter)│event │  (save)  │         │
+│  └──────────┘      └──────────┘      └──────────┘         │
+│                                                             │
+│  - Jobs queued asynchronously                              │
+│  - Events trigger next steps                               │
+│  - Dispatcher processes queue                              │
+│  - Parent-child relationships tracked                      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Execution Modes
+### Key Insight: Wait at API Boundary, Not Internal Execution
 
-### Mode 1: `async` (Default, Current Behavior)
+**Internal execution remains event-driven**:
+- Dispatcher still queues jobs asynchronously
+- Events still trigger next steps
+- No blocking in dispatcher/runner
 
-```yaml
-execution_mode: async
-```
+**Wait happens only at HTTP layer**:
+- API handler polls job status
+- Returns results when complete
+- Or returns timeout if exceeded
 
-**Behavior**:
-- Trigger endpoint returns HTTP 202 immediately
-- Job queued and runs in background
-- No result returned to caller
-- **Use for**: Fire-and-forget workflows, batch processing, long-running pipelines
-
-### Mode 2: `synchronous` (New)
-
-```yaml
-execution_mode: synchronous
-timeout: 30s
-```
-
-**Behavior**:
-- Trigger endpoint **blocks** until pipeline completes (or timeout)
-- Dispatcher waits for root job + all descendant jobs (entire DAG subtree)
-- Returns HTTP 200 with results when complete
-- Returns HTTP 202 with partial status if timeout exceeded
-- **Use for**: Interactive workflows, chat bots, web APIs, CLI tools
-
-## API Response Format
-
-### Synchronous Pipeline (Success)
-
-```json
-POST /trigger/fabric/handle
-
-Response: HTTP 200 OK
-{
-  "job_id": "a25b1490-...",
-  "status": "succeeded",
-  "execution_mode": "synchronous",
-  "duration_ms": 1250,
-  "result": {
-    "stdout": "SUMMARY:\n- Key point 1\n- Key point 2",
-    "stderr": "",
-    "exit_code": 0,
-    "output_files": [
-      {
-        "path": "summary.md",
-        "size": 512,
-        "url": "/workspace/a25b1490-.../summary.md"
-      }
-    ]
-  },
-  "children": [
-    {
-      "job_id": "child-1-...",
-      "plugin": "formatter",
-      "status": "succeeded"
-    }
-  ]
-}
-```
-
-### Synchronous Pipeline (Timeout)
-
-```json
-Response: HTTP 202 Accepted
-{
-  "job_id": "a25b1490-...",
-  "status": "running",
-  "execution_mode": "synchronous",
-  "timeout_exceeded": true,
-  "timeout_ms": 30000,
-  "elapsed_ms": 30001,
-  "message": "Pipeline still running after 30s timeout. Check /job/{id} for status."
-}
-```
-
-### Async Pipeline (Current Behavior)
-
-```json
-Response: HTTP 202 Accepted
-{
-  "job_id": "a25b1490-...",
-  "status": "queued",
-  "execution_mode": "async",
-  "plugin": "fabric",
-  "command": "handle"
-}
-```
+This preserves event-driven architecture while enabling sync API responses.
 
 ## Implementation Plan
 
-### Phase 1: Core Infrastructure (Week 1)
+### Phase 1: Config Schema (Week 1, Day 1-2)
 
 **Files to modify**:
-- `internal/config/types.go`: Add `ExecutionMode`, `Timeout`, `ReturnOnTimeout` fields to `Pipeline` struct
-- `internal/config/loader.go`: Parse new fields from YAML
-- `internal/dispatch/dispatcher.go`: Add `WaitForCompletion(jobID, timeout)` method
 
-**WaitForCompletion logic**:
+#### `internal/config/types.go`
+
 ```go
-func (d *Dispatcher) WaitForCompletion(ctx context.Context, jobID string, timeout time.Duration) (*JobResult, error) {
-    deadline := time.After(timeout)
-    ticker := time.NewTicker(100 * time.Millisecond)
-    defer ticker.Stop()
-
-    for {
-        select {
-        case <-deadline:
-            return nil, ErrTimeout
-        case <-ticker.C:
-            // Check if root job + all descendants complete
-            complete, result := d.checkJobTreeComplete(jobID)
-            if complete {
-                return result, nil
-            }
-        case <-ctx.Done():
-            return nil, ctx.Err()
-        }
-    }
+type Pipeline struct {
+    Name          string
+    On            string
+    Steps         []Step
+    ExecutionMode ExecutionMode  // NEW
+    Timeout       time.Duration  // NEW
 }
 
-func (d *Dispatcher) checkJobTreeComplete(rootID string) (bool, *JobResult) {
-    // Query database for root job + all jobs with parent_job_id ancestry
-    // Return true only if ALL jobs in tree have status in (succeeded, failed)
-    // Aggregate results from all jobs in tree
+type ExecutionMode string
+
+const (
+    ExecutionModeAsync ExecutionMode = "async"
+    ExecutionModeSync  ExecutionMode = "synchronous"
+)
+```
+
+#### `internal/config/loader.go`
+
+```go
+func loadPipeline(node yaml.Node) (*Pipeline, error) {
+    p := &Pipeline{
+        ExecutionMode: ExecutionModeAsync, // Default to async
+        Timeout:       30 * time.Second,   // Default timeout
+    }
+
+    // Parse execution_mode if present
+    if modeStr := node.GetString("execution_mode"); modeStr != "" {
+        switch modeStr {
+        case "async":
+            p.ExecutionMode = ExecutionModeAsync
+        case "synchronous":
+            p.ExecutionMode = ExecutionModeSync
+        default:
+            return nil, fmt.Errorf("invalid execution_mode: %s", modeStr)
+        }
+    }
+
+    // Parse timeout if present
+    if timeoutStr := node.GetString("timeout"); timeoutStr != "" {
+        timeout, err := time.ParseDuration(timeoutStr)
+        if err != nil {
+            return nil, fmt.Errorf("invalid timeout: %w", err)
+        }
+        p.Timeout = timeout
+    }
+
+    return p, nil
 }
 ```
 
-### Phase 2: API Handler Integration (Week 1)
+### Phase 2: Job Completion Tracking (Week 1, Day 3-4)
 
 **Files to modify**:
-- `cmd/senechal-gw/api/handlers.go`: Update trigger handlers
+
+#### `internal/dispatch/dispatcher.go`
+
+Add ability to wait for job tree completion:
+
+```go
+type Dispatcher struct {
+    db          *sql.DB
+    queue       chan *Job
+    completions map[string]chan JobResult  // NEW: Completion notifications
+    mu          sync.RWMutex
+}
+
+// WaitForJobTree waits for root job and all descendant jobs to complete
+func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) (*JobResult, error) {
+    // Create completion channel for this job
+    completionChan := make(chan JobResult, 1)
+
+    d.mu.Lock()
+    d.completions[rootJobID] = completionChan
+    d.mu.Unlock()
+
+    defer func() {
+        d.mu.Lock()
+        delete(d.completions, rootJobID)
+        d.mu.Unlock()
+    }()
+
+    // Set up timeout
+    timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+    defer cancel()
+
+    // Wait for completion or timeout
+    select {
+    case result := <-completionChan:
+        return &result, nil
+    case <-timeoutCtx.Done():
+        return nil, ErrTimeout
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    }
+}
+
+// notifyCompletion called when job finishes (existing job completion logic)
+func (d *Dispatcher) notifyCompletion(jobID string, result JobResult) {
+    d.mu.RLock()
+    if ch, exists := d.completions[jobID]; exists {
+        select {
+        case ch <- result:
+        default:
+        }
+    }
+    d.mu.RUnlock()
+}
+
+// checkJobTreeComplete checks if root job + all children are done
+func (d *Dispatcher) checkJobTreeComplete(rootJobID string) bool {
+    // Query database for job tree
+    rows, err := d.db.Query(`
+        WITH RECURSIVE job_tree AS (
+            SELECT id, status FROM job_queue WHERE id = ?
+            UNION ALL
+            SELECT jq.id, jq.status
+            FROM job_queue jq
+            JOIN job_tree jt ON jq.parent_job_id = jt.id
+        )
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN status IN ('succeeded', 'failed') THEN 1 ELSE 0 END) as complete
+        FROM job_tree
+    `, rootJobID)
+
+    if err != nil {
+        return false
+    }
+    defer rows.Close()
+
+    var total, complete int
+    if rows.Next() {
+        rows.Scan(&total, &complete)
+    }
+
+    return total > 0 && total == complete
+}
+```
+
+**Key Design Decision**:
+- Don't poll in tight loop (wasteful)
+- Use completion notifications (event-driven)
+- When a job completes, check if it's being waited on
+- Notify waiting HTTP handler via channel
+
+### Phase 3: API Handler Updates (Week 1, Day 5)
+
+**Files to modify**:
+
+#### `cmd/senechal-gw/api/handlers.go`
 
 ```go
 func (h *Handler) TriggerPlugin(w http.ResponseWriter, r *http.Request) {
-    // ... existing job queue logic ...
+    // Parse request, queue job (existing logic)
+    jobID := h.dispatcher.QueueJob(pluginName, commandName, payload)
 
-    // NEW: Check if pipeline has execution_mode = synchronous
-    pipeline := h.router.GetPipeline(pluginName, commandName)
+    // Lookup pipeline to check execution mode
+    pipeline := h.router.GetPipelineForTrigger(pluginName, commandName)
 
-    if pipeline != nil && pipeline.ExecutionMode == config.ExecutionModeSync {
-        // Synchronous path
-        timeout := pipeline.Timeout
-        if timeout == 0 {
-            timeout = 30 * time.Second  // Default
-        }
-
-        result, err := h.dispatcher.WaitForCompletion(r.Context(), jobID, timeout)
-
-        if err == ErrTimeout {
-            // Return partial status
-            w.WriteHeader(http.StatusAccepted)
-            json.NewEncoder(w).Encode(TimeoutResponse{
-                JobID:           jobID,
-                Status:          "running",
-                ExecutionMode:   "synchronous",
-                TimeoutExceeded: true,
-                TimeoutMs:       int(timeout.Milliseconds()),
-            })
-            return
-        }
-
-        // Return complete result
-        w.WriteHeader(http.StatusOK)
-        json.NewEncoder(w).Encode(SyncResponse{
-            JobID:         jobID,
-            Status:        result.Status,
-            ExecutionMode: "synchronous",
-            DurationMs:    result.Duration.Milliseconds(),
-            Result:        result,
-            Children:      result.Children,
+    // Default to async if no pipeline config
+    if pipeline == nil || pipeline.ExecutionMode == config.ExecutionModeAsync {
+        // Async mode: return immediately (current behavior)
+        respondJSON(w, http.StatusAccepted, AsyncResponse{
+            JobID:   jobID,
+            Status:  "queued",
+            Plugin:  pluginName,
+            Command: commandName,
         })
         return
     }
 
-    // Existing async path
-    w.WriteHeader(http.StatusAccepted)
-    json.NewEncoder(w).Encode(AsyncResponse{
-        JobID:         jobID,
-        Status:        "queued",
-        ExecutionMode: "async",
+    // Synchronous mode: wait for completion
+    timeout := pipeline.Timeout
+    if timeout == 0 {
+        timeout = 30 * time.Second // Fallback default
+    }
+
+    result, err := h.dispatcher.WaitForJobTree(r.Context(), jobID, timeout)
+
+    if err == dispatch.ErrTimeout {
+        // Timeout: Pipeline still running
+        respondJSON(w, http.StatusAccepted, TimeoutResponse{
+            JobID:           jobID,
+            Status:          "running",
+            TimeoutExceeded: true,
+            TimeoutSeconds:  int(timeout.Seconds()),
+            Message:         "Pipeline still running after timeout. Check /job/" + jobID,
+        })
+        return
+    }
+
+    if err != nil {
+        // Other error
+        respondJSON(w, http.StatusInternalServerError, ErrorResponse{
+            Error: err.Error(),
+        })
+        return
+    }
+
+    // Success: Return complete results
+    respondJSON(w, http.StatusOK, SyncResponse{
+        JobID:      jobID,
+        Status:     result.Status,
+        DurationMs: result.Duration.Milliseconds(),
+        Result: JobResultData{
+            Stdout:      result.Stdout,
+            Stderr:      result.Stderr,
+            ExitCode:    result.ExitCode,
+            Context:     result.Context,
+            OutputFiles: result.OutputFiles,
+        },
+        Children: result.Children,
     })
 }
 ```
 
-### Phase 3: Result Aggregation (Week 2)
+### Phase 4: Response Types (Week 1, Day 5)
 
-**Challenge**: For pipelines with `split` or multiple steps, aggregate results from all child jobs.
+**Files to modify**:
 
-**Approach**:
+#### `cmd/senechal-gw/api/types.go`
+
 ```go
-type JobResult struct {
-    JobID      string
-    Plugin     string
-    Command    string
-    Status     string
-    ExitCode   int
-    Stdout     string
-    Stderr     string
-    Duration   time.Duration
-    OutputFiles []FileInfo
-    Children   []JobResult  // Recursive: results from child jobs
+// AsyncResponse for async pipelines (existing, unchanged)
+type AsyncResponse struct {
+    JobID   string `json:"job_id"`
+    Status  string `json:"status"`
+    Plugin  string `json:"plugin"`
+    Command string `json:"command"`
 }
 
-func (d *Dispatcher) aggregateResults(rootJobID string) (*JobResult, error) {
-    // Recursively fetch root job + all descendants
-    // Build tree structure matching pipeline DAG
-    // Include stdout, artifacts, status for each node
+// SyncResponse for synchronous pipelines (NEW)
+type SyncResponse struct {
+    JobID      string        `json:"job_id"`
+    Status     string        `json:"status"`
+    DurationMs int64         `json:"duration_ms"`
+    Result     JobResultData `json:"result"`
+    Children   []ChildJob    `json:"children,omitempty"`
+}
+
+type JobResultData struct {
+    Stdout      string            `json:"stdout"`
+    Stderr      string            `json:"stderr,omitempty"`
+    ExitCode    int               `json:"exit_code"`
+    Context     map[string]any    `json:"context"`
+    OutputFiles []OutputFileInfo  `json:"output_files,omitempty"`
+}
+
+type OutputFileInfo struct {
+    Path string `json:"path"`
+    Size int64  `json:"size"`
+}
+
+type ChildJob struct {
+    JobID   string `json:"job_id"`
+    Plugin  string `json:"plugin"`
+    Status  string `json:"status"`
+}
+
+// TimeoutResponse for sync pipelines that exceed timeout (NEW)
+type TimeoutResponse struct {
+    JobID           string `json:"job_id"`
+    Status          string `json:"status"`
+    TimeoutExceeded bool   `json:"timeout_exceeded"`
+    TimeoutSeconds  int    `json:"timeout_seconds"`
+    Message         string `json:"message"`
 }
 ```
 
-### Phase 4: Timeout Handling (Week 2)
+### Phase 5: Resource Management (Week 2)
 
-**Design decision**: What happens when timeout is exceeded?
+**Concern from critique**: HTTP blocking causes resource starvation.
 
-**Option A**: Kill running jobs (aggressive)
-```yaml
-execution_mode: synchronous
-timeout: 30s
-return_on_timeout: partial
-on_timeout: kill  # NEW: Cancel running jobs
+**Mitigation strategies**:
+
+#### 1. Limit Concurrent Synchronous Requests
+
+```go
+// cmd/senechal-gw/api/server.go
+type Server struct {
+    syncSemaphore chan struct{} // Limit concurrent sync requests
+}
+
+func NewServer(maxConcurrentSync int) *Server {
+    return &Server{
+        syncSemaphore: make(chan struct{}, maxConcurrentSync),
+    }
+}
+
+func (s *Server) TriggerPlugin(w http.ResponseWriter, r *http.Request) {
+    // ... determine if sync mode ...
+
+    if pipeline.ExecutionMode == config.ExecutionModeSync {
+        // Acquire semaphore
+        select {
+        case s.syncSemaphore <- struct{}{}:
+            defer func() { <-s.syncSemaphore }()
+        default:
+            // Too many concurrent sync requests
+            respondJSON(w, http.StatusServiceUnavailable, ErrorResponse{
+                Error: "Too many concurrent synchronous requests. Try again or use async mode.",
+            })
+            return
+        }
+
+        // ... proceed with sync wait ...
+    }
+}
 ```
 
-**Option B**: Let jobs continue, return job_id (recommended)
+#### 2. Enforce Maximum Timeout
+
 ```yaml
-execution_mode: synchronous
-timeout: 30s
-return_on_timeout: job_id  # Return tracking info, jobs keep running
+# config.yaml
+api:
+  max_sync_timeout: 2m      # Never wait longer than 2 minutes
+  max_concurrent_sync: 10   # Max 10 blocking requests at once
 ```
 
-**Recommendation**: Option B. Don't kill jobs just because client timed out. Client can poll `/job/{id}` if needed.
+#### 3. Separate HTTP Server Pools (Future)
 
-### Phase 5: Testing (Week 3)
+```go
+// Different listener for sync vs async (advanced)
+http.ListenAndServe(":8080", asyncHandler)  // Async endpoints
+http.ListenAndServe(":8081", syncHandler)   // Sync endpoints
+```
+
+### Phase 6: Testing (Week 2)
 
 **Test cases**:
-1. Simple sync pipeline (single step)
-2. Multi-step sequential sync pipeline
-3. Sync pipeline with `split` (parallel branches)
-4. Sync pipeline with `call` (nested pipelines)
-5. Sync pipeline timeout (partial return)
-6. Mixed: sync pipeline calling async pipeline
-7. Discord integration test (end-to-end)
 
-## Discord Use Case (Solved)
+1. **Async pipeline (default)**:
+   - POST /trigger → Returns 202 immediately
+   - Job runs in background
+   - No waiting
 
-### Pipeline Config
+2. **Sync pipeline (simple)**:
+   - Single-step pipeline with `execution_mode: synchronous`
+   - POST /trigger → Returns 200 with result
+   - Duration < timeout
 
-```yaml
-# pipelines/interactive-fabric.yaml
-pipelines:
-  - name: discord-fabric
-    on: fabric.handle
-    execution_mode: synchronous
-    timeout: 30s
-    steps:
-      - uses: fabric
-```
+3. **Sync pipeline (multi-step)**:
+   - Sequential steps: download → process → save
+   - POST /trigger → Returns 200 with aggregated result
+   - Includes children in response
 
-### Discord Bot (No Changes Needed!)
+4. **Sync pipeline (timeout)**:
+   - Long-running pipeline
+   - POST /trigger → Returns 202 after 30s timeout
+   - Job continues running in background
 
-```python
-# Bot code stays the same
-response = requests.post(
-    "http://localhost:8080/trigger/fabric/handle",
-    json={"payload": {"text": user_message, "pattern": "summarize"}}
-)
+5. **Sync pipeline (parallel branches)**:
+   - Pipeline with `split:` keyword
+   - POST /trigger → Waits for all branches
+   - Returns aggregated results
 
-# Now response.json() contains actual result:
-result = response.json()
-if result["status"] == "succeeded":
-    await message.channel.send(result["result"]["stdout"])
-else:
-    await message.channel.send(f"Error: {result['status']}")
-```
+6. **Resource limits**:
+   - 11 concurrent sync requests (limit is 10)
+   - 11th request gets 503 Service Unavailable
 
-**Bot receives actual fabric output instead of "queued"!** ✓
+7. **Discord integration (end-to-end)**:
+   - Discord bot sends /ai command
+   - Gateway processes with sync mode
+   - Bot receives actual fabric output
 
-## Edge Cases & Open Questions
+## What Needs to Change (File Checklist)
 
-### Q1: What about single-plugin triggers (no pipeline)?
+### Core Implementation
 
-**Option A**: Default to async (current behavior)
-```bash
-POST /trigger/fabric/handle  # No pipeline exists
-→ Returns 202 "queued" (async)
-```
+- [ ] `internal/config/types.go` - Add ExecutionMode, Timeout fields
+- [ ] `internal/config/loader.go` - Parse execution_mode, timeout
+- [ ] `internal/dispatch/dispatcher.go` - Add WaitForJobTree, completion notifications
+- [ ] `cmd/senechal-gw/api/handlers.go` - Check execution mode, wait for sync pipelines
+- [ ] `cmd/senechal-gw/api/types.go` - Add SyncResponse, TimeoutResponse types
+- [ ] `cmd/senechal-gw/api/server.go` - Add semaphore for rate limiting
 
-**Option B**: Allow plugins to declare execution mode in manifest
-```yaml
-# plugins/fabric/manifest.yaml
-plugin: fabric
-execution_mode: synchronous  # NEW: Plugin-level default
-timeout: 30s
-commands:
-  - handle
-```
+### Configuration
 
-**Recommendation**: Option B for flexibility, but pipelines override plugin defaults.
+- [ ] `config.yaml` - Add api.max_sync_timeout, api.max_concurrent_sync
 
-### Q2: Nested pipelines with different modes?
+### Documentation
 
-```yaml
-# Pipeline A: synchronous
-- name: parent
-  execution_mode: synchronous
-  steps:
-    - call: child-pipeline  # child-pipeline is async
+- [ ] `docs/PIPELINES.md` - Document execution_mode field
+- [ ] `docs/USER_GUIDE.md` - Examples of sync vs async pipelines
+- [ ] `docs/API.md` - Document new response formats
 
-# What happens?
-```
+### Testing
 
-**Answer**: Parent waits for child pipeline's root job to complete, but not child's descendants. Parent's `synchronous` mode only waits for its direct children.
+- [ ] `internal/dispatch/dispatcher_test.go` - Test WaitForJobTree
+- [ ] `cmd/senechal-gw/api/handlers_test.go` - Test sync/async modes
+- [ ] `test/integration/` - End-to-end Discord bot test
 
-**Alternative**: `execution_mode: deep_synchronous` waits for entire call tree (expensive).
+### Migration
 
-### Q3: How to handle `split` with partial failures?
+- [ ] No migration needed (async is default, existing configs unchanged)
 
-```yaml
-steps:
-  - split:
-      - uses: branch-a  # succeeds
-      - uses: branch-b  # fails
-      - uses: branch-c  # succeeds
-```
+## Addressing the Critique
 
-**Answer**: Return all results with their individual statuses. Overall status = "partial_success" if any branch failed.
+### ✅ Preserves Event-Driven Architecture
 
-```json
-{
-  "status": "partial_success",
-  "children": [
-    {"plugin": "branch-a", "status": "succeeded"},
-    {"plugin": "branch-b", "status": "failed", "error": "..."},
-    {"plugin": "branch-c", "status": "succeeded"}
-  ]
-}
-```
+- Internal dispatcher/runner unchanged
+- Events still trigger steps
+- Jobs still queued asynchronously
+- Only wait at API boundary, not internal execution
 
-### Q4: Security concern - DoS via long-running sync pipelines?
+### ✅ Prevents HTTP Resource Starvation
 
-**Mitigation**:
-1. Enforce max timeout (e.g., 5 minutes)
-2. Rate limit sync trigger endpoints
-3. Separate HTTP server pool for sync vs async?
+- Semaphore limits concurrent sync requests
+- Enforced max timeout (2 minutes)
+- Can separate sync/async onto different ports (future)
 
-```yaml
-api:
-  sync_max_timeout: 5m
-  sync_max_concurrent: 10  # Limit concurrent blocking requests
-```
+### ✅ Follows GitHub Actions Pattern Correctly
 
-## Benefits Over HTTP-Level `?wait=true`
+- Workflow trigger can be async (default) or sync (opt-in)
+- Internal step execution uses existing event flow
+- No conflation of trigger mechanism and step semantics
 
-| Aspect | Pipeline `execution_mode` | Query Param `?wait=true` |
-|--------|--------------------------|--------------------------|
-| **Discoverability** | Config documents behavior | Client must know to use it |
-| **Control** | Author declares intent | Client decides (chaos) |
-| **Per-pipeline semantics** | Natural (each pipeline is different) | One-size-fits-all |
-| **Complex workflows** | Works with split/call/events | Doesn't understand DAG |
-| **Timeout control** | Per-pipeline (30s for chat, 5m for reports) | Global or per-request |
-| **Aligns with design** | YAML-configured, declarative | HTTP-level imperative |
+### ✅ No Ecosystem Breakage
+
+- Async is default (existing pipelines unchanged)
+- Sync is explicit opt-in (new feature)
+- No breaking changes
+
+### ✅ Reduces Complexity
+
+- Clear semantics: pipeline declares its execution mode
+- No ambiguity in step behavior
+- Explicit timeouts prevent hung connections
 
 ## Migration Path
 
-### Phase 1: Add feature (no breaking changes)
-- All existing pipelines default to `execution_mode: async`
-- New pipelines opt-in to `synchronous`
-- Clients unchanged (still get 202 for async pipelines)
+### Existing Pipelines (No Changes)
 
-### Phase 2: Migrate interactive pipelines
 ```yaml
-# Before
+# All existing pipelines default to async
 pipelines:
-  - name: fabric-analyze
-    on: fabric.handle
-
-# After
-pipelines:
-  - name: fabric-analyze
-    on: fabric.handle
-    execution_mode: synchronous  # Now returns results!
-    timeout: 30s
+  - name: existing-pipeline
+    on: some.event
+    steps:
+      - uses: plugin1
+      - uses: plugin2
+# Behavior: Returns 202 immediately (unchanged)
 ```
 
-### Phase 3: Update clients to use results
-- Discord bot: Read `result.stdout` from response
-- Web UI: Display results immediately
-- CLI tools: Print output and exit
+### New Interactive Pipelines (Opt-In)
+
+```yaml
+# Explicitly declare sync mode
+pipelines:
+  - name: discord-fabric
+    on: fabric.handle
+    execution_mode: synchronous  # NEW
+    timeout: 30s                 # NEW
+    steps:
+      - uses: fabric
+# Behavior: Returns 200 with results (new capability)
+```
 
 ## Success Criteria
 
 - [ ] Discord bot receives actual fabric output (not "queued")
-- [ ] Multi-step pipeline results aggregated correctly
-- [ ] Timeout handling returns partial status gracefully
-- [ ] `split` branches return all results
-- [ ] Nested `call` pipelines wait correctly
-- [ ] Performance: Sync overhead < 50ms (just polling/aggregation)
-- [ ] No breaking changes to existing async pipelines
-- [ ] Documentation updated with examples
+- [ ] Async pipelines unchanged (backward compatible)
+- [ ] Sync pipelines return results within timeout
+- [ ] HTTP resource limits enforced (no starvation)
+- [ ] Event-driven architecture preserved
+- [ ] Less than 100ms overhead for sync polling
+- [ ] Documentation complete with examples
 
-## Why This Saves the Project
+## Timeline
 
-**Before this RFC**: senechal-gw is unusable for interactive use cases. Discord integration fails, web UIs can't get results, CLI tools are stuck. The async-only architecture is a dealbreaker for an entire class of users.
+- **Week 1**: Core implementation (config, dispatcher, API handler)
+- **Week 2**: Resource management, testing
+- **Week 3**: Documentation, Discord integration testing
+- **Release**: 0.2.0 (new feature, no breaking changes)
 
-**After this RFC**:
-- ✓ Chat bots work (Discord, Slack)
-- ✓ Web UIs can display results
-- ✓ CLI tools can block and print output
-- ✓ Interactive workflows are first-class citizens
-- ✓ Architecture remains clean (no hacky HTTP-level workarounds)
-- ✓ Reuses existing DAG infrastructure (minimal new code)
-- ✓ Declarative YAML config (stays true to design philosophy)
+## Open Questions
 
-**This isn't just a feature addition - it's a fundamental capability unlock.**
+1. **Should we support per-request override?**
+   - `POST /trigger?force_async=true` to override sync pipeline
+   - `POST /trigger?wait=true` to override async pipeline
 
-## Alternatives Considered
+2. **How to handle very long pipelines?**
+   - Return partial results at timeout?
+   - Provide streaming status updates?
 
-### Alternative 1: HTTP `?wait=true` (RFC-91)
-**Rejected**: Imperative, client-driven, doesn't leverage pipeline DAG, doesn't scale to complex workflows.
-
-### Alternative 2: Webhook callbacks
-**Rejected**: Requires callback infrastructure, doesn't help CLI tools, adds latency.
-
-### Alternative 3: Separate sync service
-**Rejected**: Duplicates code, operational complexity, doesn't solve root problem.
-
-### Alternative 4: SSE/WebSocket
-**Rejected**: Overkill, major protocol change, unnecessary for simple request/response.
-
-**Why pipeline execution modes win**: Declarative, reuses existing infrastructure, aligns with design, solves complex DAG cases, minimal code.
-
-## Next Steps
-
-1. **Review & approve** this RFC (get buy-in from maintainer)
-2. **Prototype** `WaitForCompletion` in dispatcher (1 day)
-3. **Implement** Phase 1 (core infrastructure, 3-5 days)
-4. **Test** with Discord bot (validate end-to-end)
-5. **Document** in USER_GUIDE.md with examples
-6. **Ship** as 0.2.0 milestone
+3. **Should sync mode work with webhooks?**
+   - Sync mode + callback_url = redundant?
+   - Or both for belt-and-suspenders?
 
 ## Narrative
-- 2026-02-13: Created after discovering async-only architecture blocks interactive use cases. Proposes pipeline-level execution modes as elegant solution that reuses DAG infrastructure. User feedback: "maybe save the project." (by @assistant)
+
+- 2026-02-13: Created to solve interactive use case problem (RFC-91)
+- 2026-02-13: Refactor-93 put on hold due to critique (breaking changes, HTTP blocking)
+- 2026-02-13: RFC-92 updated with detailed implementation, async default, explicit opt-in approach. Addresses all critique concerns while enabling interactive use cases.

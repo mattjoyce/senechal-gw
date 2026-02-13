@@ -1,9 +1,21 @@
 ---
 id: 93
-status: backlog
+status: hold
 priority: High
 blocked_by: []
-tags: [architecture, refactor, pipelines, breaking-change, github-actions]
+tags: [architecture, refactor, pipelines, breaking-change, github-actions, on-hold]
+---
+
+**STATUS: ON HOLD** - Critique raised concerns about breaking event-driven architecture and HTTP blocking issues. See RFC-92 for alternative approach.
+
+**Critique Summary**:
+- Conflicts with event-driven model (engine/runner.go)
+- HTTP blocking causes resource starvation
+- Misapplies GitHub Actions pattern (GHA workflow trigger is async)
+- Too risky for ecosystem breakage
+
+**Next Steps**: Flesh out RFC-92 with explicit execution modes (async default, sync opt-in).
+
 ---
 
 # Refactor: Default Sequential Steps to Wait (GitHub Actions Pattern)
