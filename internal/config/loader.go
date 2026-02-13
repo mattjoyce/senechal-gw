@@ -457,6 +457,12 @@ func applyConfigDefaults(cfg *Config) *Config {
 	if !cfg.API.Enabled && cfg.API.Listen == "" {
 		cfg.API = defaults.API
 	}
+	if cfg.API.MaxConcurrentSync == 0 {
+		cfg.API.MaxConcurrentSync = 10
+	}
+	if cfg.API.MaxSyncTimeout == 0 {
+		cfg.API.MaxSyncTimeout = 5 * time.Minute
+	}
 
 	// Apply plugins_dir default if not set
 	if cfg.PluginsDir == "" {

@@ -785,11 +785,13 @@ func runStart(args []string) int {
 			})
 		}
 		apiConfig := api.Config{
-			Listen: cfg.API.Listen,
-			APIKey: cfg.API.Auth.APIKey,
-			Tokens: tokens,
+			Listen:            cfg.API.Listen,
+			APIKey:            cfg.API.Auth.APIKey,
+			Tokens:            tokens,
+			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
+			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
 		}
-		apiServer := api.New(apiConfig, q, registry, log.WithComponent("api"))
+		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, log.WithComponent("api"))
 		go func() {
 			if err := apiServer.Start(ctx); err != nil && err != context.Canceled {
 				errCh <- fmt.Errorf("api: %w", err)

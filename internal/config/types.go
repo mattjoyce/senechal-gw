@@ -40,9 +40,11 @@ type StateConfig struct {
 
 // APIConfig defines HTTP API server settings.
 type APIConfig struct {
-	Enabled bool          `yaml:"enabled"`
-	Listen  string        `yaml:"listen"`
-	Auth    APIAuthConfig `yaml:"auth"`
+	Enabled           bool          `yaml:"enabled"`
+	Listen            string        `yaml:"listen"`
+	Auth              APIAuthConfig `yaml:"auth"`
+	MaxConcurrentSync int           `yaml:"max_concurrent_sync,omitempty"`
+	MaxSyncTimeout    time.Duration `yaml:"max_sync_timeout,omitempty"`
 }
 
 // APIAuthConfig defines API authentication settings.

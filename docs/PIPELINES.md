@@ -38,7 +38,26 @@ pipelines:
         uses: whisper-ai         # Next step in the chain
 ```
 
-### 2.2 Reusable Middleware (`call`)
+### 2.2 Synchronous Pipelines (`execution_mode`)
+By default, pipelines are asynchronous (fire-and-forget). For interactive use cases (e.g., Discord bots, CLI tools), you can mark a pipeline as `synchronous`.
+
+```yaml
+  - name: video-summarizer
+    on: discord.command.summarize
+    execution_mode: synchronous  # API will block until the pipeline completes
+    timeout: 3m                 # Maximum time the API will wait
+    steps:
+      - uses: youtube-dl
+      - uses: whisper-ai
+      - uses: fabric-summarizer
+```
+
+**Sync Principles:**
+*   **Guarded Bridge:** The engine remains asynchronous internally. The API simply "stays on the line" until the finish line is reached.
+*   **Timeout Handling:** If the pipeline exceeds the `timeout`, the API returns `202 Accepted` with a `job_id`, allowing the client to poll later.
+*   **Result Aggregation:** The final JSON response contains an array of results from *every* step in the execution tree.
+
+### 2.3 Reusable Middleware (`call`)
 You can call one pipeline from another to promote logic reuse.
 
 ```yaml
@@ -55,7 +74,7 @@ You can call one pipeline from another to promote logic reuse.
       - call: standard-summarization  # Inherits baggage and workspace
 ```
 
-### 2.3 Branching (`split`)
+### 2.4 Branching (`split`)
 Use `split` to trigger multiple parallel paths.
 
 ```yaml

@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -91,6 +94,7 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enqueue job
+	startTime := time.Now()
 	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
 		Plugin:      pluginName,
 		Command:     commandName,
@@ -111,7 +115,90 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		"submitted_by": "api",
 	})
 
-	// Return success response
+	s.logger.Info("job enqueued via API", "job_id", jobID, "plugin", pluginName, "command", commandName)
+
+	// Check if this trigger matches a synchronous pipeline
+	triggerEvent := fmt.Sprintf("%s.%s", pluginName, commandName)
+	pipeline := s.router.GetPipelineByTrigger(triggerEvent)
+
+	// Allow query param override for async mode
+	forceAsync := r.URL.Query().Get("async") == "true"
+
+	if pipeline != nil && pipeline.ExecutionMode == "synchronous" && !forceAsync {
+		// Acquire semaphore to limit concurrent synchronous requests
+		select {
+		case s.syncSemaphore <- struct{}{}:
+			defer func() { <-s.syncSemaphore }()
+		default:
+			s.logger.Warn("too many concurrent synchronous requests", "job_id", jobID)
+			s.writeError(w, http.StatusServiceUnavailable, "too many concurrent synchronous requests, please try again later or use async mode")
+			return
+		}
+
+		// Enforce server-side maximum timeout
+		waitTimeout := pipeline.Timeout
+		if s.config.MaxSyncTimeout > 0 && waitTimeout > s.config.MaxSyncTimeout {
+			waitTimeout = s.config.MaxSyncTimeout
+		}
+
+		s.logger.Info("waiting for synchronous pipeline", "job_id", jobID, "pipeline", pipeline.Name, "timeout", waitTimeout)
+
+		results, err := s.waiter.WaitForJobTree(r.Context(), jobID, waitTimeout)
+		if err != nil {
+			// Check if it was a timeout
+			if err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+				respondJSON(w, http.StatusAccepted, TimeoutResponse{
+					JobID:           jobID,
+					Status:          "running",
+					TimeoutExceeded: true,
+					Message:         "Pipeline still running after timeout. Check /job/" + jobID,
+				})
+				return
+			}
+			s.logger.Error("failed to wait for job tree", "job_id", jobID, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "failed to wait for job completion: "+err.Error())
+			return
+		}
+
+		// Success: Return aggregated results
+		duration := time.Since(startTime)
+		
+		var tree []JobResultData
+		var rootResult json.RawMessage
+		finalStatus := string(queue.StatusSucceeded)
+
+		for _, res := range results {
+			if res.JobID == jobID {
+				rootResult = res.Result
+			}
+			// If any job failed, the overall tree status is failed (for the purpose of the response)
+			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
+				finalStatus = string(res.Status)
+			}
+
+			tree = append(tree, JobResultData{
+				JobID:       res.JobID,
+				Plugin:      res.Plugin,
+				Command:     res.Command,
+				Status:      string(res.Status),
+				Result:      res.Result,
+				LastError:   res.LastError,
+				StartedAt:   res.StartedAt,
+				CompletedAt: res.CompletedAt,
+			})
+		}
+
+		respondJSON(w, http.StatusOK, SyncResponse{
+			JobID:      jobID,
+			Status:     finalStatus,
+			DurationMs: duration.Milliseconds(),
+			Result:     rootResult,
+			Tree:       tree,
+		})
+		return
+	}
+
+	// Default: Return success response immediately (async)
 	resp := TriggerResponse{
 		JobID:   jobID,
 		Status:  "queued",
@@ -122,8 +209,6 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(resp)
-
-	s.logger.Info("job enqueued via API", "job_id", jobID, "plugin", pluginName, "command", commandName)
 }
 
 // handleGetJob handles GET /job/{jobID}
@@ -158,9 +243,14 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// writeError writes a JSON error response
-func (s *Server) writeError(w http.ResponseWriter, statusCode int, message string) {
+// respondJSON is a helper to write JSON responses
+func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(ErrorResponse{Error: message})
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+// writeError writes a JSON error response
+func (s *Server) writeError(w http.ResponseWriter, statusCode int, message string) {
+	respondJSON(w, statusCode, ErrorResponse{Error: message})
 }

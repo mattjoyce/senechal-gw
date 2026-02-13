@@ -12,8 +12,19 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/api"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/senechal-gw/internal/router"
 	"github.com/mattjoyce/senechal-gw/internal/storage"
 )
+
+type mockRouter struct{}
+
+func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo { return nil }
+
+type mockWaiter struct{}
+
+func (m *mockWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
+	return nil, nil
+}
 
 // TestAPIIntegration tests the full API flow with real queue
 func TestAPIIntegration(t *testing.T) {
@@ -44,7 +55,7 @@ func TestAPIIntegration(t *testing.T) {
 		Listen: testPort,
 		APIKey: "test-key-123",
 	}
-	server := api.New(config, q, registry, slog.Default())
+	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, slog.Default())
 
 	// Start server in background
 	serverCtx, cancel := context.WithCancel(ctx)

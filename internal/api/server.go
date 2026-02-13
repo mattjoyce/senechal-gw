@@ -12,13 +12,25 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/auth"
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/senechal-gw/internal/router"
 )
 
 // JobQueuer defines the interface for job queue operations
 type JobQueuer interface {
 	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
 	GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error)
+	GetJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, error)
 	Depth(ctx context.Context) (int, error)
+}
+
+// TreeWaiter defines the interface for waiting on job tree completion
+type TreeWaiter interface {
+	WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error)
+}
+
+// PipelineRouter defines the interface for looking up pipelines
+type PipelineRouter interface {
+	GetPipelineByTrigger(trigger string) *router.PipelineInfo
 }
 
 // PluginRegistry defines the interface for plugin operations
@@ -33,29 +45,40 @@ type Config struct {
 	// APIKey is the legacy single bearer token (admin/full access).
 	APIKey string
 	// Tokens is an optional list of scoped bearer tokens.
-	Tokens []auth.TokenConfig
+	Tokens            []auth.TokenConfig
+	MaxConcurrentSync int
+	MaxSyncTimeout    time.Duration
 }
 
 // Server represents the HTTP API server
 type Server struct {
-	config    Config
-	queue     JobQueuer
-	registry  PluginRegistry
-	logger    *slog.Logger
-	server    *http.Server
-	startedAt time.Time
-	events    *EventHub
+	config        Config
+	queue         JobQueuer
+	registry      PluginRegistry
+	router        PipelineRouter
+	waiter        TreeWaiter
+	logger        *slog.Logger
+	server        *http.Server
+	startedAt     time.Time
+	events        *EventHub
+	syncSemaphore chan struct{}
 }
 
 // New creates a new API server instance
-func New(config Config, queue JobQueuer, registry PluginRegistry, logger *slog.Logger) *Server {
+func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, logger *slog.Logger) *Server {
+	if config.MaxConcurrentSync <= 0 {
+		config.MaxConcurrentSync = 10
+	}
 	return &Server{
-		config:    config,
-		queue:     queue,
-		registry:  registry,
-		logger:    logger,
-		startedAt: time.Now(),
-		events:    NewEventHub(256),
+		config:        config,
+		queue:         queue,
+		registry:      registry,
+		router:        router,
+		waiter:        waiter,
+		logger:        logger,
+		startedAt:     time.Now(),
+		events:        NewEventHub(256),
+		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
 	}
 }
 
@@ -67,7 +90,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Addr:         s.config.Listen,
 		Handler:      router,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 10 * time.Minute, // Increased to support synchronous pipelines
 		IdleTimeout:  60 * time.Second,
 	}
 

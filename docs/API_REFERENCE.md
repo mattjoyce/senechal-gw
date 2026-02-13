@@ -40,13 +40,54 @@ Trigger a plugin command immediately. This enqueues a job in the work queue.
 **Fields**:
 - `payload` (Object, required): The JSON object that will be passed to the plugin. If the command is `handle`, this payload is automatically wrapped in an `api.trigger` event envelope.
 
-**Response (202 Accepted)**:
+**Query Parameters**:
+- `async` (Boolean, optional): If `true`, forces the request to return immediately even if a synchronous pipeline is matched.
+
+**Response (Default / Async - 202 Accepted)**:
 ```json
 {
   "job_id": "uuid-v4",
   "status": "queued",
   "plugin": "plugin_name",
   "command": "command_name"
+}
+```
+
+**Response (Synchronous Pipeline - 200 OK)**:
+If the trigger matches a pipeline configured with `execution_mode: synchronous`, the API will block and return the full execution tree.
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "succeeded",
+  "duration_ms": 1250,
+  "result": { "status": "ok" },
+  "tree": [
+    {
+      "job_id": "uuid-v4",
+      "plugin": "plugin_name",
+      "command": "command_name",
+      "status": "succeeded",
+      "result": { "status": "ok" }
+    },
+    {
+      "job_id": "child-uuid",
+      "plugin": "notifier",
+      "command": "handle",
+      "status": "succeeded",
+      "result": { "status": "ok" }
+    }
+  ]
+}
+```
+
+**Response (Timeout - 202 Accepted)**:
+If a synchronous pipeline exceeds its `timeout` (or the system `max_sync_timeout`), it returns partial status.
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "running",
+  "timeout_exceeded": true,
+  "message": "Pipeline still running after timeout. Check /job/uuid-v4"
 }
 ```
 

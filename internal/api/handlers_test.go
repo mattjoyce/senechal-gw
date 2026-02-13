@@ -16,6 +16,7 @@ import (
 	"github.com/mattjoyce/senechal-gw/internal/plugin"
 	"github.com/mattjoyce/senechal-gw/internal/protocol"
 	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/senechal-gw/internal/router"
 )
 
 // mockQueue implements JobQueuer for testing
@@ -57,13 +58,41 @@ func (m *mockRegistry) All() map[string]*plugin.Plugin {
 	return m.plugins
 }
 
+func (m *mockQueue) GetJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, error) {
+	return nil, nil
+}
+
+// mockRouter implements PipelineRouter for testing
+type mockRouter struct {
+	getPipelineByTriggerFunc func(trigger string) *router.PipelineInfo
+}
+
+func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo {
+	if m.getPipelineByTriggerFunc != nil {
+		return m.getPipelineByTriggerFunc(trigger)
+	}
+	return nil
+}
+
+// mockWaiter implements TreeWaiter for testing
+type mockWaiter struct {
+	waitForJobTreeFunc func(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error)
+}
+
+func (m *mockWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
+	if m.waitForJobTreeFunc != nil {
+		return m.waitForJobTreeFunc(ctx, rootJobID, timeout)
+	}
+	return nil, nil
+}
+
 func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 	logger := slog.Default()
 	config := Config{
 		Listen: "localhost:8080",
 		APIKey: "test-key-123",
 	}
-	return New(config, q, reg, logger)
+	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, logger)
 }
 
 func TestHandleHealthz_NoAuth(t *testing.T) {
