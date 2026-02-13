@@ -1,6 +1,6 @@
 name: ts-bun-greet
 version: 0.1.0
-protocol: 1
+protocol: 2
 entrypoint: run.ts
 description: "TypeScript/Bun example plugin - greets the user with a configurable message"
 commands:

@@ -177,7 +177,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Build protocol request
 	req := &protocol.Request{
-		Protocol:     1,
+		Protocol:     2,
 		JobID:        job.ID,
 		Command:      job.Command,
 		Config:       pluginCfg.Config,

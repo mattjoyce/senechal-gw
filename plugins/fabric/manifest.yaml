@@ -1,6 +1,6 @@
 name: fabric
 version: 0.1.0
-protocol: 1
+protocol: 2
 entrypoint: run.py
 description: "Wrapper for fabric AI pattern tool - processes text through predefined patterns"
 commands: [poll, handle, health]

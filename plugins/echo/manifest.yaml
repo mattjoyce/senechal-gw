@@ -1,8 +1,8 @@
 name: echo
 version: 0.1.0
-protocol: 1
+protocol: 2
 entrypoint: run.sh
-description: "Reads protocol v1 request on stdin; returns logs + state_updates with last_run timestamp"
+description: "Reads protocol v2 request on stdin; returns logs + state_updates with last_run timestamp"
 commands:
   - name: poll
     type: write

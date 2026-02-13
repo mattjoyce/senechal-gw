@@ -2,7 +2,7 @@ package protocol
 
 import "time"
 
-// Request represents the protocol v1 request envelope sent to plugins via stdin.
+// Request represents the protocol v2 request envelope sent to plugins via stdin.
 type Request struct {
 	Protocol     int            `json:"protocol"`
 	JobID        string         `json:"job_id"`
@@ -15,7 +15,7 @@ type Request struct {
 	DeadlineAt   time.Time      `json:"deadline_at"`
 }
 
-// Response represents the protocol v1 response envelope received from plugins via stdout.
+// Response represents the protocol v2 response envelope received from plugins via stdout.
 type Response struct {
 	Status       string         `json:"status"` // ok | error
 	Error        string         `json:"error,omitempty"`

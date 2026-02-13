@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	supportedProtocol = 1
+	supportedProtocol = 2
 	manifestFilename  = "manifest.yaml"
 )
 

@@ -1,6 +1,6 @@
 name: file_handler
 version: 0.1.0
-protocol: 1
+protocol: 2
 entrypoint: run.py
 description: "Read and write local files with path restrictions"
 commands: [poll, handle, health]

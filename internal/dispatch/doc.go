@@ -1,14 +1,14 @@
-// Package dispatch handles plugin subprocess spawning, protocol v1 I/O, and timeout enforcement.
+// Package dispatch handles plugin subprocess spawning, protocol v2 I/O, and timeout enforcement.
 //
 // The dispatcher dequeues jobs from the queue and executes them by spawning plugin
-// subprocesses according to the protocol v1 specification. It enforces timeouts,
+// subprocesses according to the protocol v2 specification. It enforces timeouts,
 // captures stderr, updates plugin state, and handles job completion.
 //
 // Key features:
 //   - Serial FIFO dispatch (one job at a time)
 //   - Spawn-per-command subprocess execution
 //   - Timeout enforcement with SIGTERM → 5s grace → SIGKILL
-//   - Protocol v1 JSON over stdin/stdout
+//   - Protocol v2 JSON over stdin/stdout
 //   - Workspace/context injection for Governance Hybrid orchestration
 //   - State persistence via shallow merge
 //   - Stderr capture (capped at 64KB)
