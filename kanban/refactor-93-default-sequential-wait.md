@@ -1,0 +1,313 @@
+---
+id: 93
+status: backlog
+priority: High
+blocked_by: []
+tags: [architecture, refactor, pipelines, breaking-change, github-actions]
+---
+
+# Refactor: Default Sequential Steps to Wait (GitHub Actions Pattern)
+
+## Problem
+
+Current behavior is **unintuitive and breaks interactive use cases**:
+- Sequential pipeline steps fire-and-forget (async by default)
+- Parent jobs return immediately, children run in background
+- Impossible to get results from triggered workflows
+- Contradicts how every other workflow engine works (GitHub Actions, Tekton, Argo, Airflow)
+
+See RFC-91 and RFC-92 for full problem analysis.
+
+## Proposed Change
+
+**Adopt GitHub Actions pattern**: Sequential steps wait for completion by default.
+
+### Current Behavior (Async Default)
+
+```yaml
+steps:
+  - uses: fabric
+  - uses: formatter
+```
+
+**Today**: Both queued immediately, parent returns, no waiting.
+
+### New Behavior (Sync Default)
+
+```yaml
+steps:
+  - uses: fabric      # Runs first
+  - uses: formatter   # Waits for fabric to complete, then runs
+```
+
+**After refactor**: Each step waits for previous step to complete before starting next.
+
+## Design: Industry Standard Alignment
+
+Following **GitHub Actions / Tekton / Argo** conventions:
+
+### Sequential (Default - Wait)
+
+```yaml
+steps:
+  - uses: step1  # Runs first
+  - uses: step2  # Waits for step1
+  - uses: step3  # Waits for step2
+```
+
+### Parallel (Explicit Keyword)
+
+```yaml
+steps:
+  - parallel:  # NEW keyword (or keep 'split:')
+      - uses: branch-a
+      - uses: branch-b
+      - uses: branch-c
+    # All three run in parallel, next step waits for ALL to complete
+
+  - uses: next-step  # Waits for a, b, c
+```
+
+### Async Fire-and-Forget (Explicit Opt-In)
+
+```yaml
+steps:
+  - uses: background-task
+    async: true  # NEW: Explicit fire-and-forget
+
+  - uses: next-step  # Runs immediately, doesn't wait for background-task
+```
+
+## Trigger Endpoint Behavior
+
+### Current (Broken)
+
+```bash
+POST /trigger/fabric/handle
+→ HTTP 202 {"job_id": "...", "status": "queued"}
+# Job runs async, caller never gets result
+```
+
+### After Refactor (Fixed)
+
+```bash
+POST /trigger/fabric/handle
+→ HTTP 200 {"job_id": "...", "status": "succeeded", "result": {...}}
+# Waits for pipeline to complete, returns actual results
+```
+
+**Timeout handling**: If pipeline exceeds timeout (default 30s), return 202 with partial status.
+
+## Baggage / Context Accumulation
+
+**No change** - results still flow to expanding baggage in database:
+
+- ✓ `event_context` table accumulates metadata across steps
+- ✓ Immutable `origin_*` fields preserved
+- ✓ Workspace artifacts still cloned between steps
+- ✓ Parent-child lineage still tracked
+
+**What changes**: When parent job is marked "complete" and returns to caller.
+
+**Before**: Parent completes immediately after spawning children
+**After**: Parent completes after all descendant jobs complete
+
+## Implementation Plan
+
+### Phase 1: Dispatcher Refactor (Core Logic)
+
+**File**: `internal/dispatch/dispatcher.go`
+
+```go
+// Current: Parent job spawns children and returns immediately
+func (d *Dispatcher) executeStep(job *Job, step Step) error {
+    childJobID := d.queueJob(step.Plugin, step.Command, job.ID)
+    // Parent continues immediately ❌
+    return nil
+}
+
+// New: Parent job waits for children based on step type
+func (d *Dispatcher) executeStep(job *Job, step Step) error {
+    if step.Async {
+        // Explicit fire-and-forget
+        childJobID := d.queueJob(step.Plugin, step.Command, job.ID)
+        return nil
+    }
+
+    if step.Parallel != nil {
+        // Parallel execution
+        childIDs := d.queueParallelJobs(step.Parallel, job.ID)
+        return d.waitForAll(childIDs)  // NEW: Wait for all branches ✓
+    }
+
+    // Default: Sequential (wait)
+    childJobID := d.queueJob(step.Plugin, step.Command, job.ID)
+    return d.waitForJob(childJobID)  // NEW: Wait for completion ✓
+}
+
+func (d *Dispatcher) waitForJob(jobID string) error {
+    ticker := time.NewTicker(100 * time.Millisecond)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ticker.C:
+            job := d.getJob(jobID)
+            if job.Status == "succeeded" || job.Status == "failed" {
+                return job.Error
+            }
+        }
+    }
+}
+```
+
+### Phase 2: Config Schema Update
+
+**File**: `internal/config/types.go`
+
+```go
+type Step struct {
+    ID      string
+    Uses    string  // Plugin name
+    Call    string  // Nested pipeline
+    Parallel []Step  // NEW: Renamed from 'Split'
+    Async   bool    // NEW: Explicit fire-and-forget flag
+    OnEvents map[string][]string
+}
+```
+
+### Phase 3: Pipeline Parsing
+
+**File**: `internal/config/loader.go`
+
+Support both old and new syntax for backward compatibility:
+
+```go
+func parseStep(node yaml.Node) (Step, error) {
+    // Support 'parallel:' (new) and 'split:' (old, deprecated)
+    if node.HasField("parallel") || node.HasField("split") {
+        return Step{Parallel: parseSteps(node)}, nil
+    }
+
+    // Support 'async: true' flag
+    async := node.GetBool("async", false)
+
+    return Step{Uses: ..., Async: async}, nil
+}
+```
+
+### Phase 4: API Handler Updates
+
+**File**: `cmd/senechal-gw/api/handlers.go`
+
+```go
+func (h *Handler) Trigger(w http.ResponseWriter, r *http.Request) {
+    jobID := h.dispatcher.QueueJob(...)
+
+    // NEW: Wait for pipeline completion
+    timeout := 30 * time.Second  // TODO: Make configurable per pipeline
+    result, err := h.dispatcher.WaitForJob(jobID, timeout)
+
+    if err == ErrTimeout {
+        // Timeout: Return partial status
+        respondJSON(w, 202, TimeoutResponse{
+            JobID:     jobID,
+            Status:    "running",
+            ElapsedMs: 30000,
+        })
+        return
+    }
+
+    // Success: Return complete result
+    respondJSON(w, 200, SuccessResponse{
+        JobID:    jobID,
+        Status:   result.Status,
+        Result:   result,
+        Duration: result.Duration,
+    })
+}
+```
+
+### Phase 5: Testing
+
+**Test cases**:
+1. Sequential steps wait in order
+2. Parallel steps run concurrently and parent waits for all
+3. Async flag skips waiting
+4. Timeout returns partial status (202)
+5. Nested pipelines wait correctly
+6. Discord bot receives actual results (end-to-end)
+
+## Breaking Changes
+
+⚠️ **This is a breaking change** for existing pipelines:
+
+**Before**: Sequential steps fire-and-forget
+**After**: Sequential steps wait for completion
+
+**Migration path**:
+1. Bump version to 0.2.0 (breaking change)
+2. Add migration guide: "If you want old behavior, add `async: true` to steps"
+3. Most users will want new behavior (it's more intuitive)
+
+## Backward Compatibility (Optional)
+
+Could add global config flag to preserve old behavior:
+
+```yaml
+# config.yaml
+pipeline_defaults:
+  sequential_mode: wait  # 'wait' (new default) or 'async' (old behavior)
+```
+
+But **recommend**: Just make the breaking change. Current behavior is broken anyway.
+
+## Success Criteria
+
+- [ ] Sequential steps wait for previous step completion
+- [ ] Parallel steps (`parallel:` keyword) run concurrently
+- [ ] Async flag (`async: true`) enables fire-and-forget
+- [ ] Trigger endpoints return results (HTTP 200) for completed pipelines
+- [ ] Trigger endpoints return partial status (HTTP 202) on timeout
+- [ ] Discord bot receives actual fabric output (not "queued")
+- [ ] Baggage still accumulates in `event_context` table
+- [ ] Parent-child lineage still tracked
+- [ ] Test suite passes
+
+## Discord Use Case (Solved)
+
+```yaml
+# pipelines/discord-fabric.yaml
+pipelines:
+  - name: discord-fabric
+    on: fabric.handle
+    steps:
+      - uses: fabric  # Waits for completion (new default)
+```
+
+```python
+# Discord bot - NO CHANGES NEEDED
+response = requests.post("/trigger/fabric/handle", json={...})
+result = response.json()
+
+# Before: {"status": "queued"}
+# After:  {"status": "succeeded", "result": {"stdout": "..."}}
+
+await message.channel.send(result["result"]["stdout"])  # ✓ Works!
+```
+
+## Timeline
+
+- **Week 1**: Dispatcher refactor (wait logic)
+- **Week 2**: Config parsing, API handlers
+- **Week 3**: Testing, migration guide
+- **Release**: 0.2.0 (breaking change milestone)
+
+## Related RFCs
+
+- **RFC-91**: Problem statement (async-only blocks interactive use cases)
+- **RFC-92**: Initial proposal (pipeline execution modes) - superseded by this refactor
+- This refactor is **simpler** than RFC-92 because it changes the default rather than adding new modes
+
+## Narrative
+- 2026-02-13: Created to adopt GitHub Actions pattern (sequential = wait by default). Solves interactive use case problem (Discord, web UIs) by making intuitive behavior the default. User feedback: "ok, Adopt GitHub Actions Pattern." (by @assistant)
