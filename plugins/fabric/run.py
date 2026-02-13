@@ -31,21 +31,29 @@ def handle_command(config, state, event):
     if not text:
         return error_response("Missing 'text' field in event payload")
 
-    pattern = payload.get("pattern")
-    if not pattern:
-        return error_response("Missing 'pattern' field in event payload")
+    pattern = payload.get("pattern") or config.get("FABRIC_DEFAULT_PATTERN")
+    prompt = payload.get("prompt") or config.get("FABRIC_DEFAULT_PROMPT")
 
     model = payload.get("model") or config.get("FABRIC_DEFAULT_MODEL")
     fabric_bin = config.get("FABRIC_BIN_PATH", "fabric")
 
-    cmd = [fabric_bin, "--pattern", pattern]
+    # Support two modes:
+    # 1) pattern mode: fabric --pattern <preset> (existing behavior)
+    # 2) prompt mode: no pattern required; prompt is prepended to text input
+    cmd = [fabric_bin]
+    if pattern:
+        cmd.extend(["--pattern", pattern])
     if model:
         cmd.extend(["--model", model])
+
+    input_text = text
+    if prompt:
+        input_text = f"{prompt}\n\n{text}"
 
     try:
         result = subprocess.run(
             cmd,
-            input=text,
+            input=input_text,
             capture_output=True,
             text=True,
             timeout=120,
@@ -73,7 +81,8 @@ def handle_command(config, state, event):
                 "type": "fabric.completed",
                 "payload": {
                     "result": output,
-                    "pattern": pattern,
+                    "pattern": pattern or "",
+                    "prompt": prompt or "",
                     "model": model or "default",
                     "input_length": len(text),
                     "output_length": len(output),
@@ -83,10 +92,18 @@ def handle_command(config, state, event):
         "state_updates": {
             "last_run": datetime.now(timezone.utc).isoformat(),
             "executions_count": executions_count,
-            "last_pattern": pattern,
+            "last_pattern": pattern or "",
+            "last_prompt": prompt or "",
         },
         "logs": [
-            {"level": "info", "message": f"Executed fabric pattern: {pattern}"},
+            {
+                "level": "info",
+                "message": (
+                    f"Executed fabric pattern: {pattern}"
+                    if pattern else
+                    "Executed fabric with prompt/no-pattern mode"
+                ),
+            },
         ],
     }
 

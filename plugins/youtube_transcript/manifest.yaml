@@ -1,0 +1,9 @@
+name: youtube_transcript
+version: 0.1.0
+protocol: 1
+entrypoint: run.py
+description: "Fetch YouTube video transcripts from URL or video ID"
+commands: [poll, handle, health]
+config_keys:
+  required: []
+  optional: [default_language, request_timeout_seconds, user_agent]
