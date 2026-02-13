@@ -47,7 +47,7 @@ def fetch_via_jina(url):
     jina_url = f"https://r.jina.ai/{url}"
     headers = {
         "Accept": "text/plain",
-        "User-Agent": "ductile-gw/jina-reader",
+        "User-Agent": "ductile/jina-reader",
     }
     api_key = config.get("jina_api_key")
     if api_key:

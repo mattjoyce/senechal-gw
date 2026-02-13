@@ -1,6 +1,6 @@
 # Test Document for Pipeline
 
-This is a test document for the ductile-gw pipeline testing.
+This is a test document for the ductile pipeline testing.
 
 ## Introduction
 
