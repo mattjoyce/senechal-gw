@@ -76,6 +76,7 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Scheduling | Heartbeat with fuzzy intervals | Human-friendly, avoids thundering herd |
 | Execution | Serial FIFO dispatch | Simple, predictable, no concurrency bugs |
 | Routing | Config-declared, fan-out, exact match | Plugins stay dumb, core controls flow |
+| Pipeline Execution | Async by default; Sync opt-in | Preserves event-driven core while enabling interactive results |
 | State | SQLite | Proven, zero-ops, single JSON blob per plugin |
 | Delivery | At-least-once | Plugins own idempotency; core never drops work |
 | Plugin lifecycle | Spawn-per-command | Eliminates daemon management, memory leaks, zombie processes |
@@ -524,11 +525,48 @@ When the router creates a downstream job from an event:
 
 ---
 
-## 8. API Endpoints
+## 8. Pipelines (DSL)
+
+Pipelines provide a higher-level orchestration layer over raw routes, using a GitHub Actions-inspired notation.
+
+### 8.1 Schema
+
+```yaml
+pipelines:
+  - name: youtube-summary
+    on: discord.command.youtube    # Trigger event type
+    execution_mode: synchronous     # Optional: async | synchronous
+    timeout: 3m                    # Optional: duration (default 30s)
+    steps:
+      - id: download               # Optional
+        uses: youtube.download     # plugin.command
+        
+      - id: summarize
+        uses: fabric.summarize
+        
+      - id: notify
+        uses: discord.respond
+```
+
+### 8.2 Execution Modes
+
+- **async (default):** Fire-and-forget. The API returns `202 Accepted` with a `job_id` immediately. Dispatcher handles jobs as they come.
+- **synchronous (opt-in):** The API caller "stays on the line". The gateway waits for the entire execution tree (all steps) to reach a terminal state before responding with aggregated results.
+
+### 8.3 Guarded Bridge
+
+The engine remains event-driven and asynchronous internally. Synchronous behavior is implemented as a "Guarded Bridge" at the API layer:
+1. Dispatcher provides completion channels for job trees.
+2. API handler blocks on these channels.
+3. If `timeout` is exceeded, the bridge "breaks" and returns `202 Accepted` with the root `job_id`, allowing the client to poll for completion.
+
+---
+
+## 9. API Endpoints
 
 The HTTP API allows external systems (LLMs, scripts, other services) to programmatically trigger plugin execution and retrieve job results.
 
-### 8.1 Configuration
+### 9.1 Configuration
 
 ```yaml
 api:
@@ -538,7 +576,7 @@ api:
     api_key: ${API_KEY}  # Bearer token for authentication
 ```
 
-### 8.2 POST /trigger/{plugin}/{command}
+### 9.2 POST /trigger/{plugin}/{command}
 
 Enqueues a job for the specified plugin and command. Returns immediately with a job ID (fire-and-forget, asynchronous execution).
 
@@ -557,6 +595,11 @@ Enqueues a job for the specified plugin and command. Returns immediately with a 
 }
 ```
 
+**Synchronous Pipelines:**
+If a triggered event matches a pipeline with `execution_mode: synchronous`, the API handler blocks until the entire pipeline tree completes or the `timeout` is reached.
+- On success: Returns `200 OK` with aggregated results.
+- On timeout: Returns `202 Accepted` with the root `job_id`.
+
 **Error Responses:**
 - `401 Unauthorized` - Missing or invalid API key
 - `400 Bad Request` - Plugin not found or command not supported
@@ -570,7 +613,7 @@ curl -X POST http://localhost:8080/trigger/echo/poll \
   -d '{}'
 ```
 
-### 8.3 GET /job/{job_id}
+### 9.3 GET /job/{job_id}
 
 Retrieves the status and results of a previously triggered job.
 
@@ -621,7 +664,7 @@ Retrieves the status and results of a previously triggered job.
 - `401 Unauthorized` - Missing or invalid API key
 - `404 Not Found` - Job ID not found
 
-### 8.4 Authentication & Authorization (Sprint 3+)
+### 9.4 Authentication & Authorization (Sprint 3+)
 
 **Bearer token authentication** with **manifest-driven scopes** for fine-grained authorization.
 
@@ -690,7 +733,13 @@ See cards #35 (Token Scopes), #36 (Manifest Metadata), #38 (CLI Config Tool), #4
 - Invalid or missing key returns `401 Unauthorized`
 - No key rotation mechanism in MVP (manual config update + reload)
 
-### 8.5 Use Cases
+### 9.5 Resource Guarding (Synchronous Pipelines)
+
+To prevent HTTP worker exhaustion, synchronous pipelines are governed by a semaphore:
+- **api.max_concurrent_sync:** Max number of simultaneous blocking API calls (default 10).
+- **api.max_sync_timeout:** Hard limit on pipeline timeout to prevent zombie connections.
+
+### 9.6 Use Cases
 
 - **LLM Tool Calling:** LLM agents can curl /trigger to execute actions (e.g., "check my calendar", "sync Withings data")
 - **External Automation:** Scripts, cron jobs, or other services can trigger plugins programmatically
@@ -699,9 +748,9 @@ See cards #35 (Token Scopes), #36 (Manifest Metadata), #38 (CLI Config Tool), #4
 
 ---
 
-## 9. Webhooks
+## 10. Webhooks
 
-### 9.1 Listener
+### 10.1 Listener
 
 ```yaml
 webhooks:
@@ -714,7 +763,7 @@ webhooks:
       max_body_size: 1MB
 ```
 
-### 9.2 Security
+### 10.2 Security
 
 HMAC-SHA256 signature verification is **mandatory** for all webhook endpoints.
 
@@ -726,7 +775,7 @@ HMAC-SHA256 signature verification is **mandatory** for all webhook endpoints.
 
 No replay protection in V1. No rate limiting in V1 (proxy responsibility if fronted by reverse proxy).
 
-### 9.3 Health Endpoint
+### 10.3 Health Endpoint
 
 `/healthz` on the webhook listener port:
 
@@ -744,9 +793,9 @@ No authentication. Localhost only. Useful for systemd watchdog and operator chec
 
 ---
 
-## 10. Operations
+## 11. Operations
 
-### 10.1 Single-Instance Lock
+### 11.1 Single-Instance Lock
 
 PID file with `flock(LOCK_EX | LOCK_NB)`:
 
@@ -755,7 +804,7 @@ PID file with `flock(LOCK_EX | LOCK_NB)`:
 3. Write current PID.
 4. Lock held for process lifetime. Kernel releases on crash/exit.
 
-### 10.2 Crash Recovery
+### 11.2 Crash Recovery
 
 On startup:
 
@@ -766,7 +815,7 @@ On startup:
 5. Log each recovered job at WARN level.
 6. Resume normal dispatch.
 
-### 10.3 Config Reload
+### 11.3 Config Reload
 
 `senechal-gw reload` sends `SIGHUP` to the running process (found via PID file).
 
@@ -780,7 +829,7 @@ On SIGHUP:
 6. Newly added plugins discovered → `init` runs.
 7. Removed/disabled plugins → queued jobs cancelled (status → `dead`), no new jobs enqueued.
 
-### 10.4 Logging
+### 11.4 Logging
 
 **Core logs:** JSON to stdout.
 
@@ -792,7 +841,7 @@ Fields: `timestamp`, `level`, `component`, `plugin` (when relevant), `job_id` (w
 
 **Redaction:** Not in V1. Don't log secrets. Fix the plugin, don't bandage the core.
 
-### 10.5 Job Log Retention
+### 11.5 Job Log Retention
 
 Pruned on every scheduler tick:
 
@@ -802,7 +851,7 @@ DELETE FROM job_log WHERE completed_at < datetime('now', '-30 days')
 
 Default 30 days. Configurable via `service.job_log_retention`.
 
-### 10.6 CLI
+### 11.6 CLI
 
 ```
 senechal-gw start              # run the service (foreground)
@@ -815,7 +864,7 @@ senechal-gw logs [plugin]      # tail structured logs
 senechal-gw queue              # show pending/active jobs
 ```
 
-### 10.7 CLI Principles
+### 11.7 CLI Principles
 
 To ensure predictability and safety for both human and LLM operators, all CLI commands MUST adhere to the standards defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
 
@@ -827,9 +876,9 @@ Core requirements:
 
 ---
 
-## 11. Database Schema
+## 12. Database Schema
 
-### 10.1 Tables
+### 12.1 Tables
 
 ```sql
 -- Job queue (active and historical)
@@ -879,25 +928,25 @@ job_log (
 
 ---
 
-## 12. Configuration Reference
+## 13. Configuration Reference
 
 Senechal Gateway uses a **Monolithic Runtime** compiled from a modular, **Tiered Directory** structure.
 
-### 12.1 Overview
+### 13.1 Overview
 
 For the complete configuration specification, including file formats, merge logic, and integrity verification rules, see:  
 👉 **[docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md)**
 
-### 12.2 Key Principles
+### 13.2 Key Principles
 
 - **Directory-Based Modularity:** Configuration is split into `config.yaml`, `webhooks.yaml`, `tokens.yaml`, and modular directories for `plugins/` and `pipelines/`.
 - **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
 - **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
 
-## 13. Deployment
+## 14. Deployment
 
-### 13.1 Systemd Unit
+### 14.1 Systemd Unit
 
 ```ini
 [Unit]
@@ -916,13 +965,13 @@ Group=senechal
 WantedBy=multi-user.target
 ```
 
-### 13.2 Development
+### 14.2 Development
 
 Run `senechal-gw start` directly. No systemd required.
 
 ---
 
-## 14. Project Layout
+## 15. Project Layout
 
 ```
 senechal-gw/
@@ -951,7 +1000,7 @@ senechal-gw/
 
 ---
 
-## 15. Implementation Phases
+## 16. Implementation Phases
 
 | Phase | Sprint | Scope | Status |
 |-------|--------|-------|--------|
@@ -961,14 +1010,15 @@ senechal-gw/
 | 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | ✅ Complete |
 | 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | ✅ Complete |
 | 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |
-| 7. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | 🔄 In Progress (Status: ✅ Status implemented) |
-| 8. First Plugins | 6 | Port Withings & Garmin from existing Senechal, notify plugin | Planned |
+| 7. Pipeline Orchestration | 4 | Sync/Async execution modes, Guarded Bridge, YAML DSL, completion channels | ✅ Complete |
+| 8. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | 🔄 In Progress (Status: ✅ Status implemented) |
+| 9. First Plugins | 6 | Port Withings & Garmin from existing Senechal, notify plugin | Planned |
 
 **Note:** Phase 3 (API Triggers) was prioritized before Routing and Webhooks to enable LLM-driven automation via curl-based triggers. This allows external systems to programmatically enqueue jobs and retrieve results immediately, accelerating the path to production use cases.
 
 ---
 
-## 16. Deferred Decisions
+## 17. Deferred Decisions
 
 | Topic | Rationale |
 |-------|-----------|
