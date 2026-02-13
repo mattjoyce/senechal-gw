@@ -74,19 +74,28 @@ def handle_command(config, state, event):
     output = result.stdout.strip()
     executions_count = state.get("executions_count", 0) + 1
 
+    # Build event payload with fabric results
+    event_payload = {
+        "result": output,
+        "pattern": pattern or "",
+        "prompt": prompt or "",
+        "model": model or "default",
+        "input_length": len(text),
+        "output_length": len(output),
+    }
+
+    # Propagate pipeline context fields for downstream steps
+    # (e.g., output_dir, output_path, filename from upstream plugins)
+    for field in ["output_dir", "output_path", "filename", "file_path"]:
+        if field in payload:
+            event_payload[field] = payload[field]
+
     return {
         "status": "ok",
         "events": [
             {
                 "type": "fabric.completed",
-                "payload": {
-                    "result": output,
-                    "pattern": pattern or "",
-                    "prompt": prompt or "",
-                    "model": model or "default",
-                    "input_length": len(text),
-                    "output_length": len(output),
-                },
+                "payload": event_payload,
             }
         ],
         "state_updates": {
