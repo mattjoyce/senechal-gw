@@ -80,23 +80,57 @@ steps:
 
 ## Trigger Endpoint Behavior
 
+### Design Decision: Hybrid Approach
+
+**Sync by default** (unlike GitHub Actions), **async optional** (for GitHub-style workflows).
+
+**Rationale**: senechal-gw is a personal automation tool, not enterprise CI/CD. Most use cases want immediate results (Discord bots, CLI tools, web UIs), not polling loops.
+
 ### Current (Broken)
 
 ```bash
 POST /trigger/fabric/handle
 → HTTP 202 {"job_id": "...", "status": "queued"}
-# Job runs async, caller never gets result
+# Job runs async, caller never gets result ❌
 ```
 
-### After Refactor (Fixed)
+### After Refactor: Synchronous by Default
 
 ```bash
 POST /trigger/fabric/handle
 → HTTP 200 {"job_id": "...", "status": "succeeded", "result": {...}}
-# Waits for pipeline to complete, returns actual results
+# Waits for pipeline to complete, returns actual results ✓
 ```
 
-**Timeout handling**: If pipeline exceeds timeout (default 30s), return 202 with partial status.
+**Timeout handling**: If pipeline exceeds timeout (default 30s), return 202 with partial status:
+
+```bash
+POST /trigger/fabric/handle
+→ HTTP 202 {"job_id": "...", "status": "running", "timeout_exceeded": true}
+# Timeout: Pipeline still running, poll /job/{id} for status
+```
+
+### Optional: Async Mode (GitHub Actions Style)
+
+```bash
+POST /trigger/fabric/handle?async=true
+→ HTTP 202 {"job_id": "...", "status": "queued"}
+# Returns immediately, caller must poll /job/{id}
+```
+
+**Use async mode for**:
+- Long-running pipelines (> 2 minutes)
+- CI/CD workflows triggered by git push
+- Background batch processing
+- When you don't need immediate results
+
+### Query Params
+
+| Param | Behavior | Use Case |
+|-------|----------|----------|
+| (none) | **Sync** - wait for completion (default) | Discord bots, CLI, web UIs |
+| `?async=true` | Async - return immediately | Long-running workflows, CI/CD |
+| `?timeout=60s` | Custom timeout (overrides default 30s) | Longer pipelines |
 
 ## Baggage / Context Accumulation
 
@@ -204,26 +238,61 @@ func parseStep(node yaml.Node) (Step, error) {
 func (h *Handler) Trigger(w http.ResponseWriter, r *http.Request) {
     jobID := h.dispatcher.QueueJob(...)
 
-    // NEW: Wait for pipeline completion
-    timeout := 30 * time.Second  // TODO: Make configurable per pipeline
+    // NEW: Check for async mode via query param
+    asyncMode := r.URL.Query().Get("async") == "true"
+
+    if asyncMode {
+        // GitHub Actions style: Return immediately
+        respondJSON(w, 202, AsyncResponse{
+            JobID:  jobID,
+            Status: "queued",
+            Plugin: pluginName,
+            Command: commandName,
+        })
+        return
+    }
+
+    // Default: Wait for pipeline completion (synchronous)
+    timeout := 30 * time.Second  // Default timeout
+
+    // Allow custom timeout via query param
+    if timeoutParam := r.URL.Query().Get("timeout"); timeoutParam != "" {
+        if d, err := time.ParseDuration(timeoutParam); err == nil {
+            timeout = d
+        }
+    }
+
     result, err := h.dispatcher.WaitForJob(jobID, timeout)
 
     if err == ErrTimeout {
-        // Timeout: Return partial status
+        // Timeout exceeded: Return partial status
         respondJSON(w, 202, TimeoutResponse{
-            JobID:     jobID,
-            Status:    "running",
-            ElapsedMs: 30000,
+            JobID:           jobID,
+            Status:          "running",
+            TimeoutExceeded: true,
+            ElapsedMs:       int(timeout.Milliseconds()),
+            Message:         "Pipeline still running. Check /job/{id} for status.",
+        })
+        return
+    }
+
+    if err != nil {
+        // Job failed
+        respondJSON(w, 500, ErrorResponse{
+            JobID:  jobID,
+            Status: "failed",
+            Error:  err.Error(),
         })
         return
     }
 
     // Success: Return complete result
     respondJSON(w, 200, SuccessResponse{
-        JobID:    jobID,
-        Status:   result.Status,
-        Result:   result,
-        Duration: result.Duration,
+        JobID:      jobID,
+        Status:     result.Status,
+        DurationMs: result.Duration.Milliseconds(),
+        Result:     result,
+        Children:   result.Children,
     })
 }
 ```
@@ -231,12 +300,16 @@ func (h *Handler) Trigger(w http.ResponseWriter, r *http.Request) {
 ### Phase 5: Testing
 
 **Test cases**:
-1. Sequential steps wait in order
-2. Parallel steps run concurrently and parent waits for all
-3. Async flag skips waiting
-4. Timeout returns partial status (202)
-5. Nested pipelines wait correctly
-6. Discord bot receives actual results (end-to-end)
+1. **Default sync mode**: Sequential steps wait in order, API returns 200 with results
+2. **Parallel steps**: Run concurrently, parent waits for all branches
+3. **Step-level async**: `async: true` on step skips waiting for that step
+4. **Timeout handling**: Pipeline exceeds timeout, returns 202 with partial status
+5. **Async query param**: `?async=true` returns 202 immediately (GitHub-style)
+6. **Custom timeout**: `?timeout=60s` overrides default 30s timeout
+7. **Nested pipelines**: `call:` steps wait correctly for child pipeline
+8. **Discord integration**: End-to-end test with actual bot receiving results
+9. **Baggage accumulation**: Verify context still flows through event_context table
+10. **Backward compatibility**: Existing pipelines with `split:` still work
 
 ## Breaking Changes
 
