@@ -263,6 +263,28 @@ This mechanism guarantees that no job is silently dropped due to a crash, uphold
 ## 4. Configuration Reference
 The Senechal Gateway's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings, define plugin behavior, and set up advanced features like webhooks and routing.
 
+### Standard Plugins
+
+Senechal Gateway includes several standard plugins for common tasks.
+
+#### Jina Reader (`jina-reader`)
+The `jina-reader` plugin uses Jina AI's Reader API to convert any web page into clean, markdown-formatted text. This is highly useful for feeding web content into LLMs or other downstream processing steps.
+
+**Capabilities:**
+- **Poll Mode**: Periodically scrapes a configured URL and emits a `content_changed` event if the content has changed (detected via SHA-256 hash).
+- **Handle Mode**: Accepts a `url` in an event payload and returns the scraped markdown.
+
+**Configuration:**
+```yaml
+plugins:
+  jina-reader:
+    enabled: true
+    config:
+      url: "https://example.com" # Optional, for poll mode
+      max_size: 102400           # Optional, max response size in bytes (default 100KB)
+      jina_api_key: "jina_..."   # Optional, for higher rate limits
+```
+
 ### Example Configuration
 Below is a comprehensive example `config.yaml` with explanations for each major section and field.
 
@@ -582,10 +604,10 @@ The `senechal-gw` executable provides a structured command hierarchy for interac
 -   `senechal-gw job inspect <id>`: Shows the full lineage, baggage, and artifacts for a job.
 -   `senechal-gw --version` or `senechal-gw version`: Shows semantic version, commit, and build timestamp metadata.
 -   `senechal-gw --version --json`: Emits machine-readable version metadata.
--   `senechal-gw system status`: Shows the state of discovered plugins, queue depth, and health (planned).
+-   `senechal-gw system status`: Shows the state of discovered plugins, queue depth, and health.
 -   `senechal-gw system reload`: Sends a `SIGHUP` signal to reload configuration without restart (planned).
 -   `senechal-gw plugin list`: Lists all discovered plugins and their current status (planned).
--   `senechal-gw queue status`: Shows pending and active jobs in the work queue (planned).
+-   `senechal-gw plugin run <name>`: Manual execution (planned).
 
 ### Operational Integrity
 

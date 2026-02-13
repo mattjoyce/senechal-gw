@@ -961,7 +961,7 @@ senechal-gw/
 | 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | ✅ Complete |
 | 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | ✅ Complete |
 | 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |
-| 7. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | 🔄 In Progress |
+| 7. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | 🔄 In Progress (Status: ✅ Status implemented) |
 | 8. First Plugins | 6 | Port Withings & Garmin from existing Senechal, notify plugin | Planned |
 
 **Note:** Phase 3 (API Triggers) was prioritized before Routing and Webhooks to enable LLM-driven automation via curl-based triggers. This allows external systems to programmatically enqueue jobs and retrieve results immediately, accelerating the path to production use cases.
