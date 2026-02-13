@@ -53,14 +53,14 @@ api:
 
 **2. Merged config DROPS the tokens array:**
 ```bash
-$ ./senechal-gw config show --config config-split.yaml | grep -A5 "auth:"
+$ ./ductile config show --config config-split.yaml | grep -A5 "auth:"
 auth:
     api_key: ""    # ← Only default field, tokens array missing!
 ```
 
 **3. Validation detects the problem:**
 ```bash
-$ ./senechal-gw config check --config config-split.yaml
+$ ./ductile config check --config config-split.yaml
 Configuration valid (1 warning(s))
   WARN  [api] api.auth: API enabled but no authentication configured
 ```
@@ -93,7 +93,7 @@ api:
 ## Reproduction
 
 ```bash
-cd ~/admin/senechal-test
+cd ~/admin/ductile-test
 
 # Create split config (already done)
 ls config-split.yaml config-parts/api.yaml
@@ -102,11 +102,11 @@ ls config-split.yaml config-parts/api.yaml
 cat config-parts/api.yaml  # Shows tokens array ✓
 
 # Check merged config
-./senechal-gw config show --config config-split.yaml | grep -A10 "auth:"
+./ductile config show --config config-split.yaml | grep -A10 "auth:"
 # Result: tokens array missing ✗
 
 # Validation warning
-./senechal-gw config check --config config-split.yaml
+./ductile config check --config config-split.yaml
 # WARN: API enabled but no authentication configured ✓ (correctly detects missing auth)
 ```
 

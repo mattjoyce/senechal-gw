@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/mattjoyce/senechal-gw/internal/auth"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/router"
+	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
 )
 
 // JobQueuer defines the interface for job queue operations

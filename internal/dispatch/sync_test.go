@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/router"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
 )
 
 func TestDispatcher_WaitForJobTree(t *testing.T) {

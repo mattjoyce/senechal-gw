@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""YouTube transcript plugin for Senechal Gateway (protocol v1)."""
+"""YouTube transcript plugin for Ductile Gateway (protocol v1)."""
 import html
 import json
 import os
@@ -263,7 +263,7 @@ def fetch_transcript_via_ytdlp(video_id: str, language: str, timeout: int) -> Tu
         short = lang.split("-")[0]
         lang_opts = f"{lang},{short}.*,{short}"
 
-    with tempfile.TemporaryDirectory(prefix=f"senechal-yt-{video_id}-") as tmpdir:
+    with tempfile.TemporaryDirectory(prefix=f"ductile-yt-{video_id}-") as tmpdir:
         output_tpl = os.path.join(tmpdir, "%(id)s.%(ext)s")
         url = f"https://www.youtube.com/watch?v={video_id}"
         cmd = [

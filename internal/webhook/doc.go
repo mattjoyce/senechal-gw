@@ -1,7 +1,7 @@
 // Package webhook implements secure HTTP webhook endpoints with HMAC-SHA256 verification.
 //
 // Webhooks provide a secure way for external services (GitHub, GitLab, etc.) to trigger
-// senechal-gw jobs. All webhook endpoints require HMAC-SHA256 signature verification
+// ductile jobs. All webhook endpoints require HMAC-SHA256 signature verification
 // using a pre-shared secret.
 //
 // # Security Model

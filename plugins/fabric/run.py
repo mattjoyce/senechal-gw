@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fabric AI wrapper plugin for Senechal Gateway.
+"""Fabric AI wrapper plugin for Ductile Gateway.
 
 Wraps the fabric CLI tool to process text through predefined patterns.
 Protocol v1: reads JSON from stdin, writes JSON to stdout.

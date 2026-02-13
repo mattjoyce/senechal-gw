@@ -23,9 +23,9 @@ The `database.path` configuration setting is ignored. Gateway always creates dat
 
 **Config specified**:
 ```yaml
-# config/senechal-gw/config.yaml
+# config/ductile/config.yaml
 database:
-  path: ./senechal-test/data/senechal.db
+  path: ./ductile-test/data/ductile.db
 ```
 
 **Actual behavior**:
@@ -41,9 +41,9 @@ total 304
 -rw-r--r-- 1 matt matt  32768 state.db-shm
 -rw-r--r-- 1 matt matt 255472 state.db-wal
 
-$ ls -la senechal-test/data/
+$ ls -la ductile-test/data/
 total 332
--rw-r--r-- 1 matt matt      0 senechal.db   # Original (unused)
+-rw-r--r-- 1 matt matt      0 ductile.db   # Original (unused)
 -rw-r--r-- 1 matt matt 307200 state.db      # From previous run
 ```
 
@@ -52,7 +52,7 @@ total 332
 **From CONFIG_SPEC.md**:
 ```yaml
 database:
-  path: ./data/senechal.db
+  path: ./data/ductile.db
 ```
 
 Gateway should:
@@ -92,7 +92,7 @@ state:
 While I used:
 ```yaml
 database:
-  path: ./senechal-test/data/senechal.db
+  path: ./ductile-test/data/ductile.db
 ```
 
 ## Testing Recommendations
@@ -101,18 +101,18 @@ database:
 ```yaml
 # Try "state" instead of "database"
 state:
-  path: ./senechal-test/data/state.db
+  path: ./ductile-test/data/state.db
 ```
 
 **Test 2: Check startup logs**
 ```bash
-./senechal-gw system start --config config.yaml -v 2>&1 | grep -i "database\|state"
+./ductile system start --config config.yaml -v 2>&1 | grep -i "database\|state"
 # Look for path resolution logs
 ```
 
 **Test 3: Check config parsing**
 ```bash
-./senechal-gw config show 2>&1 | grep -A 2 "state:\|database:"
+./ductile config show 2>&1 | grep -A 2 "state:\|database:"
 # See what config actually loaded
 ```
 
@@ -141,4 +141,4 @@ Or run from directory where `./data/` is acceptable.
 
 ## Narrative
 
-- 2026-02-13: Discovered during TP-001 setup. Configured database path as `database.path: ./senechal-test/data/senechal.db` to isolate test environment. Gateway started successfully but created database at `./data/state.db` instead. Log message confirmed: "database opened" at "./data/state.db". Checking CONFIG_SPEC.md, noticed docs show `state.path` not `database.path` - likely using wrong config key. Also note filename is always `state.db` even though config specified `senechal.db`. Medium priority since workaround exists (use hardcoded path), but breaks config-as-spec principle. (by @test-admin)
+- 2026-02-13: Discovered during TP-001 setup. Configured database path as `database.path: ./ductile-test/data/ductile.db` to isolate test environment. Gateway started successfully but created database at `./data/state.db` instead. Log message confirmed: "database opened" at "./data/state.db". Checking CONFIG_SPEC.md, noticed docs show `state.path` not `database.path` - likely using wrong config key. Also note filename is always `state.db` even though config specified `ductile.db`. Medium priority since workaround exists (use hardcoded path), but breaks config-as-spec principle. (by @test-admin)

@@ -8,7 +8,7 @@ tags: [config, cli, checksums, ux]
 
 # Add Verbose Progress Output to `config hash-update`
 
-Add `-v` / `--verbose` and `--dry-run` to `senechal-gw config hash-update` so operators can see progress for each processed config scope file and its computed hash before writing changes.
+Add `-v` / `--verbose` and `--dry-run` to `ductile config hash-update` so operators can see progress for each processed config scope file and its computed hash before writing changes.
 
 ## Job Story
 
@@ -16,8 +16,8 @@ When I run `config hash-update` in include-based config mode, I want per-file pr
 
 ## Acceptance Criteria
 
-- `senechal-gw config hash-update` accepts `-v` and `--verbose` (equivalent behavior).
-- `senechal-gw config hash-update` accepts `--dry-run` to preview without writing `.checksums`.
+- `ductile config hash-update` accepts `-v` and `--verbose` (equivalent behavior).
+- `ductile config hash-update` accepts `--dry-run` to preview without writing `.checksums`.
 - In verbose mode, command prints progress per target directory and per scope file (`tokens.yaml`, `webhooks.yaml`) encountered.
 - Verbose output includes computed hash values for files that exist.
 - Verbose output clearly indicates skipped optional files that are absent.

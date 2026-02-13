@@ -10,7 +10,7 @@ import (
 func TestAcquirePIDLockWritesPID(t *testing.T) {
 	t.Parallel()
 
-	lockPath := filepath.Join(t.TempDir(), "senechal-gw.lock")
+	lockPath := filepath.Join(t.TempDir(), "ductile.lock")
 	l, err := AcquirePIDLock(lockPath)
 	if err != nil {
 		t.Fatalf("AcquirePIDLock: %v", err)

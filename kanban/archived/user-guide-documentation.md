@@ -9,7 +9,7 @@ tags: [sprint-2, documentation]
 
 # User Guide Documentation
 
-Create comprehensive user guide documenting the current MVP functionality. Helps users understand, configure, and extend Senechal Gateway.
+Create comprehensive user guide documenting the current MVP functionality. Helps users understand, configure, and extend Ductile.
 
 ## Acceptance Criteria
 
@@ -25,7 +25,7 @@ Create comprehensive user guide documenting the current MVP functionality. Helps
 ## Document Structure
 
 ### 1. Introduction (200 words)
-- **What is Senechal Gateway?**
+- **What is Ductile?**
   - Personal-scale automation gateway
   - Event-driven plugin orchestration
   - State persistence, crash recovery
@@ -52,14 +52,14 @@ Create comprehensive user guide documenting the current MVP functionality. Helps
 
 - **Installation**
   ```bash
-  git clone https://github.com/mattjoyce/senechal-gw
-  cd senechal-gw
-  go build -o senechal-gw ./cmd/senechal-gw
+  git clone https://github.com/mattjoyce/ductile
+  cd ductile
+  go build -o ductile ./cmd/ductile
   ```
 
 - **First Run**
   ```bash
-  ./senechal-gw start --config config.yaml
+  ./ductile start --config config.yaml
   # Watch logs, press Ctrl+C to stop
   ```
 
@@ -68,7 +68,7 @@ Create comprehensive user guide documenting the current MVP functionality. Helps
   - Check logs for "Enqueued poll job"
   - Query SQLite for plugin state
   ```bash
-  sqlite3 senechal.db "SELECT * FROM plugin_state;"
+  sqlite3 ductile.db "SELECT * FROM plugin_state;"
   ```
 
 ### 3. Configuration Reference (500 words)
@@ -109,12 +109,12 @@ Create comprehensive user guide documenting the current MVP functionality. Helps
 
 - **Check Plugin State**
   ```bash
-  sqlite3 senechal.db "SELECT plugin, state FROM plugin_state;"
+  sqlite3 ductile.db "SELECT plugin, state FROM plugin_state;"
   ```
 
 - **View Job History**
   ```bash
-  sqlite3 senechal.db \
+  sqlite3 ductile.db \
     "SELECT job_id, plugin, status, completed_at FROM job_log
      ORDER BY completed_at DESC LIMIT 10;"
   ```
@@ -207,34 +207,34 @@ Create comprehensive user guide documenting the current MVP functionality. Helps
 ### 6. Operations (300 words)
 - **Starting the Service**
   ```bash
-  ./senechal-gw start --config config.yaml
+  ./ductile start --config config.yaml
   ```
 
 - **Graceful Shutdown**
   - Press Ctrl+C (SIGINT)
-  - Or: `kill -TERM $(cat senechal.pid)`
+  - Or: `kill -TERM $(cat ductile.pid)`
   - Waits for running jobs to complete
 
 - **PID Lock Behavior**
   - Only one instance runs at a time
-  - Lock file: `{state_dir}/senechal.pid`
+  - Lock file: `{state_dir}/ductile.pid`
   - If locked: another instance is running
 
 - **Database Management**
-  - Backup: `cp senechal.db senechal.db.backup`
+  - Backup: `cp ductile.db ductile.db.backup`
   - Prune old logs: automatic via `job_log_retention`
   - Manual prune: `DELETE FROM job_log WHERE completed_at < ...`
 
 - **Log Analysis**
-  - Tail logs: `./senechal-gw start | tee senechal.log`
-  - Parse JSON: `cat senechal.log | jq 'select(.level=="ERROR")'`
+  - Tail logs: `./ductile start | tee ductile.log`
+  - Parse JSON: `cat ductile.log | jq 'select(.level=="ERROR")'`
   - Count jobs: `jq -s 'group_by(.plugin) | map({plugin:.[0].plugin, count:length})'`
 
 ### 7. Troubleshooting (300 words)
 - **"Failed to acquire PID lock"**
   - Another instance is running
-  - Check: `ps aux | grep senechal`
-  - Kill stale process or delete `senechal.pid`
+  - Check: `ps aux | grep ductile`
+  - Kill stale process or delete `ductile.pid`
 
 - **Plugin timeout**
   - Plugin took longer than configured timeout
@@ -243,8 +243,8 @@ Create comprehensive user guide documenting the current MVP functionality. Helps
 
 - **Database locked**
   - SQLite file permissions issue
-  - Check: `ls -l senechal.db`
-  - Fix: `chmod 644 senechal.db`
+  - Check: `ls -l ductile.db`
+  - Fix: `chmod 644 ductile.db`
 
 - **Plugin not discovered**
   - Check plugin directory path in config

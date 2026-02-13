@@ -19,12 +19,12 @@ func VerifyIntegrity(configDir string, files *ConfigFiles) (*IntegrityResult, er
 		if len(highSec) > 0 {
 			result.Passed = false
 			result.Errors = append(result.Errors,
-				fmt.Sprintf("no .checksums manifest found at %s but high-security files exist; run 'senechal-gw config lock'", checksumPath))
+				fmt.Sprintf("no .checksums manifest found at %s but high-security files exist; run 'ductile config lock'", checksumPath))
 			return result, nil
 		}
 		// No high-security files and no manifest — just warn
 		result.Warnings = append(result.Warnings,
-			fmt.Sprintf("no .checksums manifest found at %s; run 'senechal-gw config lock' to enable integrity verification", checksumPath))
+			fmt.Sprintf("no .checksums manifest found at %s; run 'ductile config lock' to enable integrity verification", checksumPath))
 		return result, nil
 	}
 

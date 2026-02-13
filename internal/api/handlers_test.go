@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/auth"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/router"
+	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
 )
 
 // mockQueue implements JobQueuer for testing

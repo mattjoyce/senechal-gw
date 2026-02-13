@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/ductile/internal/queue"
 )
 
 // Server represents the webhook HTTP server.

@@ -16,7 +16,7 @@ These decisions incorporate RFC-002 as drafted plus accepted amendments from the
 
 ### 1. Delivery Guarantee: At-Least-Once
 
-Senechal guarantees **at-least-once delivery**. A job may run more than once. It will never be silently dropped.
+Ductile guarantees **at-least-once delivery**. A job may run more than once. It will never be silently dropped.
 
 - Plugins MUST be idempotent, or use `state` to track what they've already processed.
 - The core provides a `dedupe_key` field on jobs. If a job is enqueued with a `dedupe_key` matching a job that succeeded within `dedupe_ttl`, it is **not enqueued** and the drop is logged at `INFO` with the `dedupe_key` and existing job ID.
@@ -88,7 +88,7 @@ plugins:
 - Plugin response includes `"retry": false`.
 - All other failures are retried.
 
-**Circuit breaker:** Configurable consecutive failure threshold per `(plugin, command)` pair. Default: 3 consecutive failures. Applies to **scheduler-originated poll jobs only** — webhook-triggered `handle` jobs are not blocked by poll failures. Resets after 30 minutes, or manually via `senechal-gw reset <plugin>`.
+**Circuit breaker:** Configurable consecutive failure threshold per `(plugin, command)` pair. Default: 3 consecutive failures. Applies to **scheduler-originated poll jobs only** — webhook-triggered `handle` jobs are not blocked by poll failures. Resets after 30 minutes, or manually via `ductile reset <plugin>`.
 
 ```yaml
 plugins:
@@ -144,8 +144,8 @@ One process per job. No long-lived plugin processes.
 7. Kill the process if it hasn't exited.
 
 - `init` runs once on first discovery or config change. Not retried on failure — plugin marked unhealthy.
-- `health` is called by `senechal-gw status`, not on a schedule.
-- Persistent connections (WebSockets, long-polling) are **out of scope**. If needed, run as a separate service that pushes events into Senechal via the webhook endpoint.
+- `health` is called by `ductile status`, not on a schedule.
+- Persistent connections (WebSockets, long-polling) are **out of scope**. If needed, run as a separate service that pushes events into Ductile via the webhook endpoint.
 - No streaming plugin mode. Not now, not ever for this core.
 
 ---
@@ -298,7 +298,7 @@ No replay protection in V1. No rate limiting in V1 (proxy responsibility).
 
 PID file with `flock(LOCK_EX | LOCK_NB)`.
 
-1. Create/open `<state_dir>/senechal-gw.lock`.
+1. Create/open `<state_dir>/ductile.lock`.
 2. Acquire `flock`. Fail → log error, exit 1.
 3. Write current PID.
 4. Lock held for process lifetime. Kernel releases on crash/exit.
@@ -307,7 +307,7 @@ PID file with `flock(LOCK_EX | LOCK_NB)`.
 
 ### 13. Config Reload
 
-`senechal-gw reload` sends `SIGHUP` to the running process.
+`ductile reload` sends `SIGHUP` to the running process.
 
 On SIGHUP:
 1. Parse new config. If invalid → log error, keep old config.
@@ -344,7 +344,7 @@ One job at a time, FIFO. No priority lanes. No concurrency.
 - Execution path: `<plugins_dir>/<plugin_name>/<entrypoint>`. `..` in entrypoint rejected.
 - Entrypoint MUST be executable (shebang handles interpreter).
 - World-writable plugin directories refused at load time.
-- Plugins run as same OS user as core. Use systemd `User=senechal`.
+- Plugins run as same OS user as core. Use systemd `User=ductile`.
 
 ---
 

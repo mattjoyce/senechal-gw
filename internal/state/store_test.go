@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mattjoyce/senechal-gw/internal/storage"
+	"github.com/mattjoyce/ductile/internal/storage"
 )
 
 func TestStoreGetMissingReturnsEmptyObject(t *testing.T) {

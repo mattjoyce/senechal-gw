@@ -2,14 +2,14 @@
 
 Status: Draft\
 Author: Matt Joyce\
-Project: senechal-gw\
+Project: ductile\
 Date: 2026
 
 ------------------------------------------------------------------------
 
 ## 1. Abstract
 
-This RFC proposes evolving the current senechal-gw project from a
+This RFC proposes evolving the current ductile project from a
 scheduled automation gateway into an **Agentic Loop Runtime**.
 
 The Agentic Loop Runtime is a lightweight execution kernel designed to

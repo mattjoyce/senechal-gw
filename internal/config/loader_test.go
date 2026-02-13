@@ -490,12 +490,12 @@ include:
   - plugins.yaml
 
 service:
-  name: senechal-gw
+  name: ductile
   tick_interval: 60s
   log_level: info
 state:
-  path: /var/lib/senechal-gw/state.db
-plugins_dir: /usr/local/lib/senechal-gw/plugins
+  path: /var/lib/ductile/state.db
+plugins_dir: /usr/local/lib/ductile/plugins
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
@@ -522,10 +522,10 @@ plugins:
 	}
 
 	// Verify config loaded correctly
-	if cfg.Service.Name != "senechal-gw" {
-		t.Errorf("Service.Name = %q, want %q", cfg.Service.Name, "senechal-gw")
+	if cfg.Service.Name != "ductile" {
+		t.Errorf("Service.Name = %q, want %q", cfg.Service.Name, "ductile")
 	}
-	if cfg.State.Path != "/var/lib/senechal-gw/state.db" {
+	if cfg.State.Path != "/var/lib/ductile/state.db" {
 		t.Errorf("State.Path = %q", cfg.State.Path)
 	}
 	if _, ok := cfg.Plugins["echo"]; !ok {
@@ -831,7 +831,7 @@ func TestDeepMerge(t *testing.T) {
 	// Create base.yaml with some defaults
 	baseYAML := `
 service:
-  name: senechal-gw
+  name: ductile
   tick_interval: 60s
   log_level: info
 `
@@ -875,8 +875,8 @@ plugins:
 	}
 
 	// Verify merge: should have name from base, log_level from override
-	if cfg.Service.Name != "senechal-gw" {
-		t.Errorf("Service.Name = %q, want %q", cfg.Service.Name, "senechal-gw")
+	if cfg.Service.Name != "ductile" {
+		t.Errorf("Service.Name = %q, want %q", cfg.Service.Name, "ductile")
 	}
 	if cfg.Service.LogLevel != "debug" {
 		t.Errorf("Service.LogLevel = %q, want %q (should be overridden)", cfg.Service.LogLevel, "debug")

@@ -132,7 +132,7 @@ func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 	data, err := os.ReadFile(checksumPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("checksums file not found (run 'senechal-gw config lock')")
+			return nil, fmt.Errorf("checksums file not found (run 'ductile config lock')")
 		}
 		return nil, fmt.Errorf("failed to read checksums: %w", err)
 	}
@@ -216,14 +216,14 @@ func VerifyScopeFiles(configDir string, manifest *ChecksumManifest, scopeFiles [
 		// File exists - must have hash in manifest
 		expectedHash, ok := manifest.Hashes[filename]
 		if !ok {
-			return fmt.Errorf("scope file %s has no hash in checksums (run 'senechal-gw config hash-update')", filename)
+			return fmt.Errorf("scope file %s has no hash in checksums (run 'ductile config hash-update')", filename)
 		}
 
 		// Verify hash
 		if err := VerifyFileHash(filePath, expectedHash); err != nil {
 			return fmt.Errorf("scope file verification failed: %w\n"+
 				"This indicates tampering or unauthorized modification.\n"+
-				"If you edited this file intentionally, run: senechal-gw config hash-update", err)
+				"If you edited this file intentionally, run: ductile config hash-update", err)
 		}
 	}
 

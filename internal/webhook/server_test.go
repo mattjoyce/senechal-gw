@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/ductile/internal/queue"
 )
 
 // mockQueue is a mock implementation of JobQueuer for testing.

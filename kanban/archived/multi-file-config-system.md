@@ -8,7 +8,7 @@ tags: [sprint-3, config, architecture]
 
 # Multi-File Config System (Nagios-Style)
 
-Implement multi-file configuration system using `~/.config/senechal-gw/` with separate definition files. Config loader compiles into monolithic runtime config with preflight validation. BLAKE3 hashes ensure token scope file integrity.
+Implement multi-file configuration system using `~/.config/ductile/` with separate definition files. Config loader compiles into monolithic runtime config with preflight validation. BLAKE3 hashes ensure token scope file integrity.
 
 ## Motivation
 
@@ -34,7 +34,7 @@ Compile at runtime with preflight validation.
 ## Config Directory Structure
 
 ```
-~/.config/senechal-gw/           # Default XDG location
+~/.config/ductile/           # Default XDG location
 ├── config.yaml                  # Service-level settings
 ├── plugins.yaml                 # Plugin configurations & schedules
 ├── routes.yaml                  # Event routing rules
@@ -48,8 +48,8 @@ Compile at runtime with preflight validation.
 
 **Custom location via flag:**
 ```bash
-senechal start --config-dir /etc/senechal-gw/
-senechal start --config-dir ./config-dev/
+ductile start --config-dir /etc/ductile/
+ductile start --config-dir ./config-dev/
 ```
 
 ## File Formats
@@ -57,7 +57,7 @@ senechal start --config-dir ./config-dev/
 ### config.yaml (Service Settings)
 ```yaml
 service:
-  plugins_dir: /opt/senechal-gw/plugins
+  plugins_dir: /opt/ductile/plugins
   tick_interval: 60s
   dedupe_ttl: 24h
   events:
@@ -156,7 +156,7 @@ tokens:
 ## Acceptance Criteria
 
 **Config Loading:**
-- Loader discovers config directory via `--config-dir` flag, `$SENECHAL_CONFIG_DIR` env, or `~/.config/senechal-gw/`
+- Loader discovers config directory via `--config-dir` flag, `$DUCTILE_CONFIG_DIR` env, or `~/.config/ductile/`
 - Loads all YAML files (config, plugins, routes, webhooks, tokens)
 - Each file optional except `config.yaml` (others default to empty)
 - Loads referenced scope JSON files
@@ -185,7 +185,7 @@ tokens:
 - No fallback or auto-recompute (security: intentional hard fail)
 
 **CLI Integration:**
-- All commands default to `~/.config/senechal-gw/`
+- All commands default to `~/.config/ductile/`
 - `--config-dir` flag overrides for all commands
 - Works with: `start`, `doctor`, `config`, `tokens`, etc.
 
@@ -200,7 +200,7 @@ type Loader struct {
 
 func NewLoader(configDir string) *Loader {
     if configDir == "" {
-        configDir = defaultConfigDir()  // ~/.config/senechal-gw
+        configDir = defaultConfigDir()  // ~/.config/ductile
     }
     return &Loader{configDir: configDir}
 }
@@ -344,12 +344,12 @@ To fix this issue:
      cat %s
 
   2. If changes are intentional, update the hash:
-     senechal config token rehash %s
+     ductile config token rehash %s
 
   3. Or restore from backup:
      cp %s.bak %s
 
-For security: Senechal will NOT start with mismatched hashes.`,
+For security: Ductile will NOT start with mismatched hashes.`,
         e.TokenName,
         e.ScopeFile,
         e.ExpectedHash,
@@ -397,7 +397,7 @@ if token.Scopes != nil && token.ScopesFile == "" {
     logger.Warn("Token uses deprecated inline scopes",
         "token", token.Name,
         "action", "migrate to scope files before Sprint 5",
-        "docs", "https://docs.senechal.dev/migration/scopes")
+        "docs", "https://docs.ductile.dev/migration/scopes")
 }
 ```
 
@@ -405,24 +405,24 @@ if token.Scopes != nil && token.ScopesFile == "" {
 
 ```bash
 # Config directory
-chmod 700 ~/.config/senechal-gw/
+chmod 700 ~/.config/ductile/
 
 # Main config (readable by owner only)
-chmod 600 ~/.config/senechal-gw/config.yaml
-chmod 600 ~/.config/senechal-gw/plugins.yaml
-chmod 600 ~/.config/senechal-gw/routes.yaml
-chmod 600 ~/.config/senechal-gw/webhooks.yaml
+chmod 600 ~/.config/ductile/config.yaml
+chmod 600 ~/.config/ductile/plugins.yaml
+chmod 600 ~/.config/ductile/routes.yaml
+chmod 600 ~/.config/ductile/webhooks.yaml
 
 # Token registry (sensitive)
-chmod 600 ~/.config/senechal-gw/tokens.yaml
+chmod 600 ~/.config/ductile/tokens.yaml
 
 # Scope files (read-only after creation)
-chmod 400 ~/.config/senechal-gw/scopes/*.json
+chmod 400 ~/.config/ductile/scopes/*.json
 ```
 
 ## CLI Helper Commands
 
-See card #38 (revised) for `senechal config` subcommands.
+See card #38 (revised) for `ductile config` subcommands.
 
 ## Testing
 
@@ -462,10 +462,10 @@ func TestHashMismatch(t *testing.T) {
 **Integration Test:**
 ```bash
 # Create config directory
-mkdir -p /tmp/senechal-test/{scopes}
+mkdir -p /tmp/ductile-test/{scopes}
 
 # Write valid configs
-cat > /tmp/senechal-test/config.yaml <<EOF
+cat > /tmp/ductile-test/config.yaml <<EOF
 service:
   plugins_dir: ./plugins
   tick_interval: 60s
@@ -475,14 +475,14 @@ api:
 EOF
 
 # Start service
-./senechal-gw start --config-dir /tmp/senechal-test
+./ductile start --config-dir /tmp/ductile-test
 # Should start successfully
 
 # Tamper with scope file
-echo '{"scopes":["admin:*"]}' > /tmp/senechal-test/scopes/test.json
+echo '{"scopes":["admin:*"]}' > /tmp/ductile-test/scopes/test.json
 
 # Restart service
-./senechal-gw start --config-dir /tmp/senechal-test
+./ductile start --config-dir /tmp/ductile-test
 # Should fail with hash mismatch error
 ```
 

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/state"
-	"github.com/mattjoyce/senechal-gw/internal/storage"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/storage"
 )
 
 func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {

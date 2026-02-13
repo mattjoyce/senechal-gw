@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/ductile/internal/queue"
 )
 
-//go:generate mockgen -destination=mocks/mock_queue.go -package=mocks github.com/mattjoyce/senechal-gw/internal/scheduler QueueService
+//go:generate mockgen -destination=mocks/mock_queue.go -package=mocks github.com/mattjoyce/ductile/internal/scheduler QueueService
 
 // QueueService defines the interface for queue operations used by the scheduler.
 type QueueService interface {

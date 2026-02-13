@@ -19,13 +19,13 @@ Implement the "Read" affordances for the LLM operator to surgically inspect conf
 
 ## Practical Test Scenarios
 1. **Scenario: Entity Discovery**
-   - Command: `senechal-gw config show plugin:echo --json`
+   - Command: `ductile config show plugin:echo --json`
    - Expect: A JSON object containing only the `echo` plugin configuration.
 2. **Scenario: Path Query**
-   - Command: `senechal-gw config get plugins.echo.schedule.every`
+   - Command: `ductile config get plugins.echo.schedule.every`
    - Expect: The string `5m` (or JSON if requested).
 3. **Scenario: Wildcard List**
-   - Command: `senechal-gw config show plugin:* --json`
+   - Command: `ductile config show plugin:* --json`
    - Expect: A JSON map of all discovered plugins and their configs.
 
 ## Narrative

@@ -54,7 +54,7 @@ The authentication configuration supports both legacy `api_key` (single token) a
 
 **Code**: Multiple auth mechanisms coexist
 
-`/home/matt/senechal-gw/internal/api/server.go`:
+`/home/matt/ductile/internal/api/server.go`:
 ```go
 type Config struct {
     // APIKey is the legacy single bearer token (admin/full access).
@@ -84,7 +84,7 @@ Add clear auth section:
 ```markdown
 ## Authentication Configuration
 
-Senechal supports two authentication modes:
+Ductile supports two authentication modes:
 
 ### Legacy: Single API Key (Simple)
 

@@ -2,7 +2,7 @@
 
 Status: Draft\
 Author: Matt Joyce\
-Project: senechal-gw\
+Project: ductile\
 Date: 2026
 
 ------------------------------------------------------------------------
@@ -158,8 +158,8 @@ Examples:
 Implementation note:
 
 -   These utilities may be exposed as subcommands of the main binary
-    (e.g., `senechal-gw validate`, `senechal-gw plugins list`,
-    `senechal-gw skills export`).
+    (e.g., `ductile validate`, `ductile plugins list`,
+    `ductile skills export`).
 -   Alternatively, they may be separate binaries, but the preference is:
     **single binary, subcommands**.
 

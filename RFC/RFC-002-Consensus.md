@@ -117,10 +117,10 @@ These were raised by individual reviewers and are worth considering but should n
 **Majority (2/3):** Too lenient at 5. Lower to 3. Scope to scheduler-originated jobs. (See Amendment 2.)
 
 ### Q3: Spawn-per-command for persistent connections?
-**Unanimous:** No. Persistent connections (WebSockets, long-polling) are fundamentally incompatible with spawn-per-command. They are out of scope. If needed, run them as separate services that push events into Senechal via the webhook endpoint.
+**Unanimous:** No. Persistent connections (WebSockets, long-polling) are fundamentally incompatible with spawn-per-command. They are out of scope. If needed, run them as separate services that push events into Ductile via the webhook endpoint.
 
 ### Q4: Streaming plugin mode?
-**Unanimous:** Out of scope. Not now, not ever for this core. If streaming is needed, use an external system that Senechal's spawn-per-command plugins interact with. The plugin model's value is simplicity through ephemeral processes. A streaming mode would destroy that.
+**Unanimous:** Out of scope. Not now, not ever for this core. If streaming is needed, use an external system that Ductile's spawn-per-command plugins interact with. The plugin model's value is simplicity through ephemeral processes. A streaming mode would destroy that.
 
 ---
 

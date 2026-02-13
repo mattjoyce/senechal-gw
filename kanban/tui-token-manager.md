@@ -19,7 +19,7 @@ Interactive Bubble Tea interface for creating, viewing, and managing API tokens.
 2. Choose scope strings from docs/memory
 3. Generate random token with `openssl rand -hex 32`
 4. Paste into config
-5. Run `senechal doctor` to validate
+5. Run `ductile doctor` to validate
 6. Restart service to apply
 
 **Problems:**
@@ -38,7 +38,7 @@ Interactive Bubble Tea interface for creating, viewing, and managing API tokens.
 
 ## Acceptance Criteria
 
-- `senechal tokens` subcommand launches interactive TUI
+- `ductile tokens` subcommand launches interactive TUI
 - Views:
   - **List tokens** - Show existing tokens from config with decoded scopes
   - **Create token** - Interactive wizard with checkboxes for scopes
@@ -64,7 +64,7 @@ Interactive Bubble Tea interface for creating, viewing, and managing API tokens.
 
 ### Main Menu
 ```
-┌─ Senechal Token Manager ──────────────────────────────────┐
+┌─ Ductile Token Manager ──────────────────────────────────┐
 │                                                             │
 │  Discovered plugins: withings, garmin, echo, slack         │
 │  Configured tokens: 4                                       │
@@ -228,7 +228,7 @@ Interactive Bubble Tea interface for creating, viewing, and managing API tokens.
 
 ## Implementation Details
 
-**Package:** `internal/tui/tokens` or `cmd/senechal-gw/tokens`
+**Package:** `internal/tui/tokens` or `cmd/ductile/tokens`
 
 **Library:** [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Huh](https://github.com/charmbracelet/huh) for forms
 
@@ -428,7 +428,7 @@ func init() {
 **Manual Testing:**
 ```bash
 # Launch TUI
-senechal tokens --config config.yaml
+ductile tokens --config config.yaml
 
 # Navigate through wizard
 # Create token with:
@@ -437,7 +437,7 @@ senechal tokens --config config.yaml
 # Copy output to config
 
 # Validate with doctor
-senechal doctor --config config.yaml
+ductile doctor --config config.yaml
 # Should show new token is valid
 ```
 
@@ -501,7 +501,7 @@ require (
 
 **1. Setting up GitHub webhook integration:**
 ```bash
-senechal tokens
+ductile tokens
 # Select "Create new token"
 # Name: github-integration
 # System scopes: read:jobs, read:events
@@ -512,7 +512,7 @@ senechal tokens
 
 **2. Debugging token permissions:**
 ```bash
-senechal tokens
+ductile tokens
 # Select "Inspect token"
 # Enter name: github-integration
 # View: Can access GET /job/{id}, cannot trigger withings
@@ -520,7 +520,7 @@ senechal tokens
 
 **3. Creating monitoring token:**
 ```bash
-senechal tokens
+ductile tokens
 # Create token with only read:* scope
 # Use for Grafana/TUI
 ```
@@ -549,7 +549,7 @@ The token manager solves the "I just want to give GitHub read-only access" probl
 5. Pasting everything in the right place
 
 You just:
-1. Run `senechal tokens`
+1. Run `ductile tokens`
 2. Follow the wizard
 3. Copy/paste the output
 

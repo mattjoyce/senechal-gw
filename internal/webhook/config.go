@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
+	"github.com/mattjoyce/ductile/internal/config"
 )
 
 // FromGlobalConfig converts config.WebhooksConfig to webhook.Config.

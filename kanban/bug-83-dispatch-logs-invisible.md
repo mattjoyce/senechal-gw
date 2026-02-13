@@ -26,7 +26,7 @@ Gateway started with `log_level: info`, echo plugin configured for 5m schedule.
 **Stdout output** (complete):
 ```
 19 lines total - only startup logs:
-- senechal-gw starting
+- ductile starting
 - PID lock acquired
 - Database opened
 - 3 plugins loaded
@@ -97,7 +97,7 @@ watch -n 1 'sqlite3 data/state.db "SELECT plugin, status, created_at FROM job_qu
 
 ```bash
 # Start gateway with INFO logging
-./senechal-gw system start --config config.yaml 2>&1 | tee gateway.log
+./ductile system start --config config.yaml 2>&1 | tee gateway.log
 
 # In another terminal, check line count
 watch -n 5 'wc -l gateway.log'

@@ -96,7 +96,7 @@ steps:
 
 **Sync by default** (unlike GitHub Actions), **async optional** (for GitHub-style workflows).
 
-**Rationale**: senechal-gw is a personal automation tool, not enterprise CI/CD. Most use cases want immediate results (Discord bots, CLI tools, web UIs), not polling loops.
+**Rationale**: ductile is a personal automation tool, not enterprise CI/CD. Most use cases want immediate results (Discord bots, CLI tools, web UIs), not polling loops.
 
 ### Current (Broken)
 
@@ -244,7 +244,7 @@ func parseStep(node yaml.Node) (Step, error) {
 
 ### Phase 4: API Handler Updates
 
-**File**: `cmd/senechal-gw/api/handlers.go`
+**File**: `cmd/ductile/api/handlers.go`
 
 ```go
 func (h *Handler) Trigger(w http.ResponseWriter, r *http.Request) {

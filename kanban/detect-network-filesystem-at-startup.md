@@ -13,8 +13,8 @@ When SQLite initialization fails on SMB/NFS/CIFS filesystems, the error is crypt
 ## Problem
 
 `modernc.org/sqlite` (pure-Go driver) fails on network filesystems with implementation-specific errors that don't indicate the actual issue. Example:
-- Working: `/Users/user/senechal.db` on local APFS
-- Failing: `/Volumes/Projects/senechal.db` on SMB share
+- Working: `/Users/user/ductile.db` on local APFS
+- Failing: `/Volumes/Projects/ductile.db` on SMB share
 - Same binary, same config, different filesystem = cryptic failure
 
 ## Acceptance Criteria

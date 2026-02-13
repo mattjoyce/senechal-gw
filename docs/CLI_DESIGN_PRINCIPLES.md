@@ -1,21 +1,21 @@
-# Senechal Gateway: CLI Design & Principles
+# Ductile: CLI Design & Principles
 
 **Version:** 1.0  
 **Date:** 2026-02-12  
 **Context:** RFC-004 (LLM as Operator/Admin)
 
-This document defines the interface standards for the `senechal-gw` CLI. All commands must adhere to these principles to ensure safety, predictability, and machine-readability.
+This document defines the interface standards for the `ductile` CLI. All commands must adhere to these principles to ensure safety, predictability, and machine-readability.
 
 ---
 
 ## 1. Core Philosophy: Intent over Implementation
 
-Senechal is designed to be operated by both humans and LLMs. The CLI should speak the language of **Governance and Intent**, not mechanical implementation details.
+Ductile is designed to be operated by both humans and LLMs. The CLI should speak the language of **Governance and Intent**, not mechanical implementation details.
 
 ### 1.1 NOUN ACTION Hierarchy
 All commands MUST follow a strict `NOUN ACTION` pattern. 
-*   **Good:** `senechal-gw job inspect`, `senechal-gw config seal`
-*   **Bad:** `senechal-gw inspect-job`, `senechal-gw hash-update`
+*   **Good:** `ductile job inspect`, `ductile config seal`
+*   **Bad:** `ductile inspect-job`, `ductile hash-update`
 
 ### 1.2 LLM-First Affordances
 The CLI is the primary "API" for an LLM operator. It must provide:
@@ -46,7 +46,7 @@ The CLI is the primary "API" for an LLM operator. It must provide:
 
 ## 4. First-Class Entities
 
-Senechal treats specific configuration blocks as "First-Class Entities." These are the primary objects an operator (Human or LLM) will interact with.
+Ductile treats specific configuration blocks as "First-Class Entities." These are the primary objects an operator (Human or LLM) will interact with.
 
 ### 4.1 The Entities
 *   **Plugin:** An executable capability (e.g., `plugin:withings`).
@@ -59,9 +59,9 @@ Senechal treats specific configuration blocks as "First-Class Entities." These a
 ### 4.2 CLI Intersection (Entity Addressing)
 The CLI uses a standard `<entity_type>:<entity_name>` syntax to address these nodes. 
 
-*   **Discovery:** `senechal-gw config show plugin:*` (Lists all plugins).
-*   **Granularity:** `senechal-gw config show plugin:withings` (Displays only the Withings config block).
-*   **Modification:** `senechal-gw config set plugin:withings.enabled=false`.
+*   **Discovery:** `ductile config show plugin:*` (Lists all plugins).
+*   **Granularity:** `ductile config show plugin:withings` (Displays only the Withings config block).
+*   **Modification:** `ductile config set plugin:withings.enabled=false`.
 
 This pattern ensures that as the configuration grows, the operator can surgically target specific components without needing to understand the layout of the entire monolithic file.
 
@@ -85,12 +85,12 @@ To support complex configurations, the `config` noun supports path-based matchin
 
 ### 4.1 Path Matching (`get` / `set`)
 Use dot-notation to access specific values.
-*   `senechal-gw config get plugins.withings.schedule.every`
+*   `ductile config get plugins.withings.schedule.every`
 
 ### 4.2 Entity Filtering (`show`)
 Use `<type>:<name>` syntax to isolate a first-class entity (Plugin, Pipeline, Webhook).
-*   `senechal-gw config show plugin:withings`
-*   `senechal-gw config show pipeline:video-wisdom`
+*   `ductile config show plugin:withings`
+*   `ductile config show pipeline:video-wisdom`
 
 This allows an LLM to "find any first class entity node that matches" without parsing a 2000-line monolithic YAML file.
 

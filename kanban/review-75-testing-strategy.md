@@ -31,7 +31,7 @@ Comprehensive assessment of current testing practices, gaps, and recommendations
 ```
 Package                Coverage    Assessment
 ---------------------------------------------------
-cmd/senechal-gw        9.6%       ❌ CRITICAL - CLI untested
+cmd/ductile        9.6%       ❌ CRITICAL - CLI untested
 internal/api           79.1%      ✅ Good
 internal/config        70.4%      ✅ Good
 internal/dispatch      60.9%      ⚠️  Adequate
@@ -102,7 +102,7 @@ $ ls .git/hooks/
 #### 3. **CLI Testing Gap (9.6% coverage)**
 **Impact: HIGH**
 
-The main CLI (`cmd/senechal-gw/main.go`) has only 9.6% test coverage, yet this is what users and LLM operators interact with!
+The main CLI (`cmd/ductile/main.go`) has only 9.6% test coverage, yet this is what users and LLM operators interact with!
 
 **Bugs found in CLI:**
 - `config check` schedule validation false warnings
@@ -197,12 +197,12 @@ jobs:
           fi
 
       - name: Build
-        run: CGO_ENABLED=1 go build ./cmd/senechal-gw
+        run: CGO_ENABLED=1 go build ./cmd/ductile
 
       - name: CLI smoke test
         run: |
-          ./senechal-gw version
-          ./senechal-gw config check --config test-fixtures/valid-config.yaml
+          ./ductile version
+          ./ductile config check --config test-fixtures/valid-config.yaml
 
   e2e:
     runs-on: ubuntu-latest
@@ -249,7 +249,7 @@ echo "✅ Pre-commit checks passed"
 
 ### Phase 3: CLI Test Coverage
 
-Create `cmd/senechal-gw/cli_test.go`:
+Create `cmd/ductile/cli_test.go`:
 
 ```go
 func TestConfigCheckCommand(t *testing.T) {
@@ -362,7 +362,7 @@ smoke-test:
   steps:
     - name: Start gateway
       run: |
-        ./senechal-gw system start --config test-config.yaml &
+        ./ductile system start --config test-config.yaml &
         sleep 3
 
     - name: Test API trigger
@@ -463,7 +463,7 @@ smoke-test:
 ### Immediate (Week 1):
 1. ✅ Create `.github/workflows/ci.yml` with test automation
 2. ✅ Add pre-commit hook template to repo
-3. ✅ Create CLI test suite (cmd/senechal-gw/cli_test.go)
+3. ✅ Create CLI test suite (cmd/ductile/cli_test.go)
 4. ✅ Document test requirements in CONTRIBUTING.md
 
 ### Short Term (Week 2-3):

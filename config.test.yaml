@@ -1,8 +1,8 @@
-# Senechal Gateway - TEST Environment Configuration
+# Ductile - TEST Environment Configuration
 # This configuration is specifically for testing development changes
 
 service:
-  name: senechal-gw-test
+  name: ductile-test
   tick_interval: 30s           # Faster ticks for testing
   log_level: debug             # Verbose logging for debugging
   log_format: json
@@ -10,7 +10,7 @@ service:
   job_log_retention: 24h       # 1 day retention for test
 
 state:
-  path: ./data/senechal-test.db  # Separate test database
+  path: ./data/ductile-test.db  # Separate test database
 
 # API Server: ENABLED for testing
 api:
@@ -18,9 +18,9 @@ api:
   listen: "0.0.0.0:8080"       # Listen on all interfaces in container
   auth:
     tokens:
-      - token: ${SENECHAL_TOKEN_ADMIN}
+      - token: ${DUCTILE_TOKEN_ADMIN}
         scopes: ["*"]
-      - token: ${SENECHAL_TOKEN_READONLY}
+      - token: ${DUCTILE_TOKEN_READONLY}
         scopes: ["plugin:ro", "job:ro", "state:ro"]
 
 plugins_dir: ./plugins
@@ -38,7 +38,7 @@ plugins:
       threshold: 3
       reset_after: 2m          # Faster reset for testing
     config:
-      message: "Test environment echo - ${SENECHAL_TEST_MESSAGE}"
+      message: "Test environment echo - ${DUCTILE_TEST_MESSAGE}"
 
   # File handler for pipeline testing (event-driven, not scheduled)
   file_handler:

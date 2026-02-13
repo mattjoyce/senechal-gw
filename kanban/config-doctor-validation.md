@@ -9,7 +9,7 @@ tags: [sprint-4, cli, config, validation]
 
 # Config Doctor / Validation Tool
 
-Implement `senechal doctor` command to validate configuration files before runtime. Catches errors early, validates scope references, checks plugin availability, and warns about common misconfigurations.
+Implement `ductile doctor` command to validate configuration files before runtime. Catches errors early, validates scope references, checks plugin availability, and warns about common misconfigurations.
 
 ## Motivation
 
@@ -26,7 +26,7 @@ Implement `senechal doctor` command to validate configuration files before runti
 
 ## Acceptance Criteria
 
-- `senechal doctor [--config path]` subcommand validates configuration
+- `ductile doctor [--config path]` subcommand validates configuration
 - Exit code 0 if valid, 1 if errors found, 2 if warnings only
 - Checks:
   - YAML syntax valid
@@ -49,16 +49,16 @@ Implement `senechal doctor` command to validate configuration files before runti
 
 ```bash
 # Validate default config
-senechal doctor
+ductile doctor
 
 # Validate specific config
-senechal doctor --config /path/to/config.yaml
+ductile doctor --config /path/to/config.yaml
 
 # Strict mode (warnings = errors)
-senechal doctor --strict
+ductile doctor --strict
 
 # JSON output (for CI/CD)
-senechal doctor --format json
+ductile doctor --format json
 ```
 
 ## Output Format
@@ -366,7 +366,7 @@ func (d *Doctor) warnMissingEnvVars(result *ValidationResult) {
 
 ## CLI Integration
 
-**cmd/senechal-gw/main.go:**
+**cmd/ductile/main.go:**
 ```go
 var doctorCmd = &cobra.Command{
     Use:   "doctor",
@@ -479,7 +479,7 @@ api:
 EOF
 
 # Run doctor
-./senechal-gw doctor --config /tmp/bad-config.yaml
+./ductile doctor --config /tmp/bad-config.yaml
 # Exit code: 1
 # Output contains: "plugin 'nonexistent' not found"
 ```
@@ -489,22 +489,22 @@ EOF
 **1. Pre-deployment validation:**
 ```bash
 # In CI/CD pipeline
-senechal doctor --config production.yaml --strict || exit 1
+ductile doctor --config production.yaml --strict || exit 1
 ```
 
 **2. Config development:**
 ```bash
 # While editing config.yaml
-senechal doctor
+ductile doctor
 # Fix errors
 vim config.yaml
-senechal doctor
+ductile doctor
 ```
 
 **3. Debugging scope issues:**
 ```bash
 # Check which scopes expand to which commands
-senechal doctor | grep "expands to"
+ductile doctor | grep "expands to"
 # external-cron: withings:ro (expands to: trigger:withings:poll)
 ```
 
@@ -518,7 +518,7 @@ senechal doctor | grep "expands to"
 ## Follow-On Work
 
 This enables:
-- **Pre-commit hooks** - Run `senechal doctor --strict` before commits
+- **Pre-commit hooks** - Run `ductile doctor --strict` before commits
 - **Config testing in CI** - Catch invalid configs before deployment
 - **TUI token tool (#38)** - Use validation logic to provide real-time feedback
 
@@ -533,4 +533,4 @@ Implementation is straightforward—most validation logic is pure functions over
 
 **Priority:** Normal. Nice to have before production, but not a blocker. Implement after #35 and #36 are stable.
 
-- 2026-02-11: Implemented `senechal doctor` command in `internal/doctor` package. Validates service config, plugin references (including required config keys), token scopes (manifest-driven and low-level), webhook paths/secrets, route cycles, plus warnings for unused plugins, missing env vars, deprecated syntax, and suspicious schedules. Human and JSON output formats, --strict flag. 18 tests passing. (by @claude)
+- 2026-02-11: Implemented `ductile doctor` command in `internal/doctor` package. Validates service config, plugin references (including required config keys), token scopes (manifest-driven and low-level), webhook paths/secrets, route cycles, plus warnings for unused plugins, missing env vars, deprecated syntax, and suspicious schedules. Human and JSON output formats, --strict flag. 18 tests passing. (by @claude)

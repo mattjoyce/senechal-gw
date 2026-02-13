@@ -9,7 +9,7 @@ tags: [maintenance, cli, refactor]
 
 # Refactor CLI to NOUN ACTION Hierarchy
 
-Refactor `cmd/senechal-gw/main.go` to strictly enforce the NOUN ACTION pattern defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
+Refactor `cmd/ductile/main.go` to strictly enforce the NOUN ACTION pattern defined in `docs/CLI_DESIGN_PRINCIPLES.md`.
 
 ---
 Switch to to main, and rebase.
@@ -24,7 +24,7 @@ Create a PR
     - `config lock` (replaces `hash-update`)
     - `job inspect <id>` (replaces `inspect <id>`)
     - `system start` (replaces `start`)
-- Support root aliases for backward compatibility (e.g., `senechal-gw start` -> `system start`).
+- Support root aliases for backward compatibility (e.g., `ductile start` -> `system start`).
 - Usage text reflects the new hierarchy.
 - Unit tests updated to match new structure.
 

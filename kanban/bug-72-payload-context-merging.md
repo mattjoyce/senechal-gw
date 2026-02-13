@@ -25,7 +25,7 @@ Currently, plugins only check `event.payload` for fields, causing failures when 
 
 E2E test of file_handler → fabric → file_handler pipeline:
 
-1. **Initial trigger** includes `output_dir`: `/home/matt/admin/senechal-test/reports`
+1. **Initial trigger** includes `output_dir`: `/home/matt/admin/ductile-test/reports`
 2. **Baggage accumulation works**: `output_dir` correctly stored in event_context table
 3. **Final step fails**: file_handler write action reports "Missing required field 'output_dir' in payload"
 
@@ -40,8 +40,8 @@ FROM event_context
 WHERE pipeline_name = 'file-to-report';
 
 -- Result:
--- analyze  | /home/matt/admin/senechal-test/reports
--- save     | /home/matt/admin/senechal-test/reports
+-- analyze  | /home/matt/admin/ductile-test/reports
+-- save     | /home/matt/admin/ductile-test/reports
 ```
 
 ## Expected Behavior
@@ -55,8 +55,8 @@ Plugins should check for fields in this order:
 
 ```bash
 # Start gateway locally
-cd ~/admin/senechal-test
-./senechal-gw system start --config config.yaml &
+cd ~/admin/ductile-test
+./ductile system start --config config.yaml &
 
 # Trigger 3-hop pipeline
 curl -X POST http://localhost:8080/trigger/file_handler/handle \
@@ -64,9 +64,9 @@ curl -X POST http://localhost:8080/trigger/file_handler/handle \
   -d '{
     "payload": {
       "action": "read",
-      "file_path": "/home/matt/admin/senechal-test/test-files/sample.md",
+      "file_path": "/home/matt/admin/ductile-test/test-files/sample.md",
       "pattern": "summarize",
-      "output_dir": "/home/matt/admin/senechal-test/reports"
+      "output_dir": "/home/matt/admin/ductile-test/reports"
     }
   }'
 

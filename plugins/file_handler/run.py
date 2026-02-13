@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""File handler plugin for Senechal Gateway.
+"""File handler plugin for Ductile Gateway.
 
 Reads and writes local files with path security validation.
 Protocol v1: reads JSON from stdin, writes JSON to stdout.

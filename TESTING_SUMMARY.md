@@ -1,15 +1,15 @@
-# Senechal Gateway - Test Environment Setup Complete
+# Ductile - Test Environment Setup Complete
 
 ## ✅ Test Environment Status: OPERATIONAL
 
-Successfully set up a Docker-based test environment for Senechal Gateway at `~/senechal-gw/`
+Successfully set up a Docker-based test environment for Ductile at `~/ductile/`
 
 ### What Was Created
 
 1. **Dockerfile** - Multi-stage build for Go application with runtime dependencies
 2. **docker-compose.yml** - Container orchestration for test environment
 3. **config.test.yaml** - Test-specific configuration with:
-   - Separate test database (`senechal-test.db`)
+   - Separate test database (`ductile-test.db`)
    - API enabled on port 8080
    - Debug logging enabled
    - Faster scheduler ticks (30s)
@@ -19,9 +19,9 @@ Successfully set up a Docker-based test environment for Senechal Gateway at `~/s
 
 ### Current Status
 
-- **Container**: Running successfully (senechal-gw-test)
+- **Container**: Running successfully (ductile-test)
 - **API Server**: Listening on http://localhost:8080
-- **Database**: SQLite at ./data/senechal-test.db
+- **Database**: SQLite at ./data/ductile-test.db
 - **Plugins Loaded**:
   - ✅ echo (v0.1.0) - Working
   - ⚠️ fabric - Failed to load (invalid command "execute")
@@ -45,7 +45,7 @@ Successfully set up a Docker-based test environment for Senechal Gateway at `~/s
 
 ```bash
 # Start test environment
-cd ~/senechal-gw
+cd ~/ductile
 docker compose up -d
 
 # View logs
@@ -73,7 +73,7 @@ When the development team delivers new code:
 
 ```bash
 # 1. Navigate to test environment
-cd ~/senechal-gw
+cd ~/ductile
 
 # 2. Pull latest changes
 git pull origin main
@@ -100,7 +100,7 @@ docker compose down -v
 **Admin Token**: `test_admin_token_change_me_in_production`
 **Read-Only Token**: `test_readonly_token_change_me`
 **API Port**: 8080
-**Database**: `/app/data/senechal-test.db` (in container)
+**Database**: `/app/data/ductile-test.db` (in container)
 **Log Level**: DEBUG
 **Scheduler Interval**: 30s ticks
 **Echo Plugin Schedule**: Every 5 minutes (with 10s jitter)
@@ -127,7 +127,7 @@ docker compose down -v
 ### Directory Structure
 
 ```
-~/senechal-gw/
+~/ductile/
 ├── Dockerfile                  # Container build definition
 ├── docker-compose.yml          # Orchestration config
 ├── config.test.yaml           # Test configuration
@@ -138,7 +138,7 @@ docker compose down -v
 │   ├── echo/                  # Working test plugin
 │   └── fabric/                # Currently broken
 ├── data/                      # Persistent data (created at runtime)
-│   └── senechal-test.db      # Test database
+│   └── ductile-test.db      # Test database
 └── logs/                      # Log directory (if configured)
 ```
 
@@ -148,7 +148,7 @@ For issues or questions:
 - Check logs: `docker compose logs`
 - Review TEST_ENVIRONMENT.md for detailed troubleshooting
 - Check container status: `docker compose ps`
-- Inspect container: `docker compose exec senechal-gw /bin/bash`
+- Inspect container: `docker compose exec ductile /bin/bash`
 
 ---
 

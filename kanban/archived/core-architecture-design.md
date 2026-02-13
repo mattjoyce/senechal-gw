@@ -8,7 +8,7 @@ tags: [architecture, core]
 
 # Core Architecture Design
 
-Define the runtime, event loop, and state management patterns for the Senechal Gateway.
+Define the runtime, event loop, and state management patterns for the Ductile.
 
 ## Acceptance Criteria
 - Runtime model is defined (single process, event-driven)

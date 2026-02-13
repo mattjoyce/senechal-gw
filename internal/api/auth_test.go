@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mattjoyce/senechal-gw/internal/auth"
+	"github.com/mattjoyce/ductile/internal/auth"
 )
 
 func TestAuthenticate_LegacyAPIKeyIsAdmin(t *testing.T) {

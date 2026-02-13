@@ -32,7 +32,7 @@ Implement webhooks, token-based authorization with manifest-driven scopes, multi
 1. **#39 - Multi-File Config System** (foundation)
    - Priority: High
    - Blockers: None
-   - `~/.config/senechal-gw/` with separate YAML files
+   - `~/.config/ductile/` with separate YAML files
    - BLAKE3 hash verification on scope files
    - Compile-time validation
 
@@ -76,7 +76,7 @@ Implement webhooks, token-based authorization with manifest-driven scopes, multi
 ## Acceptance Criteria
 
 **Multi-File Config (#39):**
-- Config loaded from `~/.config/senechal-gw/` directory
+- Config loaded from `~/.config/ductile/` directory
 - Separate files: config.yaml, plugins.yaml, routes.yaml, webhooks.yaml, tokens.yaml
 - BLAKE3 hash verification on scope files (hard fail if mismatch)
 - Cross-file reference validation (routes reference valid plugins, etc.)

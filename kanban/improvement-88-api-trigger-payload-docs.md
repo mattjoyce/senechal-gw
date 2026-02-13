@@ -37,7 +37,7 @@ curl -X POST /trigger/file_handler/handle \
 
 ## Root Cause
 
-**Code**: `/home/matt/senechal-gw/internal/api/types.go`
+**Code**: `/home/matt/ductile/internal/api/types.go`
 ```go
 type TriggerRequest struct {
     Payload json.RawMessage `json:"payload,omitempty"`
@@ -111,7 +111,7 @@ Document all API endpoints:
 ### 3. Add examples to CLI help
 
 ```bash
-$ senechal-gw help trigger
+$ ductile help trigger
 # Should show API curl examples
 ```
 

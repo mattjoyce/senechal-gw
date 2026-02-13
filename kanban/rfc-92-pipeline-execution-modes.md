@@ -18,7 +18,7 @@ tags: [architecture, pipelines, interactive, dag, critical, implementation-ready
 
 ## Executive Summary
 
-**Problem**: senechal-gw's async-only execution blocks interactive use cases (Discord bots, web UIs, CLI tools). Users get "queued" responses but never receive actual results.
+**Problem**: ductile's async-only execution blocks interactive use cases (Discord bots, web UIs, CLI tools). Users get "queued" responses but never receive actual results.
 
 **Solution**: Add optional `execution_mode: synchronous` to pipeline config. Pipelines explicitly declare whether they should wait for completion before returning results.
 

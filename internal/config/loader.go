@@ -112,10 +112,10 @@ func Load(configPath string) (*Config, error) {
 }
 
 // DiscoverConfigDir finds the config directory by checking standard locations.
-// Priority order: --config-dir flag, $SENECHAL_CONFIG_DIR, ~/.config/senechal-gw, /etc/senechal-gw, ./config.yaml (legacy)
+// Priority order: --config-dir flag, $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile, ./config.yaml (legacy)
 func DiscoverConfigDir() (string, error) {
 	// 1. Check environment variable
-	if dir := os.Getenv("SENECHAL_CONFIG_DIR"); dir != "" {
+	if dir := os.Getenv("DUCTILE_CONFIG_DIR"); dir != "" {
 		if _, err := os.Stat(dir); err == nil {
 			return dir, nil
 		}
@@ -123,14 +123,14 @@ func DiscoverConfigDir() (string, error) {
 
 	// 2. Check user config directory
 	if homeDir, err := os.UserHomeDir(); err == nil {
-		userConfigDir := filepath.Join(homeDir, ".config", "senechal-gw")
+		userConfigDir := filepath.Join(homeDir, ".config", "ductile")
 		if _, err := os.Stat(userConfigDir); err == nil {
 			return userConfigDir, nil
 		}
 	}
 
 	// 3. Check system config directory
-	systemConfigDir := "/etc/senechal-gw"
+	systemConfigDir := "/etc/ductile"
 	if _, err := os.Stat(systemConfigDir); err == nil {
 		return systemConfigDir, nil
 	}
@@ -141,7 +141,7 @@ func DiscoverConfigDir() (string, error) {
 		return legacyConfigPath, nil
 	}
 
-	return "", fmt.Errorf("no config found (checked: $SENECHAL_CONFIG_DIR, ~/.config/senechal-gw, /etc/senechal-gw, ./config.yaml)")
+	return "", fmt.Errorf("no config found (checked: $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile, ./config.yaml)")
 }
 
 // DiscoverScopeDirs returns config directories that need .checksums updates.
@@ -386,7 +386,7 @@ func verifyScopeFilesRecursively(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("checksum verification failed in %s: %w\n"+
 				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
-				"Run: senechal-gw config hash-update --config-dir %s", dir, err, dir)
+				"Run: ductile config hash-update --config-dir %s", dir, err, dir)
 		}
 
 		// Verify each scope file in this directory
@@ -396,13 +396,13 @@ func verifyScopeFilesRecursively(paths []string) error {
 			expectedHash, ok := checksums.Hashes[absPath]
 			if !ok {
 				return fmt.Errorf("scope file %s has no hash in checksums at %s\n"+
-					"Run: senechal-gw config hash-update --config-dir %s", filepath.Base(path), dir, dir)
+					"Run: ductile config hash-update --config-dir %s", filepath.Base(path), dir, dir)
 			}
 
 			if err := VerifyFileHash(path, expectedHash); err != nil {
 				return fmt.Errorf("scope file verification failed for %s: %w\n"+
 					"This indicates tampering or unauthorized modification.\n"+
-					"If you edited this file intentionally, run: senechal-gw config hash-update --config-dir %s", path, err, dir)
+					"If you edited this file intentionally, run: ductile config hash-update --config-dir %s", path, err, dir)
 			}
 		}
 	}

@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/mattjoyce/senechal-gw/internal/auth"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/queue"
 )
 
 // handleHealthz handles GET /healthz (no auth).

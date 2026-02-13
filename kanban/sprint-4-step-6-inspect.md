@@ -7,7 +7,7 @@ assignee: "@codex"
 tags: [sprint-4, cli, observability, lineage]
 ---
 
-# Implement `senechal-gw inspect` CLI Tool
+# Implement `ductile inspect` CLI Tool
 
 Create a CLI utility to visualize the execution lineage of a multi-hop event chain, showing accumulated baggage and workspace artifacts.
 
@@ -20,7 +20,7 @@ Create a PR
 ---
 
 ## Acceptance Criteria
-- `senechal-gw inspect <job_id>` command.
+- `ductile inspect <job_id>` command.
 - Fetches full lineage from `ContextStore.Lineage`.
 - Displays a tree or list view of:
     - Step ID and Pipeline Name.
@@ -30,5 +30,5 @@ Create a PR
 
 ## Narrative
 - 2026-02-11: Initial card creation. (by @gemini)
-- 2026-02-11: Began implementation as prerequisite unblock for card #54; adding `senechal-gw inspect <job_id>` to render context lineage, baggage, and workspace artifacts for a chain. (by @codex)
+- 2026-02-11: Began implementation as prerequisite unblock for card #54; adding `ductile inspect <job_id>` to render context lineage, baggage, and workspace artifacts for a chain. (by @codex)
 - 2026-02-11: Completed `inspect` command with lineage reporting from `ContextStore.Lineage`, structured baggage rendering, and workspace artifact listing per hop, including integration into CLI routing and unit tests for report formatting/content. (by @codex)

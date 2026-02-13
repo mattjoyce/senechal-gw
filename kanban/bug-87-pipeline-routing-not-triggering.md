@@ -45,7 +45,7 @@ Plugins emit events successfully but the pipeline router doesn't create child jo
   "events": [{
     "type": "file.read",
     "payload": {
-      "file_path": "/home/matt/admin/senechal-test/test-files/sample.md",
+      "file_path": "/home/matt/admin/ductile-test/test-files/sample.md",
       "filename": "sample.md",
       "content": "...",
       "size_bytes": 484
@@ -84,9 +84,9 @@ WHERE id='fbd8eac4-cdb3-494c-8416-cd64a77941d2';
 ## Code References
 
 **Evidence routing exists**:
-- `/home/matt/senechal-gw/internal/dispatch/dispatcher_test.go`:
+- `/home/matt/ductile/internal/dispatch/dispatcher_test.go`:
   - `TestDispatcher_RoutesTwoHopChainWithContextAndWorkspace`
-- `/home/matt/senechal-gw/internal/config/validator.go`:
+- `/home/matt/ductile/internal/config/validator.go`:
   - `validateRoutes()` function exists
 
 **Missing from logs**:
@@ -98,7 +98,7 @@ WHERE id='fbd8eac4-cdb3-494c-8416-cd64a77941d2';
 
 ```bash
 # Start gateway
-./senechal-gw system start --config config.yaml
+./ductile system start --config config.yaml
 
 # Trigger file read
 curl -X POST http://localhost:8080/trigger/file_handler/handle \

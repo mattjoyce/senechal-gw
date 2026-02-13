@@ -1,6 +1,6 @@
 # CLI Test Plan
 
-**Purpose:** Comprehensive, repeatable testing checklist for senechal-gw CLI commands.
+**Purpose:** Comprehensive, repeatable testing checklist for ductile CLI commands.
 
 **Audience:** Test lead (@test-admin) for efficient regression testing.
 
@@ -12,16 +12,16 @@
 
 ```bash
 # Navigate to test environment
-cd ~/admin/senechal-test
+cd ~/admin/ductile-test
 
 # Verify binary exists
-ls -lh senechal-gw
+ls -lh ductile
 
 # Check config is valid baseline
-./senechal-gw config check
+./ductile config check
 
 # Start gateway if needed (for job testing)
-./senechal-gw system start &
+./ductile system start &
 GW_PID=$!
 sleep 2
 
@@ -56,14 +56,14 @@ trap cleanup EXIT
 
 ### Test 1.1: Basic validation (valid config)
 ```bash
-./senechal-gw config check
+./ductile config check
 # Expected: "Configuration valid."
 # Exit code: 0
 ```
 
 ### Test 1.2: JSON output format
 ```bash
-./senechal-gw config check --format json
+./ductile config check --format json
 # Expected: Valid JSON with "valid": true
 # Exit code: 0
 # Parse: echo $output | jq -e '.valid == true'
@@ -71,7 +71,7 @@ trap cleanup EXIT
 
 ### Test 1.3: Strict mode (no warnings)
 ```bash
-./senechal-gw config check --strict
+./ductile config check --strict
 # Expected: "Configuration valid."
 # Exit code: 0
 ```
@@ -82,7 +82,7 @@ trap cleanup EXIT
 cp config.yaml config.yaml.backup
 echo "invalid: [unclosed" >> config.yaml
 
-./senechal-gw config check
+./ductile config check
 # Expected: Error message about YAML syntax
 # Exit code: 1
 
@@ -100,7 +100,7 @@ plugins:
     # Missing schedule!
 EOF
 
-./senechal-gw config check --config /tmp/test-config.yaml
+./ductile config check --config /tmp/test-config.yaml
 # Expected: "schedule is required for enabled plugins"
 # Exit code: 1
 ```
@@ -110,7 +110,7 @@ EOF
 # Verify "daily" doesn't trigger false warning
 grep -A3 "schedule:" config.yaml | grep "daily"
 
-./senechal-gw config check
+./ductile config check
 # Expected: No warning about "daily is very short (< 1m)"
 # If warning appears: REGRESSION of fixed bug
 ```
@@ -125,20 +125,20 @@ grep -A3 "schedule:" config.yaml | grep "daily"
 
 ### Test 2.1: Show full config
 ```bash
-./senechal-gw config show > /tmp/config-output.yaml
+./ductile config show > /tmp/config-output.yaml
 # Expected: Valid YAML output
 # Verify: cat /tmp/config-output.yaml | grep "service:"
 ```
 
 ### Test 2.2: Config includes defaults
 ```bash
-./senechal-gw config show | grep "tick_interval"
+./ductile config show | grep "tick_interval"
 # Expected: "tick_interval: 1m0s" (default value)
 ```
 
 ### Test 2.3: Config shows merged values
 ```bash
-./senechal-gw config show | grep "log_level"
+./ductile config show | grep "log_level"
 # Expected: log_level value from config or default
 ```
 
@@ -152,35 +152,35 @@ grep -A3 "schedule:" config.yaml | grep "daily"
 
 ### Test 3.1: Get boolean value
 ```bash
-result=$(./senechal-gw config get plugins.fabric.enabled)
+result=$(./ductile config get plugins.fabric.enabled)
 # Expected: "true" or "false"
 # Verify: [[ "$result" == "true" ]] || [[ "$result" == "false" ]]
 ```
 
 ### Test 3.2: Get string value
 ```bash
-result=$(./senechal-gw config get service.log_level)
+result=$(./ductile config get service.log_level)
 # Expected: "info", "debug", etc.
 echo $result | grep -E "^(debug|info|warn|error)$"
 ```
 
 ### Test 3.3: Get duration value
 ```bash
-result=$(./senechal-gw config get service.tick_interval)
+result=$(./ductile config get service.tick_interval)
 # Expected: Duration format like "1m0s"
 echo $result | grep -E "[0-9]+(ms|s|m|h)"
 ```
 
 ### Test 3.4: Nonexistent key (error handling)
 ```bash
-./senechal-gw config get nonexistent.key.path 2>&1
+./ductile config get nonexistent.key.path 2>&1
 # Expected: Error message with "not found"
 # Exit code: 1
 ```
 
 ### Test 3.5: Nested path access
 ```bash
-result=$(./senechal-gw config get plugins.fabric.schedule.every)
+result=$(./ductile config get plugins.fabric.schedule.every)
 # Expected: Schedule value like "daily" or "1h"
 [[ -n "$result" ]]  # Not empty
 ```
@@ -198,31 +198,31 @@ result=$(./senechal-gw config get plugins.fabric.schedule.every)
 ### Test 4.1: Dry-run mode (no modification)
 ```bash
 # Capture current value
-before=$(./senechal-gw config get plugins.echo.enabled)
+before=$(./ductile config get plugins.echo.enabled)
 
 # Try dry-run
-./senechal-gw config set --dry-run plugins.echo.enabled=true
+./ductile config set --dry-run plugins.echo.enabled=true
 # Expected: "Dry-run: would set..." message
 # Expected: "Configuration check PASSED"
 
 # Verify no change
-after=$(./senechal-gw config get plugins.echo.enabled)
+after=$(./ductile config get plugins.echo.enabled)
 [[ "$before" == "$after" ]]
 ```
 
 ### Test 4.2: Apply changes (valid value)
 ```bash
 # Set a safe value
-./senechal-gw config set --apply service.log_level=debug
+./ductile config set --apply service.log_level=debug
 # Expected: "Successfully set..."
 # Exit code: 0
 
 # Verify change persisted
-result=$(./senechal-gw config get service.log_level)
+result=$(./ductile config get service.log_level)
 [[ "$result" == "debug" ]]
 
 # Restore original
-./senechal-gw config set --apply service.log_level=info
+./ductile config set --apply service.log_level=info
 ```
 
 ### Test 4.3: 🐛 Bug #78 - Backup creation
@@ -231,7 +231,7 @@ result=$(./senechal-gw config get service.log_level)
 rm -f config.yaml.bak
 
 # Modify config
-./senechal-gw config set --apply service.log_level=debug
+./ductile config set --apply service.log_level=debug
 
 # Check for backup
 ls config.yaml.bak
@@ -243,31 +243,31 @@ ls config.yaml.bak
 ### Test 4.4: 🐛 Bug #79 - Validation before write
 ```bash
 # Try to set invalid value (enable plugin without schedule)
-./senechal-gw config set --apply plugins.echo.enabled=true
+./ductile config set --apply plugins.echo.enabled=true
 # Expected: Validation error BEFORE writing
 # KNOWN BUG: Writes anyway, corrupts config (bug #79)
 # Status: 🐛 FAIL (expected until fixed)
 
 # If bug present, manually fix
 sed -i 's/enabled: true/enabled: false/' config.yaml
-./senechal-gw config check  # Verify fixed
+./ductile config check  # Verify fixed
 ```
 
 ### Test 4.5: Flag position requirement
 ```bash
 # Wrong: flag after path=value
-./senechal-gw config set plugins.echo.enabled=true --apply 2>&1
+./ductile config set plugins.echo.enabled=true --apply 2>&1
 # Expected: Usage error
 # Exit code: 1
 
 # Correct: flag before path=value
-./senechal-gw config set --apply plugins.echo.enabled=false
+./ductile config set --apply plugins.echo.enabled=false
 # Expected: Success (if value valid)
 ```
 
 ### Test 4.6: Requires --dry-run or --apply flag
 ```bash
-./senechal-gw config set plugins.echo.enabled=false 2>&1
+./ductile config set plugins.echo.enabled=false 2>&1
 # Expected: Error "either --dry-run or --apply must be specified"
 # Exit code: 1
 ```
@@ -282,14 +282,14 @@ sed -i 's/enabled: true/enabled: false/' config.yaml
 
 ### Test 5.1: Basic lock operation
 ```bash
-./senechal-gw config lock
+./ductile config lock
 # Expected: "Successfully locked configuration in 1 directory/ies"
 # Exit code: 0
 ```
 
 ### Test 5.2: Verbose mode
 ```bash
-./senechal-gw config lock -v 2>&1 | tee /tmp/lock-output.txt
+./ductile config lock -v 2>&1 | tee /tmp/lock-output.txt
 # Expected: "Processing directory:" message
 # Expected: "WROTE .checksums:" message
 grep "WROTE .checksums" /tmp/lock-output.txt
@@ -297,7 +297,7 @@ grep "WROTE .checksums" /tmp/lock-output.txt
 
 ### Test 5.3: Checksums file created
 ```bash
-./senechal-gw config lock
+./ductile config lock
 
 # Verify file exists
 ls -la .checksums
@@ -310,7 +310,7 @@ grep "version: 1" .checksums
 
 ### Test 5.4: Regression - Hardcoded filenames (bug #76, cancelled)
 ```bash
-./senechal-gw config lock -v 2>&1 | grep "tokens.yaml"
+./ductile config lock -v 2>&1 | grep "tokens.yaml"
 # Expected: "SKIP tokens.yaml: not found (optional)"
 # Note: This is bug #76 but user cancelled it, so this is expected behavior
 ```
@@ -328,7 +328,7 @@ grep "version: 1" .checksums
 ### Test 6.1: Create test job
 ```bash
 # Ensure gateway running
-curl -s http://localhost:8080/health || ./senechal-gw system start &
+curl -s http://localhost:8080/health || ./ductile system start &
 
 # Trigger job
 JOB_ID=$(curl -s -X POST http://localhost:8080/trigger/fabric/handle \
@@ -344,7 +344,7 @@ sleep 5
 
 ### Test 6.2: Human-readable output
 ```bash
-./senechal-gw job inspect $JOB_ID
+./ductile job inspect $JOB_ID
 # Expected: Lineage report with:
 #   - Job ID, Plugin, Command, Status
 #   - Context ID, Hops
@@ -354,18 +354,18 @@ sleep 5
 
 ### Test 6.3: 🐛 Bug #80 - JSON output
 ```bash
-./senechal-gw job inspect $JOB_ID --json
+./ductile job inspect $JOB_ID --json
 # Expected: Valid JSON output
 # KNOWN BUG: Doesn't produce JSON (bug #80)
 # Status: 🐛 FAIL (expected until fixed)
 
 # If working, verify JSON:
-./senechal-gw job inspect $JOB_ID --json | jq -e '.job_id'
+./ductile job inspect $JOB_ID --json | jq -e '.job_id'
 ```
 
 ### Test 6.4: Nonexistent job ID (error handling)
 ```bash
-./senechal-gw job inspect 00000000-0000-0000-0000-000000000000 2>&1
+./ductile job inspect 00000000-0000-0000-0000-000000000000 2>&1
 # Expected: Error message about job not found
 # Exit code: 1
 ```
@@ -383,10 +383,10 @@ sleep 5
 ### Test 7.1: Gateway starts successfully
 ```bash
 # Kill any existing instance
-pkill -f senechal-gw
+pkill -f ductile
 
 # Start in background
-./senechal-gw system start > /tmp/gateway.log 2>&1 &
+./ductile system start > /tmp/gateway.log 2>&1 &
 GW_PID=$!
 sleep 2
 
@@ -418,8 +418,8 @@ curl -s -X POST http://localhost:8080/trigger/echo/poll \
 ### Test 7.4: Gateway logs to file
 ```bash
 # Start with explicit log file
-pkill -f senechal-gw
-./senechal-gw system start > gateway-test.log 2>&1 &
+pkill -f ductile
+./ductile system start > gateway-test.log 2>&1 &
 sleep 2
 
 # Verify log file created and has content
@@ -436,35 +436,35 @@ sleep 2
 
 ### Test 8.1: Main help
 ```bash
-./senechal-gw --help
+./ductile --help
 # Expected: Lists all nouns (system, config, job, plugin)
-grep -E "(system|config|job|plugin)" <(./senechal-gw --help)
+grep -E "(system|config|job|plugin)" <(./ductile --help)
 ```
 
 ### Test 8.2: Noun-level help
 ```bash
-./senechal-gw config help
+./ductile config help
 # Expected: Lists all config actions
-grep -E "(lock|check|show|get|set)" <(./senechal-gw config help)
+grep -E "(lock|check|show|get|set)" <(./ductile config help)
 ```
 
 ### Test 8.3: Improvement #81 - Action-level help
 ```bash
-./senechal-gw config check --help 2>&1
+./ductile config check --help 2>&1
 # Expected: Shows flags for config check
-# Expected: Contains "Usage: senechal-gw config check"
+# Expected: Contains "Usage: ductile config check"
 # Status: ✅ PASS
 ```
 
 ### Test 8.4: Version info
 ```bash
-./senechal-gw --version
+./ductile --version
 # Expected: Contains version, commit, and built_at lines
-grep -E "(^senechal-gw |^commit:|^built_at:)" <(./senechal-gw --version)
+grep -E "(^ductile |^commit:|^built_at:)" <(./ductile --version)
 
-./senechal-gw version --json
+./ductile version --json
 # Expected: Machine-readable version metadata keys
-grep -E "\"version\"|\"commit\"|\"build_time\"" <(./senechal-gw version --json)
+grep -E "\"version\"|\"commit\"|\"build_time\"" <(./ductile version --json)
 ```
 
 **Pass Criteria:** All 4 tests pass
@@ -536,9 +536,9 @@ echo
 
 # Test Suite 1: config check
 echo "Suite 1: config check"
-./senechal-gw config check >/dev/null 2>&1 && test_result "1.1 Basic validation" "pass" || test_result "1.1 Basic validation" "fail"
-./senechal-gw config check --format json | jq -e '.valid' >/dev/null 2>&1 && test_result "1.2 JSON format" "pass" || test_result "1.2 JSON format" "fail"
-./senechal-gw config check --strict >/dev/null 2>&1 && test_result "1.3 Strict mode" "pass" || test_result "1.3 Strict mode" "fail"
+./ductile config check >/dev/null 2>&1 && test_result "1.1 Basic validation" "pass" || test_result "1.1 Basic validation" "fail"
+./ductile config check --format json | jq -e '.valid' >/dev/null 2>&1 && test_result "1.2 JSON format" "pass" || test_result "1.2 JSON format" "fail"
+./ductile config check --strict >/dev/null 2>&1 && test_result "1.3 Strict mode" "pass" || test_result "1.3 Strict mode" "fail"
 
 echo
 echo "=== Results ==="

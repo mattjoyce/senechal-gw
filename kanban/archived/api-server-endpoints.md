@@ -143,7 +143,7 @@ Agent 1 (Claude) uses these interfaces to implement API handlers.
 
 ```bash
 # Start server
-./senechal-gw start --config config.yaml
+./ductile start --config config.yaml
 
 # Trigger echo plugin
 curl -X POST http://localhost:8080/trigger/echo/poll \

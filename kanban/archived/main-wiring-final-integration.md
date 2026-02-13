@@ -9,11 +9,11 @@ tags: [sprint-1, mvp, integration]
 
 # Wire MVP Components in main.go
 
-Complete the MVP by wiring all Phase 1 & 2 components together in `cmd/senechal-gw/main.go` to create a runnable service with proper initialization, signal handling, and graceful shutdown.
+Complete the MVP by wiring all Phase 1 & 2 components together in `cmd/ductile/main.go` to create a runnable service with proper initialization, signal handling, and graceful shutdown.
 
 ## Acceptance Criteria
 
-- `senechal-gw start --config config.yaml` runs successfully
+- `ductile start --config config.yaml` runs successfully
 - All components initialized in correct order: config → PID lock → database → queue → state → plugins → scheduler → dispatcher
 - PID lock prevents duplicate instances
 - Signal handling (SIGINT/SIGTERM) triggers graceful shutdown
@@ -24,7 +24,7 @@ Complete the MVP by wiring all Phase 1 & 2 components together in `cmd/senechal-
 
 ## Implementation Details
 
-**File to modify:** `/Volumes/Projects/senechal-gw/cmd/senechal-gw/main.go` (runStart function)
+**File to modify:** `/Volumes/Projects/ductile/cmd/ductile/main.go` (runStart function)
 
 **Initialization sequence:**
 1. Load config (`config.Load`)
@@ -47,16 +47,16 @@ Complete the MVP by wiring all Phase 1 & 2 components together in `cmd/senechal-
 - Use `context.Background()` for DB (not signal context)
 - Scheduler satisfies `QueueService` interface via `*queue.Queue`
 - Logger: `log.Get()` returns `*slog.Logger`
-- PID lock path: `filepath.Join(filepath.Dir(cfg.State.Path), "senechal-gw.lock")`
+- PID lock path: `filepath.Join(filepath.Dir(cfg.State.Path), "ductile.lock")`
 
 ## Verification
 
 After implementation:
-1. Clean startup: `./senechal-gw start --config config.yaml`
+1. Clean startup: `./ductile start --config config.yaml`
 2. Duplicate prevention: Second instance exits with lock error
 3. Graceful shutdown: Ctrl+C logs shutdown sequence
 4. Crash recovery: Kill -9, restart, observe orphan recovery
-5. E2E validation: Follow `/Volumes/Projects/senechal-gw/docs/E2E_ECHO_RUNBOOK.md`
+5. E2E validation: Follow `/Volumes/Projects/ductile/docs/E2E_ECHO_RUNBOOK.md`
 
 ## Reference
 
@@ -64,11 +64,11 @@ Detailed implementation plan: `/Users/mattjoyce/.claude/plans/pure-rolling-ullma
 
 ## Narrative
 
-- 2026-02-09: Implementation complete and fully functional! Wired all MVP components in `cmd/senechal-gw/main.go` (187 lines). Clean initialization sequence: config → PID lock → database → queue/state → plugin discovery → scheduler/dispatcher → signal handling. All components start correctly with proper error handling and LIFO defer cleanup (lock → db → context → scheduler). Signal handler (SIGINT/SIGTERM) triggers graceful shutdown via context cancellation. Both scheduler and dispatcher run in goroutines with error channel monitoring. PID lock path derived from state DB path. Plugin discovery uses logger callback adapter. Fixed minor issues: removed duplicate QueueService interface in scheduler.go and duplicate mock file. All tests passing. Binary builds and runs successfully. Tested end-to-end: clean startup, echo plugin execution (polls every 5m with jitter), state persistence, graceful shutdown, crash recovery on restart. Branch: `claude/main-cli`. (by @claude)
+- 2026-02-09: Implementation complete and fully functional! Wired all MVP components in `cmd/ductile/main.go` (187 lines). Clean initialization sequence: config → PID lock → database → queue/state → plugin discovery → scheduler/dispatcher → signal handling. All components start correctly with proper error handling and LIFO defer cleanup (lock → db → context → scheduler). Signal handler (SIGINT/SIGTERM) triggers graceful shutdown via context cancellation. Both scheduler and dispatcher run in goroutines with error channel monitoring. PID lock path derived from state DB path. Plugin discovery uses logger callback adapter. Fixed minor issues: removed duplicate QueueService interface in scheduler.go and duplicate mock file. All tests passing. Binary builds and runs successfully. Tested end-to-end: clean startup, echo plugin execution (polls every 5m with jitter), state persistence, graceful shutdown, crash recovery on restart. Branch: `claude/main-cli`. (by @claude)
 
 ## What This MVP Can Do
 
-The Senechal Gateway is now a **fully functional integration gateway** for personal-scale automation (< 50 jobs/day). Here are practical use cases:
+The Ductile is now a **fully functional integration gateway** for personal-scale automation (< 50 jobs/day). Here are practical use cases:
 
 ### 1. Automated Data Collection
 Poll external APIs on schedules to collect data. Example: GitHub stats (stars/issues/PRs), weather data, stock prices, cryptocurrency rates. Plugin fetches data → stores in state → available for dashboards/analysis.
@@ -119,10 +119,10 @@ Update plugin state → Mark job complete → Repeat
 
 **Try it:**
 ```bash
-./senechal-gw start --config config.yaml
+./ductile start --config config.yaml
 # Watch logs, press Ctrl+C to stop
-sqlite3 senechal.db "SELECT * FROM plugin_state;"
-sqlite3 senechal.db "SELECT * FROM job_log ORDER BY completed_at DESC LIMIT 10;"
+sqlite3 ductile.db "SELECT * FROM plugin_state;"
+sqlite3 ductile.db "SELECT * FROM job_log ORDER BY completed_at DESC LIMIT 10;"
 ```
 
 **Not yet implemented (designed for Sprint 2-4):**

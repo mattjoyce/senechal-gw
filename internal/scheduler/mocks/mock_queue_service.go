@@ -10,7 +10,7 @@ import (
 	time "time"
 
 	gomock "github.com/golang/mock/gomock"
-	queue "github.com/mattjoyce/senechal-gw/internal/queue"
+	queue "github.com/mattjoyce/ductile/internal/queue"
 )
 
 // MockQueueService is a mock of QueueService interface.

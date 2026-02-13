@@ -1,4 +1,4 @@
-# RFC-001 Critique: Senechal Gateway
+# RFC-001 Critique: Ductile
 
 **Reviewer:** Claude (team review)
 **Date:** 2026-02-08
@@ -15,7 +15,7 @@ This is a well-structured RFC with clear rationale. The design sits in a good sw
 
 - **Work queue as the unifying abstraction** — This is the strongest decision in the doc. Having scheduler, webhooks, CLI, and plugin output all feed into the same queue means you only need to get dispatch right once. It also gives you free observability (queue depth, job history) without extra plumbing.
 
-- **Plugins as subprocesses** — Perfect for a personal server. Process isolation means a buggy Python plugin can't crash the core. Language-agnostic means you can port existing Senechal code directly.
+- **Plugins as subprocesses** — Perfect for a personal server. Process isolation means a buggy Python plugin can't crash the core. Language-agnostic means you can port existing Ductile code directly.
 
 - **Config-declared routing** — Keeping plugins dumb and putting routing in config is the right separation. Plugins don't need to know about each other.
 

@@ -1,4 +1,4 @@
-# Senechal Gateway User Guide
+# Ductile User Guide
 
 ## Table of Contents
 1.  [Introduction](#introduction)
@@ -18,39 +18,39 @@
 6.  [Operations and Troubleshooting](#operations-and-troubleshooting)
 
 ## 1. Introduction
-The Senechal Gateway is a lightweight, YAML-configured, and modular integration gateway designed for personal automation. It orchestrates various tasks by utilizing polyglot plugins executed via a subprocess protocol. The core idea is to provide a simple, yet extensible platform for handling event-driven workflows, ETL processes, and various integrations without the overhead of larger, more complex integration servers.
+The Ductile is a lightweight, YAML-configured, and modular integration gateway designed for personal automation. It orchestrates various tasks by utilizing polyglot plugins executed via a subprocess protocol. The core idea is to provide a simple, yet extensible platform for handling event-driven workflows, ETL processes, and various integrations without the overhead of larger, more complex integration servers.
 
 This user guide provides comprehensive documentation to help you:
--   Understand the core concepts and architecture of the Senechal Gateway.
+-   Understand the core concepts and architecture of the Ductile.
 -   Install, configure, and operate the gateway effectively.
 -   Develop and integrate your own custom plugins in various programming languages (e.g., Bash, Python).
 -   Troubleshoot common issues and monitor the gateway's operation.
 
-Whether you're looking to automate daily tasks, connect disparate services, or build custom integrations, the Senechal Gateway offers a flexible and robust solution.
+Whether you're looking to automate daily tasks, connect disparate services, or build custom integrations, the Ductile offers a flexible and robust solution.
 
 ## 2. Getting Started
 
 ### Installation
 
-To install and run the Senechal Gateway, you will need to have Go version 1.25.4 or newer installed on your system.
+To install and run the Ductile, you will need to have Go version 1.25.4 or newer installed on your system.
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/mattjoyce/senechal-gw.git
-    cd senechal-gw
+    git clone https://github.com/mattjoyce/ductile.git
+    cd ductile
     ```
 
 2.  **Build the gateway:**
     ```bash
-    go build -o senechal-gw ./cmd/senechal-gw
+    go build -o ductile ./cmd/ductile
     ```
 
-    This will create an executable named `senechal-gw` in your project root directory.
+    This will create an executable named `ductile` in your project root directory.
 
 
 ### Basic Usage
 
-After building the `senechal-gw` executable, you can start the gateway.
+After building the `ductile` executable, you can start the gateway.
 
 1.  **Ensure plugin directory exists:**
     The gateway expects a `plugins` directory in the root. The `echo` plugin is provided as an example.
@@ -72,23 +72,23 @@ After building the `senechal-gw` executable, you can start the gateway.
           jitter: 30s
         # ... other settings ...
         config:
-          message: "Hello from Senechal Gateway!"
+          message: "Hello from Ductile!"
     ```
 
-3.  **Start the Senechal Gateway:**
+3.  **Start the Ductile:**
     Run the gateway from the project root directory.
     ```bash
-    ./senechal-gw system start
+    ./ductile system start
     ```
     The gateway will start and begin logging its operations. You should see log entries indicating the scheduler is running and, after the configured interval, the `echo` plugin executing.
 
     Example log output (abbreviated):
     ```json
-    {"level":"info","msg":"Senechal Gateway starting...","time":"..."}
+    {"level":"info","msg":"Ductile starting...","time":"..."}
     {"level":"info","plugin_name":"echo","schedule":"5m","msg":"scheduling plugin","time":"..."}
     # ... after 5 minutes ...
     {"level":"info","job_id":"...","plugin_name":"echo","status":"started","msg":"plugin job started","time":"..."}
-    {"level":"info","job_id":"...","plugin_name":"echo","output":"Hello from Senechal Gateway!","status":"completed","msg":"plugin job completed","time":"..."}
+    {"level":"info","job_id":"...","plugin_name":"echo","output":"Hello from Ductile!","status":"completed","msg":"plugin job completed","time":"..."}
     ```
     Press `Ctrl+C` to stop the gateway gracefully.
 
@@ -96,7 +96,7 @@ After building the `senechal-gw` executable, you can start the gateway.
 
 ### CLI Principles
 
-To ensure predictability and safety, all Senechal CLI commands follow these standards:
+To ensure predictability and safety, all Ductile CLI commands follow these standards:
 
 - **NOUN ACTION Hierarchy:** Commands are organized by resource (e.g., `job inspect`, `config lock`).
 - **Verbosity:** Use `-v` or `--verbose` to see internal logic and state transitions.
@@ -107,7 +107,7 @@ To ensure predictability and safety, all Senechal CLI commands follow these stan
 ## 3. Core Concepts
 
 ### Scheduler
-The Senechal Gateway includes a built-in scheduler responsible for orchestrating the periodic execution of configured plugins. It operates on a "tick loop" that runs at a configurable interval (defaulting to `service.tick_interval`, typically 60 seconds).
+The Ductile includes a built-in scheduler responsible for orchestrating the periodic execution of configured plugins. It operates on a "tick loop" that runs at a configurable interval (defaulting to `service.tick_interval`, typically 60 seconds).
 
 For each enabled plugin with a defined `schedule`, the scheduler calculates its next execution time using a "fuzzy interval" approach. This approach incorporates a fixed jitter to the scheduled interval. The jitter (e.g., `jitter: 30s`) introduces a random delay within a specified window, preventing all scheduled plugins from attempting to run simultaneously, thus avoiding a "thundering herd" problem and distributing load more evenly.
 
@@ -115,7 +115,7 @@ When a plugin's scheduled time arrives, the scheduler enqueues a `poll` job for 
 
 #### Flexible Intervals
 
-Senechal supports a wide range of interval formats for the `schedule.every` field:
+Ductile supports a wide range of interval formats for the `schedule.every` field:
 
 - **Go Duration Strings**: Standard Go durations like `1h`, `15m`, `30s`.
 - **Extended Suffixes**: Suffixes for days (`d`) and weeks (`w`). Examples: `3d` (3 days), `2w` (2 weeks).
@@ -141,10 +141,10 @@ plugins:
 In addition to scheduling, the tick loop is also responsible for pruning completed job logs based on the configured `job_log_retention` policy.
 
 ### Plugins
-Plugins are the core extensible components of the Senechal Gateway. They are external executables designed to perform specific tasks, ranging from fetching data from external services (`poll` command) to processing events (`handle` command). A key design principle is their polyglot nature: plugins can be written in any language, as long as they adhere to a simple JSON-over-stdin/stdout communication protocol.
+Plugins are the core extensible components of the Ductile. They are external executables designed to perform specific tasks, ranging from fetching data from external services (`poll` command) to processing events (`handle` command). A key design principle is their polyglot nature: plugins can be written in any language, as long as they adhere to a simple JSON-over-stdin/stdout communication protocol.
 
 #### Plugin Lifecycle: Spawn-Per-Command
-The Senechal Gateway operates on a "spawn-per-command" model for plugins. This means that for every job requiring a plugin (e.g., a scheduled `poll` or an event `handle`), the gateway spawns a new process for that plugin's entrypoint. This approach offers several benefits:
+The Ductile operates on a "spawn-per-command" model for plugins. This means that for every job requiring a plugin (e.g., a scheduled `poll` or an event `handle`), the gateway spawns a new process for that plugin's entrypoint. This approach offers several benefits:
 -   **Language Agnostic:** Plugins can be written in Bash, Python, Go, or any other language.
 -   **Fault Isolation:** Failures in one plugin do not affect the core gateway or other plugins.
 -   **Resource Management:** No long-lived plugin processes, preventing memory leaks and simplifying resource cleanup.
@@ -216,12 +216,12 @@ Plugins can support different commands, each serving a specific purpose:
 -   `init`: A one-time setup command, run when a plugin is first discovered or its configuration changes.
 
 #### Plugin Configuration and State
-The Senechal Gateway distinguishes between static configuration and dynamic state for plugins:
+The Ductile distinguishes between static configuration and dynamic state for plugins:
 -   **Config:** Static, read-only configuration provided in `config.yaml` (e.g., API keys, endpoints). These are passed to the plugin in the request envelope.
 -   **State:** A dynamic JSON blob persisted by the gateway for each plugin. Plugins can read their current state and propose `state_updates` in their response. The gateway performs a shallow merge of these updates. This is typically used for things like OAuth tokens, last fetched timestamps, or other dynamic operational data.
 
 ### State Management
-The Senechal Gateway uses a persistent state store for each plugin, distinct from its static configuration. While `config` (from `config.yaml`) provides static, read-only parameters, `state` allows plugins to maintain dynamic operational data across invocations.
+The Ductile uses a persistent state store for each plugin, distinct from its static configuration. While `config` (from `config.yaml`) provides static, read-only parameters, `state` allows plugins to maintain dynamic operational data across invocations.
 
 #### Storage
 Plugin state is stored as a single JSON blob per plugin within an SQLite database. This design choice provides a zero-ops, embedded database solution suitable for a personal integration server. The relevant table in the SQLite schema is `plugin_state`:
@@ -245,7 +245,7 @@ When a plugin executes, it receives its current state in the request envelope. I
 -   **Purpose:** State is intended for dynamic operational data (e.g., OAuth tokens, pagination cursors, last run timestamps), not for large datasets or complex relational information.
 
 ### Crash Recovery
-The Senechal Gateway is designed for resilience and ensures "at-least-once" job execution semantics, even in the face of unexpected shutdowns or crashes. This is achieved through a robust crash recovery mechanism that activates automatically during startup.
+The Ductile is designed for resilience and ensures "at-least-once" job execution semantics, even in the face of unexpected shutdowns or crashes. This is achieved through a robust crash recovery mechanism that activates automatically during startup.
 
 #### Recovery Process
 Upon startup, the gateway performs the following steps:
@@ -261,11 +261,11 @@ Upon startup, the gateway performs the following steps:
 This mechanism guarantees that no job is silently dropped due to a crash, upholding the "at-least-once" delivery guarantee. Plugins are expected to be idempotent or use their state to handle potential re-executions.
 
 ## 4. Configuration Reference
-The Senechal Gateway's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings, define plugin behavior, and set up advanced features like webhooks and routing.
+The Ductile's behavior is entirely driven by its configuration, defined in a `config.yaml` file. This file allows you to customize service-level settings, define plugin behavior, and set up advanced features like webhooks and routing.
 
 ### Standard Plugins
 
-Senechal Gateway includes several standard plugins for common tasks.
+Ductile includes several standard plugins for common tasks.
 
 #### Jina Reader (`jina-reader`)
 The `jina-reader` plugin uses Jina AI's Reader API to convert any web page into clean, markdown-formatted text. This is highly useful for feeding web content into LLMs or other downstream processing steps.
@@ -289,11 +289,11 @@ plugins:
 Below is a comprehensive example `config.yaml` with explanations for each major section and field.
 
 ```yaml
-# Senechal Gateway Configuration
+# Ductile Configuration
 # See SPEC.md for full reference
 
 service:
-  name: senechal-gw                # Name of the service (default: "senechal-gw")
+  name: ductile                # Name of the service (default: "ductile")
   tick_interval: 60s               # How often the scheduler checks for due plugins (e.g., 30s, 1m). Default: 60s
   log_level: info                  # Minimum logging level (debug, info, warn, error). Default: info
   log_format: json                 # Output format for logs (json). Default: json
@@ -301,7 +301,7 @@ service:
   job_log_retention: 30d           # How long to retain completed job logs (e.g., 168h, 30d). Default: 30d
 
 state:
-  path: ./data/state.db            # Path to the SQLite database file for state persistence. Default: ./senechal.db
+  path: ./data/state.db            # Path to the SQLite database file for state persistence. Default: ./ductile.db
 
 plugins_dir: ./plugins             # Directory where plugin subdirectories are located. Default: ./plugins
 
@@ -358,11 +358,11 @@ routes:
 ```
 
 #### Environment Variable Interpolation
-The Senechal Gateway supports environment variable interpolation within the `config.yaml` using the `${VAR_NAME}` syntax (e.g., `${GITHUB_WEBHOOK_SECRET}`). This is particularly useful for injecting sensitive information like API keys and secrets without hardcoding them directly into the configuration file. When the gateway loads the configuration, it will replace these placeholders with the values from the environment.
+The Ductile supports environment variable interpolation within the `config.yaml` using the `${VAR_NAME}` syntax (e.g., `${GITHUB_WEBHOOK_SECRET}`). This is particularly useful for injecting sensitive information like API keys and secrets without hardcoding them directly into the configuration file. When the gateway loads the configuration, it will replace these placeholders with the values from the environment.
 
 
 ## 5. Plugin Development Guide
-This section guides developers on how to create their own plugins for the Senechal Gateway.
+This section guides developers on how to create their own plugins for the Ductile.
 
 ### Bash Plugins
 Creating a plugin using Bash is straightforward. The core idea is to read a JSON request from standard input (stdin), process it, and then print a JSON response to standard output (stdout).
@@ -448,10 +448,10 @@ EOF
         schedule:
           every: 1m
         config:
-          name: Senechal User
+          name: Ductile User
     ```
 
-When the Senechal Gateway runs and the `hello-world` plugin's schedule is due, it will execute `run.sh`. The script will read the incoming request, construct a greeting using the configured `name`, and output a JSON response. The gateway will then capture the log message and update the plugin's state with `last_run_job_id` and `last_greeting`.
+When the Ductile runs and the `hello-world` plugin's schedule is due, it will execute `run.sh`. The script will read the incoming request, construct a greeting using the configured `name`, and output a JSON response. The gateway will then capture the log message and update the plugin's state with `last_run_job_id` and `last_greeting`.
 
 **Important:** Ensure your Bash scripts have a [shebang line](https://en.wikipedia.org/wiki/Shebang_(Unix)) (e.g., `#!/usr/bin/env bash`) and are executable (`chmod +x`). Avoid complex background processes or interactive commands within your plugins. For parsing JSON in Bash, `jq` is highly recommended. If `jq` is not available on the execution environment, you would need to implement JSON parsing using `python -c` or `sed` (as seen in the `echo` plugin's `run.sh` script), or ensure `jq` is installed.
 
@@ -554,19 +554,19 @@ Let's create a minimal Python plugin called `python-greet`.
           greeting_word: "Greetings"
     ```
 
-When the Senechal Gateway executes the `python-greet` plugin, `run.py` will receive the request, process it using Python's `json` module, and return a structured JSON response.
+When the Ductile executes the `python-greet` plugin, `run.py` will receive the request, process it using Python's `json` module, and return a structured JSON response.
 
 **Important:**
 -   Ensure your Python scripts have a shebang line (e.g., `#!/usr/bin/env python3`) and are executable (`chmod +x`).
 -   Use `sys.stdin.read()` to get the entire input and `json.loads()` to parse it.
 -   Use `json.dump(response, sys.stdout)` to write the response. It's good practice to add `sys.stdout.write("\n")` to ensure the output is properly terminated.
--   If your Python plugin requires external libraries, you should manage them within the plugin's directory (e.g., using a `venv` and installing dependencies locally) or ensure they are available in the execution environment. The Senechal Gateway itself does not manage plugin-specific Python environments.
+-   If your Python plugin requires external libraries, you should manage them within the plugin's directory (e.g., using a `venv` and installing dependencies locally) or ensure they are available in the execution environment. The Ductile itself does not manage plugin-specific Python environments.
 
 ## 6. Operations and Troubleshooting
-This section covers how to operate the Senechal Gateway in production or development environments, including monitoring, understanding logs, and common troubleshooting scenarios.
+This section covers how to operate the Ductile in production or development environments, including monitoring, understanding logs, and common troubleshooting scenarios.
 
 ### Logging
-The Senechal Gateway core emits structured logs in JSON format to standard output (stdout). These logs are designed to be easily parseable by log aggregation systems.
+The Ductile core emits structured logs in JSON format to standard output (stdout). These logs are designed to be easily parseable by log aggregation systems.
 
 #### Core Logs
 Core logs include fields such as:
@@ -579,7 +579,7 @@ Core logs include fields such as:
 
 Example:
 ```json
-{"level":"info","component":"scheduler","msg":"Senechal Gateway starting...","time":"2026-02-09T12:00:00Z"}
+{"level":"info","component":"scheduler","msg":"Ductile starting...","time":"2026-02-09T12:00:00Z"}
 {"level":"info","plugin":"echo","schedule":"5m","msg":"scheduling plugin","time":"2026-02-09T12:00:01Z"}
 ```
 
@@ -587,44 +587,44 @@ Example:
 Plugins can also emit logs as part of their response envelope. These logs are captured by the gateway and stored with the job record.
 ```json
 "logs": [
-  {"level": "info", "message": "Hello, Senechal User! Job ID: uuid-of-the-job"}
+  {"level": "info", "message": "Hello, Ductile User! Job ID: uuid-of-the-job"}
 ]
 ```
 Additionally, anything written by a plugin to `stderr` is captured, capped at 64 KB, and logged at `WARN` level to the core log stream, along with the job details. Plugin `stdout` is reserved exclusively for the protocol response; any non-JSON output on `stdout` is treated as a protocol error, causing the job to fail.
 
 ### Command Line Interface (CLI)
-The `senechal-gw` executable provides a structured command hierarchy for interacting with and monitoring the gateway:
+The `ductile` executable provides a structured command hierarchy for interacting with and monitoring the gateway:
 
--   `senechal-gw system start`: Runs the service in the foreground.
--   `senechal-gw config lock`: Authorizes current configuration by updating integrity hashes.
--   `senechal-gw config check`: Validates configuration syntax, policy, and integrity.
--   `senechal-gw config show [entity]`: Displays the full or partial configuration (e.g., `config show plugin:echo`).
--   `senechal-gw config get <path>`: Retrieves a specific value using dot-notation (e.g., `config get service.name`).
--   `senechal-gw config set <path>=<value>`: Modifies a configuration value. Requires `--dry-run` or `--apply`.
--   `senechal-gw job inspect <id>`: Shows the full lineage, baggage, and artifacts for a job.
--   `senechal-gw --version` or `senechal-gw version`: Shows semantic version, commit, and build timestamp metadata.
--   `senechal-gw --version --json`: Emits machine-readable version metadata.
--   `senechal-gw system status`: Shows the state of discovered plugins, queue depth, and health.
--   `senechal-gw system reload`: Sends a `SIGHUP` signal to reload configuration without restart (planned).
--   `senechal-gw plugin list`: Lists all discovered plugins and their current status (planned).
--   `senechal-gw plugin run <name>`: Manual execution (planned).
+-   `ductile system start`: Runs the service in the foreground.
+-   `ductile config lock`: Authorizes current configuration by updating integrity hashes.
+-   `ductile config check`: Validates configuration syntax, policy, and integrity.
+-   `ductile config show [entity]`: Displays the full or partial configuration (e.g., `config show plugin:echo`).
+-   `ductile config get <path>`: Retrieves a specific value using dot-notation (e.g., `config get service.name`).
+-   `ductile config set <path>=<value>`: Modifies a configuration value. Requires `--dry-run` or `--apply`.
+-   `ductile job inspect <id>`: Shows the full lineage, baggage, and artifacts for a job.
+-   `ductile --version` or `ductile version`: Shows semantic version, commit, and build timestamp metadata.
+-   `ductile --version --json`: Emits machine-readable version metadata.
+-   `ductile system status`: Shows the state of discovered plugins, queue depth, and health.
+-   `ductile system reload`: Sends a `SIGHUP` signal to reload configuration without restart (planned).
+-   `ductile plugin list`: Lists all discovered plugins and their current status (planned).
+-   `ductile plugin run <name>`: Manual execution (planned).
 
 ### Operational Integrity
 
-Senechal provides tools to ensure your configuration is both valid and authorized.
+Ductile provides tools to ensure your configuration is both valid and authorized.
 
 #### Config Locking and Verification
-To prevent accidental or unauthorized modifications to sensitive configuration (like API keys or webhook secrets), Senechal uses a "lock and check" mechanism.
+To prevent accidental or unauthorized modifications to sensitive configuration (like API keys or webhook secrets), Ductile uses a "lock and check" mechanism.
 
 - **`config lock`**: Calculates BLAKE3 hashes for all configuration files and saves them to a `.checksums` file. This "authorizes" the current state.
-- **`config check`**: Verifies that the current configuration matches the hashes in `.checksums`. Senechal runs this check automatically at startup for high-security files (like `tokens.yaml`).
+- **`config check`**: Verifies that the current configuration matches the hashes in `.checksums`. Ductile runs this check automatically at startup for high-security files (like `tokens.yaml`).
 
 #### Surgical Administration
 For fine-grained control and inspection without manually editing YAML files:
 
 - **`config show [plugin:NAME]`**: See exactly what the system sees, including defaults and merged values.
 - **`config get path.to.key`**: Extract a single value.
-- **`config set path.to.key=value --apply`**: Modify a value safely. Senechal validates the change before writing it back to disk.
+- **`config set path.to.key=value --apply`**: Modify a value safely. Ductile validates the change before writing it back to disk.
 
 ### Troubleshooting
 -   **Plugin Not Running:**
@@ -650,11 +650,11 @@ For fine-grained control and inspection without manually editing YAML files:
 
 ## 7. API Reference
 
-The Senechal Gateway provides a REST API for programmatic interaction, primarily for LLMs and external automation.
+The Ductile provides a REST API for programmatic interaction, primarily for LLMs and external automation.
 
 ### Authentication
 
-Senechal supports two authentication modes:
+Ductile supports two authentication modes:
 
 #### 1. Legacy API Key (Simple)
 For single-user or development environments.
@@ -721,7 +721,7 @@ curl -X POST http://localhost:8080/trigger/file_handler/handle \
 }
 ```
 
-> **Note**: When you trigger a `handle` command via the API, Senechal automatically wraps your payload in an `api.trigger` event envelope before passing it to the plugin.
+> **Note**: When you trigger a `handle` command via the API, Ductile automatically wraps your payload in an `api.trigger` event envelope before passing it to the plugin.
 
 ### Job Inspection
 

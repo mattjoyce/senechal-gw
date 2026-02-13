@@ -22,7 +22,7 @@ func LoadDir(configDir string) (*Config, []string, error) {
 		return nil, nil, fmt.Errorf("integrity check: %w", err)
 	}
 	if !intResult.Passed {
-		return nil, nil, fmt.Errorf("integrity verification failed:\n  %s\nRun 'senechal-gw config lock' to authorize the current state",
+		return nil, nil, fmt.Errorf("integrity verification failed:\n  %s\nRun 'ductile config lock' to authorize the current state",
 			joinLines(intResult.Errors))
 	}
 

@@ -47,7 +47,7 @@ Implement scope-based authorization for API tokens. Allows limiting tokens to sp
 
 **Why both?**
 A 3rd party service (like GitHub) might:
-1. Send webhooks to Senechal (authenticated via HMAC)
+1. Send webhooks to Ductile (authenticated via HMAC)
 2. Query job results via API (authenticated via Bearer token with scopes)
 3. Trigger follow-up actions (authenticated via Bearer token with scopes)
 
@@ -459,8 +459,8 @@ api:
 ```
 
 **Why both HMAC and scopes?**
-- **HMAC** authenticates the inbound webhook POST (GitHub → Senechal)
-- **Bearer token** authenticates status queries (GitHub → Senechal API)
+- **HMAC** authenticates the inbound webhook POST (GitHub → Ductile)
+- **Bearer token** authenticates status queries (GitHub → Ductile API)
 - Without scopes, GitHub could trigger unrelated plugins via the API
 
 **2. OAuth Callback Handler:**
@@ -536,7 +536,7 @@ tokens:
 
 Scopes solve two critical problems for Sprint 3:
 
-**1. Webhook 3rd Party Security:** When you configure GitHub to send webhooks to Senechal, GitHub might also need API access to query job status or trigger related actions. Without scopes, you'd have to choose between:
+**1. Webhook 3rd Party Security:** When you configure GitHub to send webhooks to Ductile, GitHub might also need API access to query job status or trigger related actions. Without scopes, you'd have to choose between:
 - Giving GitHub a god-mode token (security nightmare)
 - Not giving GitHub any API access (breaks status callback pattern)
 

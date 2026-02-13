@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mattjoyce/senechal-gw/internal/state"
+	"github.com/mattjoyce/ductile/internal/state"
 )
 
 type jobInfo struct {

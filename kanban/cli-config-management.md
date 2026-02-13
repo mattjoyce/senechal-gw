@@ -8,7 +8,7 @@ tags: [sprint-4, cli, config, llm-friendly]
 
 # CLI Config Management Tool
 
-Implement `senechal config` subcommands for managing configuration files. LLM-friendly CLI for creating tokens, editing scopes, validating config, and inspecting runtime state. No interactive prompts—designed for scripting and agent automation.
+Implement `ductile config` subcommands for managing configuration files. LLM-friendly CLI for creating tokens, editing scopes, validating config, and inspecting runtime state. No interactive prompts—designed for scripting and agent automation.
 
 **Note:** This CLI is for both humans (who prefer command-line workflows) AND LLMs (automation/skills). For humans who prefer visual, interactive interfaces, see card #40 (TUI Token Manager). Both tools operate on the same config files—use whichever fits your workflow.
 
@@ -27,11 +27,11 @@ Implement `senechal config` subcommands for managing configuration files. LLM-fr
 
 ## Acceptance Criteria
 
-- `senechal config` subcommands for all config operations
+- `ductile config` subcommands for all config operations
 - All commands work with `--config-dir` flag
 - JSON output mode for programmatic parsing
 - Atomic file writes with backup (.bak files)
-- Auto-runs `senechal doctor` after modifications
+- Auto-runs `ductile doctor` after modifications
 - Exit codes: 0=success, 1=error, 2=validation warnings
 - Help text optimized for LLM consumption (structured, examples)
 
@@ -42,14 +42,14 @@ Implement `senechal config` subcommands for managing configuration files. LLM-fr
 **Create token:**
 ```bash
 # Create scope file and register token
-senechal config token create \
+ductile config token create \
   --name github-integration \
   --scopes "read:jobs,read:events,github-handler:rw" \
   --description "GitHub webhook integration"
 
 # Output:
-# Created: /Users/matt/.config/senechal-gw/scopes/github-integration.json
-# Updated: /Users/matt/.config/senechal-gw/tokens.yaml
+# Created: /Users/matt/.config/ductile/scopes/github-integration.json
+# Updated: /Users/matt/.config/ductile/tokens.yaml
 # Token key: a3f8c2d9e1b4567890abcdef12345678...
 #
 # Set environment variable:
@@ -61,22 +61,22 @@ senechal config token create \
 **Create from file:**
 ```bash
 # Use existing scope JSON file
-senechal config token create \
+ductile config token create \
   --name webhook-integration \
   --scopes-file /tmp/scopes.json
 
 # Or read from stdin
-cat scopes.json | senechal config token create \
+cat scopes.json | ductile config token create \
   --name webhook-integration \
   --scopes-file -
 ```
 
 **List tokens:**
 ```bash
-senechal config token list
+ductile config token list
 
 # Output (human-readable):
-# Tokens in /Users/matt/.config/senechal-gw/tokens.yaml:
+# Tokens in /Users/matt/.config/ductile/tokens.yaml:
 #
 # admin-cli
 #   Created: 2026-02-10T10:00:00Z
@@ -89,7 +89,7 @@ senechal config token list
 #   Description: GitHub webhook integration
 
 # JSON output:
-senechal config token list --format json
+ductile config token list --format json
 # [
 #   {
 #     "name": "admin-cli",
@@ -103,7 +103,7 @@ senechal config token list --format json
 
 **Inspect token:**
 ```bash
-senechal config token inspect github-integration
+ductile config token inspect github-integration
 
 # Output:
 # Token: github-integration
@@ -125,35 +125,35 @@ senechal config token inspect github-integration
 #   ✗ POST /admin/* (not granted)
 
 # JSON output:
-senechal config token inspect github-integration --format json
+ductile config token inspect github-integration --format json
 ```
 
 **Rehash token:**
 ```bash
 # Update hash after manual scope file edit
-senechal config token rehash github-integration
+ductile config token rehash github-integration
 
 # Output:
 # Token: github-integration
-# Scope file: /Users/matt/.config/senechal-gw/scopes/github-integration.json
+# Scope file: /Users/matt/.config/ductile/scopes/github-integration.json
 # Old hash: blake3:b4e9d3c0...
 # New hash: blake3:c5f0e4d1...
 #
-# Updated: /Users/matt/.config/senechal-gw/tokens.yaml
+# Updated: /Users/matt/.config/ductile/tokens.yaml
 # Validation: ✓ All checks passed
 ```
 
 **Delete token:**
 ```bash
-senechal config token delete github-integration
+ductile config token delete github-integration
 
 # Output:
-# Backup: /Users/matt/.config/senechal-gw/tokens.yaml.bak
+# Backup: /Users/matt/.config/ductile/tokens.yaml.bak
 # Deleted: github-integration from tokens.yaml
 # Scope file preserved: scopes/github-integration.json
 #
 # To delete scope file too:
-#   rm /Users/matt/.config/senechal-gw/scopes/github-integration.json
+#   rm /Users/matt/.config/ductile/scopes/github-integration.json
 ```
 
 ### Scope Management
@@ -161,7 +161,7 @@ senechal config token delete github-integration
 **Edit scopes:**
 ```bash
 # Add scope to existing token
-senechal config scope add github-integration "withings:ro"
+ductile config scope add github-integration "withings:ro"
 
 # Output:
 # Token: github-integration
@@ -171,16 +171,16 @@ senechal config scope add github-integration "withings:ro"
 # Validation: ✓ All checks passed
 
 # Remove scope
-senechal config scope remove github-integration "read:events"
+ductile config scope remove github-integration "read:events"
 
 # Replace all scopes
-senechal config scope set github-integration "read:jobs,github-handler:rw"
+ductile config scope set github-integration "read:jobs,github-handler:rw"
 ```
 
 **Validate scopes:**
 ```bash
 # Check if scope is valid for discovered plugins
-senechal config scope validate "withings:ro"
+ductile config scope validate "withings:ro"
 
 # Output:
 # Scope: withings:ro
@@ -191,7 +191,7 @@ senechal config scope validate "withings:ro"
 # ✓ Valid
 
 # Invalid scope:
-senechal config scope validate "nonexistent:ro"
+ductile config scope validate "nonexistent:ro"
 # Output:
 # Scope: nonexistent:ro
 # ✗ Plugin 'nonexistent' not found in plugins directory
@@ -202,10 +202,10 @@ senechal config scope validate "nonexistent:ro"
 
 **List plugins:**
 ```bash
-senechal config plugin list
+ductile config plugin list
 
 # Output:
-# Discovered plugins in /opt/senechal-gw/plugins:
+# Discovered plugins in /opt/ductile/plugins:
 #
 # withings (configured)
 #   Commands: poll (read), sync (write), oauth_callback (write)
@@ -220,12 +220,12 @@ senechal config plugin list
 #   Commands: poll (read), health (read)
 
 # JSON output:
-senechal config plugin list --format json
+ductile config plugin list --format json
 ```
 
 **Show plugin config:**
 ```bash
-senechal config plugin show withings
+ductile config plugin show withings
 
 # Output (YAML):
 # schedule:
@@ -242,7 +242,7 @@ senechal config plugin show withings
 **Edit plugin config:**
 ```bash
 # Modify schedule
-senechal config plugin set withings schedule.every "2h"
+ductile config plugin set withings schedule.every "2h"
 
 # Output:
 # Updated: plugins.yaml
@@ -251,17 +251,17 @@ senechal config plugin set withings schedule.every "2h"
 # Validation: ✓ All checks passed
 
 # Set config value
-senechal config plugin set withings config.client_id '${NEW_CLIENT_ID}'
+ductile config plugin set withings config.client_id '${NEW_CLIENT_ID}'
 ```
 
 ### Route Management
 
 **List routes:**
 ```bash
-senechal config route list
+ductile config route list
 
 # Output:
-# Routes in /Users/matt/.config/senechal-gw/routes.yaml:
+# Routes in /Users/matt/.config/ductile/routes.yaml:
 #
 # withings:weight_updated → garmin
 # withings:weight_updated → slack
@@ -270,7 +270,7 @@ senechal config route list
 
 **Add route:**
 ```bash
-senechal config route add \
+ductile config route add \
   --from withings \
   --event weight_updated \
   --to healthkit
@@ -283,7 +283,7 @@ senechal config route add \
 
 **Remove route:**
 ```bash
-senechal config route remove \
+ductile config route remove \
   --from withings \
   --event weight_updated \
   --to slack
@@ -297,10 +297,10 @@ senechal config route remove \
 
 **List webhooks:**
 ```bash
-senechal config webhook list
+ductile config webhook list
 
 # Output:
-# Webhooks in /Users/matt/.config/senechal-gw/webhooks.yaml:
+# Webhooks in /Users/matt/.config/ductile/webhooks.yaml:
 #
 # github
 #   Path: /webhook/github
@@ -317,7 +317,7 @@ senechal config webhook list
 
 **Add webhook:**
 ```bash
-senechal config webhook add \
+ductile config webhook add \
   --name github \
   --path /webhook/github \
   --plugin github-handler \
@@ -335,58 +335,58 @@ senechal config webhook add \
 **Show compiled config:**
 ```bash
 # Show full runtime config (after compilation)
-senechal config show
+ductile config show
 
 # Output: Full YAML of compiled RuntimeConfig
 
 # Show specific section
-senechal config show --section api
-senechal config show --section plugins
+ductile config show --section api
+ductile config show --section plugins
 
 # JSON output
-senechal config show --format json
+ductile config show --format json
 ```
 
 **Initialize config directory:**
 ```bash
 # Create default config structure
-senechal config init
+ductile config init
 
 # Output:
-# Created: /Users/matt/.config/senechal-gw/
-# Created: /Users/matt/.config/senechal-gw/config.yaml
-# Created: /Users/matt/.config/senechal-gw/plugins.yaml
-# Created: /Users/matt/.config/senechal-gw/routes.yaml
-# Created: /Users/matt/.config/senechal-gw/webhooks.yaml
-# Created: /Users/matt/.config/senechal-gw/tokens.yaml
-# Created: /Users/matt/.config/senechal-gw/scopes/
+# Created: /Users/matt/.config/ductile/
+# Created: /Users/matt/.config/ductile/config.yaml
+# Created: /Users/matt/.config/ductile/plugins.yaml
+# Created: /Users/matt/.config/ductile/routes.yaml
+# Created: /Users/matt/.config/ductile/webhooks.yaml
+# Created: /Users/matt/.config/ductile/tokens.yaml
+# Created: /Users/matt/.config/ductile/scopes/
 #
 # Set file permissions:
-#   chmod 700 /Users/matt/.config/senechal-gw
-#   chmod 600 /Users/matt/.config/senechal-gw/*.yaml
-#   chmod 700 /Users/matt/.config/senechal-gw/scopes
+#   chmod 700 /Users/matt/.config/ductile
+#   chmod 600 /Users/matt/.config/ductile/*.yaml
+#   chmod 700 /Users/matt/.config/ductile/scopes
 
 # Custom location
-senechal config init --config-dir /etc/senechal-gw
+ductile config init --config-dir /etc/ductile
 ```
 
 **Backup config:**
 ```bash
-senechal config backup
+ductile config backup
 
 # Output:
-# Created backup: /Users/matt/.config/senechal-gw/backup-2026-02-10T14-30-00.tar.gz
+# Created backup: /Users/matt/.config/ductile/backup-2026-02-10T14-30-00.tar.gz
 # Includes: config.yaml, plugins.yaml, routes.yaml, webhooks.yaml, tokens.yaml, scopes/
 
 # Restore from backup
-senechal config restore backup-2026-02-10T14-30-00.tar.gz
+ductile config restore backup-2026-02-10T14-30-00.tar.gz
 ```
 
 ## Implementation
 
-**Package:** `cmd/senechal-gw/config/` or standalone binary `cmd/senechal-config/`
+**Package:** `cmd/ductile/config/` or standalone binary `cmd/ductile-config/`
 
-**Decision:** Use `senechal config` subcommand (not separate binary). Keeps tooling unified.
+**Decision:** Use `ductile config` subcommand (not separate binary). Keeps tooling unified.
 
 ### Token Create Implementation
 
@@ -506,7 +506,7 @@ func backupFile(path string) error {
 
 **Example skill:**
 ```yaml
-# ~/.claude/skills/senechal/create-webhook-token.md
+# ~/.claude/skills/ductile/create-webhook-token.md
 ---
 name: create-webhook-token
 description: Create an API token for a webhook integration
@@ -516,7 +516,7 @@ Create a scoped API token for webhook integration.
 
 Usage:
 ```bash
-senechal config token create \
+ductile config token create \
   --name {{token_name}} \
   --scopes "{{scopes}}" \
   --description "{{description}}"
@@ -538,7 +538,7 @@ User: "Add a token for GitHub webhooks with read access to jobs"
 LLM: I'll create a scoped token for GitHub webhooks.
 
 [Uses create-webhook-token skill]
-senechal config token create \
+ductile config token create \
   --name github-webhooks \
   --scopes "read:jobs,read:events,github-handler:rw" \
   --description "GitHub webhook integration with read-only access"
@@ -551,10 +551,10 @@ senechal config token create \
 **Clear, actionable errors:**
 
 ```bash
-$ senechal config token create --name test --scopes "invalid:ro"
+$ ductile config token create --name test --scopes "invalid:ro"
 
 Error: Invalid scope 'invalid:ro'
-  Plugin 'invalid' not found in /opt/senechal-gw/plugins
+  Plugin 'invalid' not found in /opt/ductile/plugins
 
 Available plugins:
   - withings
@@ -625,10 +625,10 @@ func TestTokenCreate(t *testing.T) {
 **Integration Test:**
 ```bash
 # Initialize config
-senechal config init --config-dir /tmp/test-config
+ductile config init --config-dir /tmp/test-config
 
 # Create token
-senechal config token create \
+ductile config token create \
   --config-dir /tmp/test-config \
   --name test \
   --scopes "read:jobs"
@@ -638,7 +638,7 @@ test -f /tmp/test-config/scopes/test.json
 test -f /tmp/test-config/tokens.yaml
 
 # Validate
-senechal doctor --config-dir /tmp/test-config
+ductile doctor --config-dir /tmp/test-config
 # Exit code: 0
 ```
 
@@ -660,7 +660,7 @@ senechal doctor --config-dir /tmp/test-config
 
 ## Narrative
 
-The CLI config tool is designed for automation-first workflows. Every command is non-interactive, scriptable, and LLM-friendly. When an agent needs to add a webhook integration, it can run `senechal config token create` with explicit arguments—no prompts, no interactivity, just clear input/output.
+The CLI config tool is designed for automation-first workflows. Every command is non-interactive, scriptable, and LLM-friendly. When an agent needs to add a webhook integration, it can run `ductile config token create` with explicit arguments—no prompts, no interactivity, just clear input/output.
 
 The atomic file operations (backup before modify) and automatic validation (doctor check after change) ensure safety. If something goes wrong, the .bak files provide rollback, and the exit codes tell the LLM whether it succeeded.
 

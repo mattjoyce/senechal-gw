@@ -1,4 +1,4 @@
-# RFC-001-Critique-Gemini: Senechal Gateway Review
+# RFC-001-Critique-Gemini: Ductile Review
 
 **Reviewer:** Gemini CLI
 **Date:** 2026-02-08

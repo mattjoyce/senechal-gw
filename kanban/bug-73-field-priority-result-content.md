@@ -40,7 +40,7 @@ FROM event_context WHERE pipeline_name = 'file-to-report' AND step_id = 'save';
 
 **Actual file written:**
 ```bash
-$ wc -c ~/admin/senechal-test/reports/summarize_20260212_032338.md
+$ wc -c ~/admin/ductile-test/reports/summarize_20260212_032338.md
 484  # Contains original input, not fabric analysis!
 ```
 
@@ -65,17 +65,17 @@ When both `result` and `content` are present, prefer `result` (processed/analyze
 ## Reproduction
 
 ```bash
-cd ~/admin/senechal-test
-./senechal-gw system start --config config.yaml &
+cd ~/admin/ductile-test
+./ductile system start --config config.yaml &
 
 curl -X POST http://localhost:8080/trigger/file_handler/handle \
   -H "Authorization: Bearer test_admin_token_local" \
   -d '{
     "payload": {
       "action": "read",
-      "file_path": "/home/matt/admin/senechal-test/test-files/sample.md",
+      "file_path": "/home/matt/admin/ductile-test/test-files/sample.md",
       "pattern": "summarize",
-      "output_dir": "/home/matt/admin/senechal-test/reports"
+      "output_dir": "/home/matt/admin/ductile-test/reports"
     }
   }'
 
@@ -83,7 +83,7 @@ curl -X POST http://localhost:8080/trigger/file_handler/handle \
 sleep 45
 
 # Check file - will contain original 484B input, not 1059B fabric analysis
-cat ~/admin/senechal-test/reports/summarize_*.md
+cat ~/admin/ductile-test/reports/summarize_*.md
 ```
 
 ## Suggested Fix

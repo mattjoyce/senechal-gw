@@ -12,7 +12,7 @@ Create a plugin that wraps the `fabric` command-line tool for AI-powered text pr
 
 ## Overview
 
-Fabric (github.com/danielmiessler/fabric) is an AI tool that applies predefined patterns to text input. This plugin wraps it to make fabric patterns available as Senechal commands.
+Fabric (github.com/danielmiessler/fabric) is an AI tool that applies predefined patterns to text input. This plugin wraps it to make fabric patterns available as Ductile commands.
 
 **Flow:** `input_text | fabric --model <model> --pattern <pattern> | output`
 
@@ -169,7 +169,7 @@ plugins:
 
 ```bash
 # 1. Trigger fabric plugin manually
-senechal-gw run fabric execute
+ductile run fabric execute
 
 # Or via API
 curl -X POST http://localhost:8080/trigger/fabric/execute \
@@ -203,7 +203,7 @@ curl http://localhost:8080/job/<job_id> \
 - ✅ Errors handled gracefully with helpful messages
 - ✅ State updates track execution count and last run
 - ✅ Events emitted with fabric output
-- ✅ Works with manual trigger (senechal-gw run)
+- ✅ Works with manual trigger (ductile run)
 - ✅ Works with API trigger (POST /trigger)
 - ✅ All tests pass
 

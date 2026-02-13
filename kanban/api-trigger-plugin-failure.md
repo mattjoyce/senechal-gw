@@ -22,7 +22,7 @@ The `file_handler` plugin (and potentially other handle-based plugins) fail when
 
 ### Manual Test (SUCCESS ✅)
 ```bash
-docker exec senechal-gw-test bash -c 'cat /tmp/request.json | python3 /app/plugins/file_handler/run.py'
+docker exec ductile-test bash -c 'cat /tmp/request.json | python3 /app/plugins/file_handler/run.py'
 ```
 **Result**: Plugin executes successfully, returns valid JSON response with status "ok", emits events
 
@@ -125,7 +125,7 @@ None available. API triggering of handle commands is non-functional.
 
 - Gateway: Latest main branch
 - Plugin: file_handler v0.1.0 (Pythonic exemplar)
-- Container: senechal-gw-test (Docker)
+- Container: ductile-test (Docker)
 - API: http://localhost:8080
 - Auth: Token-based (working for poll triggers)
 

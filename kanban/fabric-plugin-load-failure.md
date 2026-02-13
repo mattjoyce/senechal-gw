@@ -32,14 +32,14 @@ The plugin manifest appears to be using an unsupported command name `execute` wh
 
 ## Evidence
 
-From Docker test environment logs (container: senechal-gw-test):
+From Docker test environment logs (container: ductile-test):
 ```
 {"time":"2026-02-11T21:50:47.957855758Z","level":"WARN","msg":"failed to load plugin","component":"main","plugin":"fabric","error":"invalid manifest: invalid command \"execute\" (valid: poll, handle, health, init)"}
 ```
 
 ## Reproduction Steps
 
-1. Start senechal-gw with default configuration
+1. Start ductile with default configuration
 2. Check logs during plugin discovery phase
 3. Observe warning message about fabric plugin failure
 
@@ -53,8 +53,8 @@ Update the fabric plugin's `manifest.yaml` to use one of the valid command types
 
 ## Test Environment
 
-- **Location**: `~/senechal-gw/`
-- **Container**: senechal-gw-test
+- **Location**: `~/ductile/`
+- **Container**: ductile-test
 - **Config**: config.test.yaml
 - **Gateway Version**: Latest from main branch
 

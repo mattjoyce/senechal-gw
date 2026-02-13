@@ -1,13 +1,13 @@
 # Docker Test Environment Guide
 
 ## Overview
-This Docker setup provides an isolated test environment for Senechal Gateway, allowing you to test development changes without affecting production systems.
+This Docker setup provides an isolated test environment for Ductile, allowing you to test development changes without affecting production systems.
 
 ## Quick Start
 
 ### 1. Build and Start the Test Environment
 ```bash
-cd ~/senechal-gw
+cd ~/ductile
 docker compose up --build
 ```
 
@@ -55,7 +55,7 @@ curl http://localhost:8080/plugins \
 ## Directory Structure
 
 ```
-~/senechal-gw/
+~/ductile/
 ├── Dockerfile              # Container build instructions
 ├── docker-compose.yml      # Test environment orchestration
 ├── config.test.yaml        # Test-specific configuration
@@ -68,7 +68,7 @@ curl http://localhost:8080/plugins \
 ## Key Differences from Production
 
 1. **Configuration**: Uses `config.test.yaml` instead of `config.yaml`
-2. **Database**: Separate database file `senechal-test.db` in `./data/`
+2. **Database**: Separate database file `ductile-test.db` in `./data/`
 3. **API**: Enabled by default for testing
 4. **Logging**: Set to DEBUG level for detailed output
 5. **Faster Schedules**: Plugins run more frequently for quicker feedback
@@ -91,7 +91,7 @@ docker compose up --build
 To debug or inspect the running container:
 
 ```bash
-docker compose exec senechal-gw /bin/bash
+docker compose exec ductile /bin/bash
 ```
 
 ## Resetting Test Environment
@@ -110,7 +110,7 @@ docker compose up --build
 
 ### View Real-time Logs
 ```bash
-docker compose logs -f senechal-gw
+docker compose logs -f ductile
 ```
 
 ### Check Container Status
@@ -120,7 +120,7 @@ docker compose ps
 
 ### View Container Resource Usage
 ```bash
-docker stats senechal-gw-test
+docker stats ductile-test
 ```
 
 ## Testing New Plugins
@@ -140,7 +140,7 @@ docker stats senechal-gw-test
 - Ensure .env.test has required variables
 
 ### Permission issues
-- The container runs as non-root user `senechal`
+- The container runs as non-root user `ductile`
 - Check file permissions in mounted volumes
 
 ### Port already in use
@@ -152,7 +152,7 @@ docker stats senechal-gw-test
 
 ### Database locked
 - Stop all containers: `docker compose down`
-- Remove volume: `docker volume rm senechal-gw_senechal-data`
+- Remove volume: `docker volume rm ductile_ductile-data`
 
 ## CI/CD Integration
 
@@ -183,7 +183,7 @@ When the dev team delivers new code:
 
 ```bash
 # 1. Pull latest code
-cd ~/senechal-gw
+cd ~/ductile
 git pull origin main
 
 # 2. Build and start test environment

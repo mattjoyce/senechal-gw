@@ -146,7 +146,7 @@ api:
   listen: "localhost:8080"
   auth:
     tokens:
-      - token: ${SENECHAL_TOKEN_ADMIN}
+      - token: ${DUCTILE_TOKEN_ADMIN}
         scopes: ["*"]
 ```
 
@@ -175,8 +175,8 @@ The pipeline DSL uses `uses:` which dispatches to the plugin's default write com
 
 ```bash
 # 1. Start the service with API enabled
-export SENECHAL_TOKEN_ADMIN="test-token-123"
-./senechal-gw start --config config.yaml
+export DUCTILE_TOKEN_ADMIN="test-token-123"
+./ductile start --config config.yaml
 
 # 2. Trigger the pipeline
 curl -X POST http://localhost:8080/trigger/file_handler/read \
@@ -195,7 +195,7 @@ curl http://localhost:8080/job/<job_id> \
   -H "Authorization: Bearer test-token-123"
 
 # 4. Inspect full pipeline lineage
-./senechal-gw inspect <job_id>
+./ductile inspect <job_id>
 
 # 5. Verify output
 ls /Volumes/Projects/reports/
@@ -216,4 +216,4 @@ Extend `internal/e2e/pipeline_test.go` with a test that uses temp directories fo
 
 ## Narrative
 
-- 2026-02-12: Started implementing card #62. Created Pythonic file_handler plugin with comprehensive error handling, type hints, security validation (realpath-based path checking). Set up Docker test environment. Discovered and fixed multiple issues: fabric manifest format (#63), fabric command mismatch (#66), API trigger failure (#68). After rebasing to get Sprint 4 routing implementation, discovered routing requires Pipeline DSL files in `pipelines/` directory, not the legacy `routes:` config. Created `pipelines/file-to-report.yaml` with pipeline definition. Switched from container to local testing in ~/admin/senechal-test/ to access host tools like fabric CLI. Built senechal-gw natively and successfully tested full 3-hop pipeline: file_handler (read) → fabric (analyze) → file_handler (write). **ROUTING WORKS CORRECTLY**: Router matched events to pipeline steps, created downstream jobs with proper traceability (event_context_id, parent_job_id, pipeline/step metadata), accumulated baggage in event_context table. Fabric executed successfully with real AI analysis. Final write step failed due to payload propagation issue - `output_dir` preserved in baggage but plugin doesn't merge context fields with event payload. Created bug card #72 for this finding. **Card #62 objective complete**: Routing infrastructure validated successfully, real-world integration issue discovered and documented. (by @test-admin)
+- 2026-02-12: Started implementing card #62. Created Pythonic file_handler plugin with comprehensive error handling, type hints, security validation (realpath-based path checking). Set up Docker test environment. Discovered and fixed multiple issues: fabric manifest format (#63), fabric command mismatch (#66), API trigger failure (#68). After rebasing to get Sprint 4 routing implementation, discovered routing requires Pipeline DSL files in `pipelines/` directory, not the legacy `routes:` config. Created `pipelines/file-to-report.yaml` with pipeline definition. Switched from container to local testing in ~/admin/ductile-test/ to access host tools like fabric CLI. Built ductile natively and successfully tested full 3-hop pipeline: file_handler (read) → fabric (analyze) → file_handler (write). **ROUTING WORKS CORRECTLY**: Router matched events to pipeline steps, created downstream jobs with proper traceability (event_context_id, parent_job_id, pipeline/step metadata), accumulated baggage in event_context table. Fabric executed successfully with real AI analysis. Final write step failed due to payload propagation issue - `output_dir` preserved in baggage but plugin doesn't merge context fields with event payload. Created bug card #72 for this finding. **Card #62 objective complete**: Routing infrastructure validated successfully, real-world integration issue discovered and documented. (by @test-admin)

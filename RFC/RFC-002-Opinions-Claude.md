@@ -42,7 +42,7 @@ The 10 MB stdout cap is generous but fine. You'll never hit it with well-behaved
 
 This is the single most important decision in the RFC and it's correct. Every operational complexity question (lifecycle management, memory leaks, zombie processes, state corruption) evaporates with spawn-per-command.
 
-Re: feedback question 3 (WebSocket listeners) — **WebSocket listeners are out of scope. Period.** A WebSocket listener is a long-lived service, not a plugin. If you need one, run it as a separate process that pushes events into Senechal via the webhook endpoint. Don't contaminate the plugin model. This answers feedback question 4 too: no streaming plugin mode. Ever. If something needs to be long-lived, it's not a plugin — it's a service that talks to Senechal via HTTP.
+Re: feedback question 3 (WebSocket listeners) — **WebSocket listeners are out of scope. Period.** A WebSocket listener is a long-lived service, not a plugin. If you need one, run it as a separate process that pushes events into Ductile via the webhook endpoint. Don't contaminate the plugin model. This answers feedback question 4 too: no streaming plugin mode. Ever. If something needs to be long-lived, it's not a plugin — it's a service that talks to Ductile via HTTP.
 
 ### 6. Crash Recovery — ACCEPT
 
@@ -126,7 +126,7 @@ JSON logs to stdout, stderr captured and stored. The 64 KB cap on stored stderr 
 
 2. **Circuit breaker too aggressive or too lenient?** Too lenient. Change from 5 to 3 consecutive failures. See Decision 3 notes above.
 
-3. **Spawn-per-command viable for persistent connections?** Wrong question. Persistent connections are not plugins. They're separate services that push events into Senechal via webhooks. Don't bend the plugin model.
+3. **Spawn-per-command viable for persistent connections?** Wrong question. Persistent connections are not plugins. They're separate services that push events into Ductile via webhooks. Don't bend the plugin model.
 
 4. **Streaming plugin mode?** No. Not now, not ever. If it needs to stream, it's not a plugin. The plugin model's entire value proposition is simplicity through spawn-per-command. A "streaming mode" destroys that.
 

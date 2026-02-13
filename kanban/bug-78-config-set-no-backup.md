@@ -24,7 +24,7 @@ The `config set --apply` command modifies config files without creating `.bak` b
 $ ls *.bak
 # No backup files exist
 
-$ ./senechal-gw config set --apply plugins.echo.enabled=true
+$ ./ductile config set --apply plugins.echo.enabled=true
 Successfully set "plugins.echo.enabled" to "true"
 
 $ ls *.bak
@@ -50,7 +50,7 @@ $ ls -la config.yaml*
 
 **Example output:**
 ```bash
-$ senechal-gw config set --apply plugins.echo.enabled=true
+$ ductile config set --apply plugins.echo.enabled=true
 Backup: /path/to/config.yaml.bak
 Successfully set "plugins.echo.enabled" to "true"
 ```
@@ -59,7 +59,7 @@ Successfully set "plugins.echo.enabled" to "true"
 
 The `config set` implementation doesn't call backup creation before writing.
 
-**Likely location:** `cmd/senechal-gw/config.go` or similar, missing:
+**Likely location:** `cmd/ductile/config.go` or similar, missing:
 ```go
 func setConfigValue(path, value string) error {
     // MISSING: Create backup first!
@@ -81,13 +81,13 @@ This combines with bug #79 (no validation before write) to create a dangerous sc
 ## Reproduction
 
 ```bash
-cd ~/admin/senechal-test
+cd ~/admin/ductile-test
 
 # Verify no backups exist
 ls *.bak 2>&1
 
 # Modify config
-./senechal-gw config set --apply plugins.echo.enabled=false
+./ductile config set --apply plugins.echo.enabled=false
 
 # Check for backup
 ls *.bak 2>&1

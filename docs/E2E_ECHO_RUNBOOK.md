@@ -52,7 +52,7 @@ cat plugins/echo/manifest.yaml
 
 2. Start the service:
 ```sh
-senechal-gw start --config config.yaml
+ductile start --config config.yaml
 ```
 
 3. Identify the SQLite DB path from config (example from `MVP.md` uses `./data/state.db`).
@@ -108,7 +108,7 @@ kill -9 <pid>
 ```
 3. Restart:
 ```sh
-senechal-gw start --config config.yaml
+ductile start --config config.yaml
 ```
 
 Expected:

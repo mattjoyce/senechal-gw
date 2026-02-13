@@ -11,9 +11,9 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/scheduler/mocks"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/scheduler/mocks"
 )
 
 // TestLogBuffer is a bytes.Buffer that can be used to capture log output.

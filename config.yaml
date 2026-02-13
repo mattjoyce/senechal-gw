@@ -1,8 +1,8 @@
-# Senechal Gateway Configuration
+# Ductile Configuration
 # See SPEC.md §11 for full reference
 
 service:
-  name: senechal-gw
+  name: ductile
   tick_interval: 60s           # Scheduler heartbeat
   log_level: info              # debug, info, warn, error
   log_format: json             # json
@@ -10,7 +10,7 @@ service:
   job_log_retention: 168h      # 7 days
 
 state:
-  path: ./senechal.db          # SQLite database path (PID lock derived from this)
+  path: ./ductile.db          # SQLite database path (PID lock derived from this)
 
 # API Server: HTTP endpoints for external triggers (Sprint 2)
 api:
@@ -22,7 +22,7 @@ api:
     #
     # Scoped tokens:
     tokens:
-      - token: ${SENECHAL_TOKEN_ADMIN}
+      - token: ${DUCTILE_TOKEN_ADMIN}
         scopes: ["*"]
 
 plugins_dir: ./plugins         # Plugin directory

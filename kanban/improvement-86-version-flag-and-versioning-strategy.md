@@ -14,11 +14,11 @@ The CLI has a `version` command, but we need a clear operator experience for `--
 
 ## Job Story
 
-When I run `senechal-gw --version`, I want reliable version/build metadata and a defined versioning policy, so I can identify exactly what binary is running and how it maps to source and releases.
+When I run `ductile --version`, I want reliable version/build metadata and a defined versioning policy, so I can identify exactly what binary is running and how it maps to source and releases.
 
 ## Acceptance Criteria
 
-- CLI supports both `senechal-gw version` and `senechal-gw --version` (and `-v` only if it does not conflict with existing semantics).
+- CLI supports both `ductile version` and `ductile --version` (and `-v` only if it does not conflict with existing semantics).
 - Version output includes:
   - semantic version
   - git commit (short SHA) when available

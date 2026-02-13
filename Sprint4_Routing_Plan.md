@@ -12,7 +12,7 @@ To ensure multiple agents (or humans) can work in parallel without causing a "co
 
 1.  **The Contract Layer:** Before any logic is written, we define the Interfaces in `internal/router/interfaces.go` and `internal/workspace/interfaces.go`.
 2.  **The Mock Layer:** We generate mocks for these interfaces. Agent A can build the `Router` using a `MockWorkspaceManager`, while Agent B builds the actual `Workspace` implementation.
-3.  **The Integration Layer:** Only once individual tests pass do we wire the concrete implementations together in `cmd/senechal-gw/main.go`.
+3.  **The Integration Layer:** Only once individual tests pass do we wire the concrete implementations together in `cmd/ductile/main.go`.
 
 ---
 
@@ -38,7 +38,7 @@ To ensure multiple agents (or humans) can work in parallel without causing a "co
     *   Detect circular dependencies.
     *   Verify all `uses` plugins exist.
     *   Generate a **BLAKE3 Hash** for the pipeline version.
-*   **Step 3.3:** Multi-file discovery. Load all pipelines from `~/.config/senechal-gw/pipelines/`.
+*   **Step 3.3:** Multi-file discovery. Load all pipelines from `~/.config/ductile/pipelines/`.
 
 ### Phase 4: The Router Hook (The "Big Bang")
 *   **Objective:** Connect the dots.
@@ -59,7 +59,7 @@ To ensure multiple agents (or humans) can work in parallel without causing a "co
 *   **Namespace Encouragement:** Core logs a `WARN` if a plugin emits top-level keys that conflict with standard system keys.
 
 ### 3.3 Path Portability
-*   **Absolute Path Ban:** The `event_context` and `job_queue` tables MUST NOT store absolute paths. They store `job_id`. The Core calculates the path at runtime (e.g., `/base/dir/ + job_id`). This allows you to move your entire Senechal data directory to a new drive without breaking the database.
+*   **Absolute Path Ban:** The `event_context` and `job_queue` tables MUST NOT store absolute paths. They store `job_id`. The Core calculates the path at runtime (e.g., `/base/dir/ + job_id`). This allows you to move your entire Ductile data directory to a new drive without breaking the database.
 
 ---
 
@@ -71,4 +71,4 @@ The sprint is done when we can run the following test:
 2.  **Ledger:** DB shows a chain of 5 distinct jobs.
 3.  **Context:** The final `discord-notifier` job receives a JSON payload that contains the `channel_id` from the *first* job, even though the middle 3 plugins didn't know it existed.
 4.  **Workspace:** The final job can read `summary.txt` from its workspace, which was created 2 steps prior.
-5.  **Artifacts:** The `/tmp/senechal/ws/` folder for this chain is automatically deleted 24 hours later.
+5.  **Artifacts:** The `/tmp/ductile/ws/` folder for this chain is automatically deleted 24 hours later.

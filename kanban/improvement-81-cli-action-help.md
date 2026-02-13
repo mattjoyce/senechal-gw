@@ -21,13 +21,13 @@ CLI commands don't support `--help` at the action level. Users cannot discover f
 
 ```bash
 # Attempt to get help for specific command
-$ ./senechal-gw config check --help
+$ ./ductile config check --help
 Unknown config action: --help
 ❌ Treats --help as an action name
 
 # Noun-level help works
-$ ./senechal-gw config help
-Usage: senechal-gw config <action> [--config PATH]
+$ ./ductile config help
+Usage: ductile config <action> [--config PATH]
 Actions: lock, check, show, get, set
 ⚠️ Lists actions but not flags
 
@@ -41,9 +41,9 @@ Actions: lock, check, show, get, set
 
 ```bash
 # Get help for specific command
-$ ./senechal-gw config check --help
+$ ./ductile config check --help
 
-Usage: senechal-gw config check [flags]
+Usage: ductile config check [flags]
 
 Validate configuration files for syntax, policy, and integrity.
 
@@ -54,16 +54,16 @@ Flags:
 
 Examples:
   # Check current directory config
-  senechal-gw config check
+  ductile config check
 
   # Check specific config
-  senechal-gw config check --config /etc/senechal-gw
+  ductile config check --config /etc/ductile
 
   # JSON output for scripting
-  senechal-gw config check --format json
+  ductile config check --format json
 
   # Fail on warnings
-  senechal-gw config check --strict
+  ductile config check --strict
 
 Exit Codes:
   0  Configuration valid
@@ -75,17 +75,17 @@ Exit Codes:
 
 ```bash
 # Config commands
-./senechal-gw config check --help
-./senechal-gw config show --help
-./senechal-gw config get --help
-./senechal-gw config set --help
-./senechal-gw config lock --help
+./ductile config check --help
+./ductile config show --help
+./ductile config get --help
+./ductile config set --help
+./ductile config lock --help
 
 # Job commands
-./senechal-gw job inspect --help
+./ductile job inspect --help
 
 # System commands
-./senechal-gw system start --help
+./ductile system start --help
 ```
 
 ## Affected Commands
@@ -139,13 +139,13 @@ Checks include:
   - Config integrity hash verification
 `,
     Example: `  # Check current directory
-  senechal-gw config check
+  ductile config check
 
   # Check specific config
-  senechal-gw config check --config /etc/senechal-gw
+  ductile config check --config /etc/ductile
 
   # JSON output for scripting
-  senechal-gw config check --format json`,
+  ductile config check --format json`,
     Run: func(cmd *cobra.Command, args []string) {
         // Command implementation
     },
@@ -200,5 +200,5 @@ After implementation, verify:
 
 ## Narrative
 
-- 2026-02-12: Re-confirmed during comprehensive CLI testing. This issue was originally reported in card #74 but remains unfixed. Running `./senechal-gw config check --help` produces "Unknown config verb: --help" because the parser treats --help as a verb name. The noun-level help (`config help`) works but only lists verb names without flag documentation. Users must guess flags or read source code. This is a discoverability issue affecting both human users and LLM operators. Recommendation: Use Cobra framework for automatic --help generation or implement manual help handler that recognizes --help flag before verb parsing. Medium priority - doesn't block functionality but significantly impacts UX. (by @test-admin)
+- 2026-02-12: Re-confirmed during comprehensive CLI testing. This issue was originally reported in card #74 but remains unfixed. Running `./ductile config check --help` produces "Unknown config verb: --help" because the parser treats --help as a verb name. The noun-level help (`config help`) works but only lists verb names without flag documentation. Users must guess flags or read source code. This is a discoverability issue affecting both human users and LLM operators. Recommendation: Use Cobra framework for automatic --help generation or implement manual help handler that recognizes --help flag before verb parsing. Medium priority - doesn't block functionality but significantly impacts UX. (by @test-admin)
 - 2026-02-12: Implemented action-level `--help`/`-h` handling across noun dispatchers and renamed user-facing CLI terminology from `verb` to `action` in command usage and errors. Added CLI tests for `config`, `job`, and `system` action help output. (by @assistant)

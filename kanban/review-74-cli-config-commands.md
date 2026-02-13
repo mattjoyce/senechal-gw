@@ -7,7 +7,7 @@ tags: [cli, config, review, ux, llm-operator]
 
 # REVIEW: CLI Config Commands for LLM Operator Usability
 
-Comprehensive review of senechal-gw CLI commands from an LLM operator perspective, focusing on validation, error handling, and usability.
+Comprehensive review of ductile CLI commands from an LLM operator perspective, focusing on validation, error handling, and usability.
 
 ## Executive Summary
 
@@ -32,7 +32,7 @@ Comprehensive review of senechal-gw CLI commands from an LLM operator perspectiv
 
 **Usage:**
 ```bash
-senechal-gw config check [-config PATH] [-format human|json] [-strict]
+ductile config check [-config PATH] [-format human|json] [-strict]
 ```
 
 **Positive findings:**
@@ -45,12 +45,12 @@ senechal-gw config check [-config PATH] [-format human|json] [-strict]
 **Test results:**
 ```bash
 # Valid config
-$ senechal-gw config check
+$ ductile config check
 Configuration valid (2 warning(s))
   WARN  [schedule] plugins.fabric.schedule.every: schedule interval "daily" is very short (< 1m)
 
 # JSON format (perfect for LLM parsing)
-$ senechal-gw config check -format json
+$ ductile config check -format json
 {
   "valid": true,
   "warnings": [
@@ -63,11 +63,11 @@ $ senechal-gw config check -format json
 }
 
 # Strict mode
-$ senechal-gw config check -strict
+$ ductile config check -strict
 Exit code: 2 (warnings treated as errors)
 
 # Invalid config
-$ senechal-gw config check --config /tmp/bad-config.yaml
+$ ductile config check --config /tmp/bad-config.yaml
 Exit code: 1
 Config load error: invalid configuration: plugin "file_handler": schedule is required for enabled plugins
 ```
@@ -85,7 +85,7 @@ This warning triggers for "daily" intervals, which is **completely wrong**. Dail
 
 **Usage:**
 ```bash
-senechal-gw config show [-config PATH]
+ductile config show [-config PATH]
 ```
 
 **Positive findings:**
@@ -97,7 +97,7 @@ senechal-gw config show [-config PATH]
 **Test result:**
 ```yaml
 service:
-    name: senechal-gw
+    name: ductile
     tick_interval: 1m0s
     log_level: info
 plugins:
@@ -107,7 +107,7 @@ plugins:
             every: daily
             jitter: 1h0s
         config:
-            allowed_read_paths: /home/matt/admin/senechal-test/test-files
+            allowed_read_paths: /home/matt/admin/ductile-test/test-files
 ```
 
 Perfect for LLM inspection of active configuration.
@@ -118,7 +118,7 @@ Perfect for LLM inspection of active configuration.
 
 **Usage:**
 ```bash
-senechal-gw config get <path.to.key>
+ductile config get <path.to.key>
 ```
 
 **Positive findings:**
@@ -128,7 +128,7 @@ senechal-gw config get <path.to.key>
 
 **Test result:**
 ```bash
-$ senechal-gw config get plugins.fabric.enabled
+$ ductile config get plugins.fabric.enabled
 true
 ```
 
@@ -140,7 +140,7 @@ true
 
 **Usage:**
 ```bash
-senechal-gw config lock [-config PATH]
+ductile config lock [-config PATH]
 ```
 
 **Positive findings:**
@@ -150,9 +150,9 @@ senechal-gw config lock [-config PATH]
 
 **Test result:**
 ```bash
-$ senechal-gw config lock
+$ ductile config lock
 Successfully locked configuration in 1 directory/ies:
-  - /home/matt/admin/senechal-test
+  - /home/matt/admin/ductile-test
 ```
 
 **LLM Use Case:** After making config changes, lock the new state to prevent drift.
@@ -163,14 +163,14 @@ Successfully locked configuration in 1 directory/ies:
 
 **Usage:**
 ```bash
-senechal-gw config set <path.to.key> <value>
+ductile config set <path.to.key> <value>
 ```
 
 **Status:** **BROKEN/UNIMPLEMENTED**
 
 **Test result:**
 ```bash
-$ senechal-gw config set plugins.echo.enabled true
+$ ductile config set plugins.echo.enabled true
 (No output, command appears to fail silently)
 ```
 
@@ -188,7 +188,7 @@ $ senechal-gw config set plugins.echo.enabled true
 
 **Usage:**
 ```bash
-senechal-gw job inspect <job_id> [-config PATH] [-json]
+ductile job inspect <job_id> [-config PATH] [-json]
 ```
 
 **Positive findings:**
@@ -218,7 +218,7 @@ Hops        : 2
     baggage    :
       {
         "content": "...",
-        "output_dir": "/home/matt/admin/senechal-test/reports",
+        "output_dir": "/home/matt/admin/ductile-test/reports",
         "pattern": "summarize"
       }
 
@@ -230,7 +230,7 @@ Hops        : 2
       {
         "content": "...",
         "result": "ONE SENTENCE SUMMARY:\n...",
-        "output_dir": "/home/matt/admin/senechal-test/reports"
+        "output_dir": "/home/matt/admin/ductile-test/reports"
       }
 ```
 
@@ -281,7 +281,7 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
 
 1. **Add `--help` to all actions:**
    ```bash
-   senechal-gw config check --help
+   ductile config check --help
    # Should show: -config, -format, -strict
    ```
 
@@ -291,7 +291,7 @@ The `--json` flag doesn't work - it just shows usage instead of JSON output.
 
 3. **Implement `config set` properly:**
    ```bash
-   senechal-gw config set plugins.fabric.enabled false
+   ductile config set plugins.fabric.enabled false
    # Should: update config.yaml, validate, report success
    ```
 

@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/log"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/router"
-	"github.com/mattjoyce/senechal-gw/internal/state"
-	"github.com/mattjoyce/senechal-gw/internal/workspace"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/log"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 const (

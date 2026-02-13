@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/plugin"
 )
 
 func validConfig() *config.Config {

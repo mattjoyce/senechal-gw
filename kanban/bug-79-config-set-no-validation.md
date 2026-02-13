@@ -21,15 +21,15 @@ The `config set --apply` command writes values to config files without running v
 
 ```bash
 # Test: Set a value that creates invalid config
-$ ./senechal-gw config set --apply plugins.echo.enabled=true
+$ ./ductile config set --apply plugins.echo.enabled=true
 Successfully set "plugins.echo.enabled" to "true"
 
 # Config is now invalid (echo needs a schedule)
-$ ./senechal-gw config check
+$ ./ductile config check
 Load error: invalid configuration: plugin "echo": schedule is required for enabled plugins
 
 # Cannot even read values anymore
-$ ./senechal-gw config get plugins.echo.enabled
+$ ./ductile config get plugins.echo.enabled
 Load error: invalid configuration: plugin "echo": schedule is required for enabled plugins
 
 # Config is corrupted until manually fixed
@@ -41,7 +41,7 @@ Load error: invalid configuration: plugin "echo": schedule is required for enabl
 
 ```bash
 # Attempt to set invalid value
-$ ./senechal-gw config set --apply plugins.echo.enabled=true
+$ ./ductile config set --apply plugins.echo.enabled=true
 
 # Should run validation first
 Validating configuration...
@@ -57,7 +57,7 @@ Exit code: 1
 **Alternative: Validate AFTER writing (but before commit):**
 
 ```bash
-$ ./senechal-gw config set --apply plugins.echo.enabled=true
+$ ./ductile config set --apply plugins.echo.enabled=true
 
 Writing: plugins.echo.enabled = true
 Validating configuration...
@@ -121,22 +121,22 @@ This bug combines with bug #78 (no backups) to create a critical failure mode:
 ## Reproduction
 
 ```bash
-cd ~/admin/senechal-test
+cd ~/admin/ductile-test
 
 # Start with valid config
-./senechal-gw config check
+./ductile config check
 # Output: Configuration valid.
 
 # Set a value that creates invalid state
-./senechal-gw config set --apply plugins.echo.enabled=true
+./ductile config set --apply plugins.echo.enabled=true
 # Output: Successfully set...
 
 # Config is now broken
-./senechal-gw config check
+./ductile config check
 # Output: Load error: invalid configuration...
 
 # Cannot use CLI anymore
-./senechal-gw config get service.log_level
+./ductile config get service.log_level
 # Output: Load error: invalid configuration...
 
 # Manual recovery required

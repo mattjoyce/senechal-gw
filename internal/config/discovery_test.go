@@ -93,11 +93,11 @@ func TestDiscoverConfigFilesMinimal(t *testing.T) {
 
 func TestConfigFilesFileTier(t *testing.T) {
 	cf := &ConfigFiles{
-		Config:   "/etc/senechal/config.yaml",
-		Tokens:   "/etc/senechal/tokens.yaml",
-		Webhooks: "/etc/senechal/webhooks.yaml",
-		Plugins:  []string{"/etc/senechal/plugins/echo.yaml"},
-		Scopes:   []string{"/etc/senechal/scopes/admin.json"},
+		Config:   "/etc/ductile/config.yaml",
+		Tokens:   "/etc/ductile/tokens.yaml",
+		Webhooks: "/etc/ductile/webhooks.yaml",
+		Plugins:  []string{"/etc/ductile/plugins/echo.yaml"},
+		Scopes:   []string{"/etc/ductile/scopes/admin.json"},
 	}
 
 	if cf.FileTier(cf.Tokens) != TierHighSecurity {
@@ -119,13 +119,13 @@ func TestConfigFilesFileTier(t *testing.T) {
 
 func TestConfigFilesAllFiles(t *testing.T) {
 	cf := &ConfigFiles{
-		Config:    "/etc/senechal/config.yaml",
-		Tokens:    "/etc/senechal/tokens.yaml",
-		Webhooks:  "/etc/senechal/webhooks.yaml",
-		Routes:    "/etc/senechal/routes.yaml",
-		Plugins:   []string{"/etc/senechal/plugins/echo.yaml"},
-		Pipelines: []string{"/etc/senechal/pipelines/test.yaml"},
-		Scopes:    []string{"/etc/senechal/scopes/admin.json"},
+		Config:    "/etc/ductile/config.yaml",
+		Tokens:    "/etc/ductile/tokens.yaml",
+		Webhooks:  "/etc/ductile/webhooks.yaml",
+		Routes:    "/etc/ductile/routes.yaml",
+		Plugins:   []string{"/etc/ductile/plugins/echo.yaml"},
+		Pipelines: []string{"/etc/ductile/pipelines/test.yaml"},
+		Scopes:    []string{"/etc/ductile/scopes/admin.json"},
 	}
 
 	all := cf.AllFiles()

@@ -9,7 +9,7 @@ During the implementation of the scheduler tick loop and crash recovery, several
 **Lesson:** When using the `replace` tool, the `old_string` parameter *must be highly specific*. It should include sufficient surrounding context (at least 3 lines before and after, matching whitespace exactly) to uniquely identify the target code block. This ensures precise, idempotent modifications and prevents unintended changes.
 
 ### 2. Go Module Import Paths and Environment Setup
-**Struggle:** I encountered compilation errors due to incorrect Go package import paths (e.g., `senechal-gw/internal/config` instead of the full `github.com/mattjoyce/senechal-gw/internal/config`). This highlighted a misunderstanding of how Go modules resolve paths within a project. The issue was compounded when generating mock files, which also required the correct fully qualified import paths.
+**Struggle:** I encountered compilation errors due to incorrect Go package import paths (e.g., `ductile/internal/config` instead of the full `github.com/mattjoyce/ductile/internal/config`). This highlighted a misunderstanding of how Go modules resolve paths within a project. The issue was compounded when generating mock files, which also required the correct fully qualified import paths.
 **Lesson:** Always verify the Go module path defined in `go.mod`. All internal package imports throughout the codebase (including test files and generated mocks) *must* use this full, correct module path (e.g., `module_name/path/to/package`). Pay close attention to this, especially after initial project setup or when adding new packages and generating code.
 
 ### 3. Effective `slog` Logger Testing

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/protocol"
 )
 
 // PipelineInfo describes a loaded pipeline's execution properties.

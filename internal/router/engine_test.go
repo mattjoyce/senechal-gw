@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
-	"github.com/mattjoyce/senechal-gw/internal/router/dsl"
+	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
 func TestRouterNextRootTrigger(t *testing.T) {

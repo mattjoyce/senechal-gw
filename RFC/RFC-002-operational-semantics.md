@@ -11,7 +11,7 @@
 
 RFC-001 established the architecture: Go core, work queue, subprocess plugins, config-declared routing, SQLite state. Three independent reviews (Gemini, OpenAI, Claude) converged on the same verdict: the architecture is right, but the operational semantics are underspecified.
 
-This RFC closes every open question from RFC-001 and makes binding decisions on the behaviors that determine whether Senechal runs reliably unattended.
+This RFC closes every open question from RFC-001 and makes binding decisions on the behaviors that determine whether Ductile runs reliably unattended.
 
 ---
 
@@ -19,7 +19,7 @@ This RFC closes every open question from RFC-001 and makes binding decisions on 
 
 ### 1. Delivery Guarantee: At-Least-Once
 
-Senechal guarantees **at-least-once delivery**. A job may run more than once (after crash, timeout, or retry). It will never be silently dropped.
+Ductile guarantees **at-least-once delivery**. A job may run more than once (after crash, timeout, or retry). It will never be silently dropped.
 
 **Implications:**
 - Plugins MUST be idempotent, or use `state` to track what they've already processed.
@@ -89,7 +89,7 @@ plugins:
 - Plugin response includes `"retry": false`.
 - All other failures are retried.
 
-**Circuit breaker:** If a plugin produces 5 consecutive failures (across any jobs), the scheduler stops enqueuing new jobs for that plugin. The circuit resets after 30 minutes, or manually via `senechal-gw reset <plugin>`. Existing queued jobs for the plugin still execute (they may succeed and reset the circuit).
+**Circuit breaker:** If a plugin produces 5 consecutive failures (across any jobs), the scheduler stops enqueuing new jobs for that plugin. The circuit resets after 30 minutes, or manually via `ductile reset <plugin>`. Existing queued jobs for the plugin still execute (they may succeed and reset the circuit).
 
 ---
 
@@ -142,7 +142,7 @@ The core:
 
 **`init` runs once:** On first discovery (plugin directory appears with a valid manifest) or when the plugin's config changes. It is not retried on failure — the plugin is marked unhealthy and the operator is expected to fix the config and `reload`. `init` is for one-time setup like validating credentials, not for ongoing work.
 
-**`health` is called by `senechal-gw status`**, not on a schedule. It's a diagnostic tool for the operator, not a liveness probe.
+**`health` is called by `ductile status`**, not on a schedule. It's a diagnostic tool for the operator, not a liveness probe.
 
 **Rationale:** Long-lived processes mean managing heartbeats, reconnection, memory leaks, and zombie detection. Spawn-per-command eliminates all of that. Process spawn overhead is ~5ms on Linux — irrelevant when your shortest interval is 5 minutes.
 
@@ -315,7 +315,7 @@ webhooks:
 **PID file lock.** Simple, proven, zero-dependency.
 
 On startup:
-1. Attempt to create/open `<state_dir>/senechal-gw.lock`.
+1. Attempt to create/open `<state_dir>/ductile.lock`.
 2. Acquire `flock(LOCK_EX | LOCK_NB)` on the file.
 3. Write the current PID.
 4. If lock acquisition fails → log error, exit with code 1.
@@ -327,7 +327,7 @@ No SQLite-based locking. No heartbeat files. `flock` handles crash recovery corr
 
 ### 13. Config Reload
 
-**`senechal-gw reload` sends SIGHUP to the running process** (found via the PID file from Decision 12).
+**`ductile reload` sends SIGHUP to the running process** (found via the PID file from Decision 12).
 
 On SIGHUP:
 1. Parse the new config file. If invalid → log error, keep old config, done.
@@ -339,7 +339,7 @@ On SIGHUP:
 7. Removed plugins: queued jobs for them are cancelled (status → `dead`, reason: "plugin removed"). No new jobs are enqueued.
 8. Disabled plugins (`enabled: false`): same as removed — cancel queued, stop scheduling.
 
-**CLI mechanism:** `senechal-gw reload` reads the PID from the lock file and sends `SIGHUP`. If the PID file doesn't exist or the process isn't running → error.
+**CLI mechanism:** `ductile reload` reads the PID from the lock file and sends `SIGHUP`. If the PID file doesn't exist or the process isn't running → error.
 
 ---
 
@@ -374,7 +374,7 @@ This is a personal integration server processing maybe 50 jobs per day. Two-lane
 - The core constructs the execution path as `<plugins_dir>/<plugin_name>/<entrypoint>`. No path traversal — `..` in `entrypoint` is rejected.
 - The entrypoint MUST be executable (`chmod +x`). The core does not invoke interpreters — the shebang line handles that.
 - World-writable plugin directories are refused at load time (log error, skip plugin).
-- Plugins run as the same OS user as the core. Use systemd `User=senechal` to limit blast radius.
+- Plugins run as the same OS user as the core. Use systemd `User=ductile` to limit blast radius.
 
 ---
 

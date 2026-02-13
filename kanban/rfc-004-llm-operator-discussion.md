@@ -12,7 +12,7 @@ Multi-agent design review session for RFC-004 with Claude, Gemini, and Codex. Re
 
 ## Purpose
 
-**RFC Location:** `/Volumes/Projects/senechal-gw/RFC-004-LLM-Operator-Admin.md`
+**RFC Location:** `/Volumes/Projects/ductile/RFC-004-LLM-Operator-Admin.md`
 
 **Core Proposal:**
 - Treat LLM as first-class operator/admin (not just API consumer)
@@ -47,12 +47,12 @@ LLM → Seneschal Gateway → Skills → External Systems
 **Question:** Should LLMs have direct access to operator utilities?
 
 **Utilities include:**
-- `senechal config token create/delete`
-- `senechal config plugin set`
-- `senechal config route add/remove`
-- `senechal config webhook add`
-- `senechal doctor`
-- `senechal config token rehash`
+- `ductile config token create/delete`
+- `ductile config plugin set`
+- `ductile config route add/remove`
+- `ductile config webhook add`
+- `ductile doctor`
+- `ductile config token rehash`
 
 **Options:**
 - **A:** Human-only (CLI only, no API)
@@ -165,7 +165,7 @@ CREATE TABLE execution_ledger (
 ## Pre-Discussion Preparation
 
 **Each agent should review:**
-1. RFC-004 document (`/Volumes/Projects/senechal-gw/RFC-004-LLM-Operator-Admin.md`)
+1. RFC-004 document (`/Volumes/Projects/ductile/RFC-004-LLM-Operator-Admin.md`)
 2. Current Sprint 3 implementation (#35, #36, #39)
 3. Existing manifest format (SPEC.md §5.4)
 4. Token scopes design (#35)
@@ -222,7 +222,7 @@ After discussion:
 
 ## References
 
-- RFC-004: `/Volumes/Projects/senechal-gw/RFC-004-LLM-Operator-Admin.md`
+- RFC-004: `/Volumes/Projects/ductile/RFC-004-LLM-Operator-Admin.md`
 - SPEC.md §5.4: Plugin Manifest
 - Card #35: Token Scopes
 - Card #36: Manifest Metadata

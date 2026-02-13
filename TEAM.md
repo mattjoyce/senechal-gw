@@ -1,4 +1,4 @@
-# Senechal Gateway Development Team
+# Ductile Development Team
 
 ## Team Roster
 
@@ -44,7 +44,7 @@ Based on Sprint 1 & 2 execution:
 - **Cards:** #39, #42
 - **Deliverable:** Multi-file configuration system + webhook endpoints
 - **Work:**
-  - #39: Multi-file config system (`~/.config/senechal-gw/` directory structure)
+  - #39: Multi-file config system (`~/.config/ductile/` directory structure)
   - BLAKE3 hash verification on scope files
   - Cross-file reference validation
   - #42: Webhook listener with HMAC-SHA256 verification (after #39)

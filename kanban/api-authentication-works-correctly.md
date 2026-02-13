@@ -48,7 +48,7 @@ All authentication scenarios working as expected:
 - **Admin Token**: `test_admin_token_change_me_in_production` (scopes: ["*"])
 - **Read-Only Token**: `test_readonly_token_change_me` (scopes: ["plugin:ro", "job:ro", "state:ro"])
 - **Endpoint**: POST /trigger/{plugin}/{command}
-- **Environment**: Docker test container (senechal-gw-test)
+- **Environment**: Docker test container (ductile-test)
 
 ## Narrative
 

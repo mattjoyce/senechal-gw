@@ -9,7 +9,7 @@ tags: [documentation]
 
 # Task: Add Comprehensive README.md
 
-Create a high-quality `README.md` that serves as the entry point for the Senechal Gateway project. It should bridge the gap between technical specs and the user guide, highlighting the project's unique value propositions (polyglot plugins, reliability, security).
+Create a high-quality `README.md` that serves as the entry point for the Ductile project. It should bridge the gap between technical specs and the user guide, highlighting the project's unique value propositions (polyglot plugins, reliability, security).
 
 ## TODO
 - [x] Create branch `gemini/add-readme`

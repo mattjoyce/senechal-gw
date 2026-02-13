@@ -3,7 +3,7 @@ package webhook
 import (
 	"context"
 
-	"github.com/mattjoyce/senechal-gw/internal/queue"
+	"github.com/mattjoyce/ductile/internal/queue"
 )
 
 // JobQueuer defines the interface for enqueueing webhook-triggered jobs.

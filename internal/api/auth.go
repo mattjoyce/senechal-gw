@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/mattjoyce/senechal-gw/internal/auth"
+	"github.com/mattjoyce/ductile/internal/auth"
 )
 
 // ExtractAPIKey extracts an API key from an Authorization: Bearer <key> header.

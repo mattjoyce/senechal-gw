@@ -9,7 +9,7 @@ tags: [sprint-4, documentation, pipelines]
 
 # Create Comprehensive Pipeline & Routing Documentation
 
-Write a standalone guide explaining how to design, build, and debug event-driven pipelines in Senechal.
+Write a standalone guide explaining how to design, build, and debug event-driven pipelines in Ductile.
 
 ---
 Switch to to main, and rebase.

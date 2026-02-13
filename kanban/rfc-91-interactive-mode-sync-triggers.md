@@ -10,7 +10,7 @@ tags: [architecture, api, discord, webhooks, interactive]
 
 ## Problem Statement
 
-senechal-gw's async-only architecture is **incompatible with interactive use cases** (chat bots, web UIs, CLI tools that expect immediate responses).
+ductile's async-only architecture is **incompatible with interactive use cases** (chat bots, web UIs, CLI tools that expect immediate responses).
 
 ### Current Behavior
 All `/trigger/*` endpoints return HTTP 202 with job ID immediately. Jobs run async in background. **No mechanism exists to retrieve or push results back to caller.**
@@ -26,11 +26,11 @@ All `/trigger/*` endpoints return HTTP 202 with job ID immediately. Jobs run asy
 - Job succeeds (ID: `a25b1490-4cd3-4d6d-a44d-4685e22a63b7`)
 - User receives: "**queued:** No message provided"
 - Actual fabric output never reaches user
-- See: `/home/matt/admin/senechal-test/lab-notes.md` (line 569+)
+- See: `/home/matt/admin/ductile-test/lab-notes.md` (line 569+)
 
 ## Root Cause
 
-senechal-gw is architected for **batch processing**:
+ductile is architected for **batch processing**:
 - Optimized for multi-hop pipelines, file processing, automation
 - "Fire and forget" model with workspace dirs and audit trails
 - No result delivery mechanism (webhooks, polling endpoints, or sync mode)
@@ -112,11 +112,11 @@ POST /trigger/fabric/handle?wait=true
 - Major protocol change
 - Overkill for simple use cases
 
-### Option 5: Separate "senechal-sync" Service (Out of scope?)
-**Implementation**: Different service for sync operations, delegates to senechal-gw
+### Option 5: Separate "ductile-sync" Service (Out of scope?)
+**Implementation**: Different service for sync operations, delegates to ductile
 
 **Pros**:
-- Keeps senechal-gw focused on async workflows
+- Keeps ductile focused on async workflows
 - Clean separation of concerns
 
 **Cons**:
@@ -192,7 +192,7 @@ func (h *Handler) Trigger(w http.ResponseWriter, r *http.Request) {
 - Declarative (YAML config) vs imperative (query params)
 - Works with complex pipelines (`split`, `call`, `on_events`)
 - Per-pipeline timeout control
-- Aligns with senechal-gw design philosophy
+- Aligns with ductile design philosophy
 
 This RFC (91) remains valuable for documenting the problem and exploring alternatives.
 

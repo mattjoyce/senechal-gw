@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
-	"github.com/mattjoyce/senechal-gw/internal/router/dsl"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
 // Router is a concrete routing engine backed by compiled pipeline DSL.

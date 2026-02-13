@@ -263,7 +263,7 @@ assert.Equal("job.enqueued", event.Type)
 **Manual Verification:**
 ```bash
 # Terminal 1: Start service
-./senechal-gw start
+./ductile start
 
 # Terminal 2: Subscribe to events
 curl -N -H "Authorization: Bearer $API_KEY" \

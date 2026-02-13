@@ -1,11 +1,11 @@
-# Senechal Gateway (senechal-gw)
+# Ductile (ductile)
 
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Senechal Gateway** is a lightweight, reliable, and secure integration gateway designed for personal automation. It acts as a digital steward, orchestrating tasks across various services using a simple, polyglot plugin architecture.
+**Ductile** is a lightweight, reliable, and secure integration gateway designed for personal automation. It acts as a digital steward, orchestrating tasks across various services using a simple, polyglot plugin architecture.
 
-Built with resilience in mind, Senechal-GW ensures your automation workflows are executed reliably, even across system restarts or crashes.
+Built with resilience in mind, Ductile ensures your automation workflows are executed reliably, even across system restarts or crashes.
 
 ## 🚀 Key Features
 
@@ -21,7 +21,7 @@ Built with resilience in mind, Senechal-GW ensures your automation workflows are
 
 ## 🧠 The Mental Model
 
-Senechal-GW follows a **spawn-per-command** model. When a job is triggered (via the built-in Scheduler, an inbound Webhook, or the API), the gateway spawns a fresh process for the plugin.
+Ductile follows a **spawn-per-command** model. When a job is triggered (via the built-in Scheduler, an inbound Webhook, or the API), the gateway spawns a fresh process for the plugin.
 
 1. **Scheduler/API/Webhook** enqueues a job.
 2. **Dispatcher** spawns the plugin process.
@@ -34,9 +34,9 @@ Senechal-GW follows a **spawn-per-command** model. When a job is triggered (via 
 Requires Go 1.25.4+.
 
 ```bash
-git clone https://github.com/mattjoyce/senechal-gw.git
-cd senechal-gw
-go build -o senechal-gw ./cmd/senechal-gw
+git clone https://github.com/mattjoyce/ductile.git
+cd ductile
+go build -o ductile ./cmd/ductile
 ```
 
 ### 2. Run the Echo Showcase
@@ -44,7 +44,7 @@ The included `echo` plugin demonstrates the protocol:
 
 ```bash
 # Ensure plugins are discovered
-./senechal-gw start
+./ductile start
 ```
 
 ### 3. Trigger via API
@@ -53,7 +53,7 @@ The included `echo` plugin demonstrates the protocol:
 curl -X POST http://localhost:8080/trigger/echo/poll 
   -H "Authorization: Bearer ${YOUR_TOKEN}" 
   -H "Content-Type: application/json" 
-  -d '{"message": "Hello Senechal!"}'
+  -d '{"message": "Hello Ductile!"}'
 ```
 
 ## 📝 Polyglot Showcase

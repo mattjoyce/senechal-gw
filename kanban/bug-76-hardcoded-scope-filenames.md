@@ -20,8 +20,8 @@ The `config lock` command hardcodes specific filenames (`tokens.yaml`, `webhooks
 ## Evidence
 
 ```bash
-$ ./senechal-gw config lock -v
-Processing directory: /home/matt/admin/senechal-test
+$ ./ductile config lock -v
+Processing directory: /home/matt/admin/ductile-test
   SKIP tokens.yaml: not found (optional)
   SKIP webhooks.yaml: not found (optional)
 ```
@@ -139,7 +139,7 @@ func isScopeFile(path string, mainConfig *Config) bool {
 ## Reproduction
 
 ```bash
-cd ~/admin/senechal-test
+cd ~/admin/ductile-test
 
 # Create config WITHOUT tokens.yaml or webhooks.yaml
 cat > config.yaml << EOF
@@ -151,7 +151,7 @@ plugins:
 EOF
 
 # Run config lock
-./senechal-gw config lock -v
+./ductile config lock -v
 
 # WRONG: Shows "SKIP tokens.yaml" even though it's not referenced
 # RIGHT: Should only process config.yaml

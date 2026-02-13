@@ -1,6 +1,6 @@
-# RFC-001 Critique: Senechal Gateway (Constructive Review)
+# RFC-001 Critique: Ductile (Constructive Review)
 
-Target: `RFC-001-senechal-gateway.md` (Draft, dated 2026-02-08)
+Target: `RFC-001-ductile-gateway.md` (Draft, dated 2026-02-08)
 
 ## High-Level Take
 
@@ -188,7 +188,7 @@ Define:
 - Clarify whether “scheduler checks due plugins” uses “last successful run” vs “last attempted run”.
 - “Jitter: each cycle picks a random offset” can create uneven behavior; I’d specify jitter per *scheduled run time* rather than per tick, so runs don’t “wander.”
 - Plugin `manifest.yaml` has `config_keys` but the RFC doesn’t say whether the core validates required keys or just passes config through.
-- `senechal-gw reload` uses SIGHUP in systemd; the CLI command is shown but not how it signals the daemon (PID file? unix socket? HTTP admin endpoint?).
+- `ductile reload` uses SIGHUP in systemd; the CLI command is shown but not how it signals the daemon (PID file? unix socket? HTTP admin endpoint?).
 - For `webhooks.listen: 127.0.0.1:8081`, call out the intended deployment model (reverse proxy? SSH tunnel? local-only triggers?).
 
 ## Questions I’d Want Answered Before Implementation

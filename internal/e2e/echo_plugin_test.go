@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
 )
 
 func TestEchoPlugin_DiscoveryAndProtocolOK(t *testing.T) {

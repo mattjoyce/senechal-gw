@@ -10,7 +10,7 @@ tags: [architecture, pipelines, interactive, dag, critical]
 
 ## Executive Summary
 
-**Problem**: senechal-gw's async-only architecture blocks interactive use cases (Discord bots, web UIs, CLI tools). See RFC-91 for full problem statement.
+**Problem**: ductile's async-only architecture blocks interactive use cases (Discord bots, web UIs, CLI tools). See RFC-91 for full problem statement.
 
 **Proposed Solution**: Add `execution_mode` to pipeline config, leveraging existing DAG infrastructure to make pipelines wait for completion before returning results.
 
@@ -20,7 +20,7 @@ tags: [architecture, pipelines, interactive, dag, critical]
 
 ### Core Insight
 
-senechal-gw already has all the infrastructure needed:
+ductile already has all the infrastructure needed:
 - ✓ Dispatcher tracks parent-child job relationships
 - ✓ Pipelines define multi-step workflows with `split`, `call`, `on_events`
 - ✓ Job completion is already tracked in database
@@ -46,7 +46,7 @@ This is **better than HTTP-level flags** because:
 1. Config documents pipeline behavior
 2. Client doesn't need to know implementation details
 3. Works naturally with complex multi-step workflows
-4. Aligns with senechal-gw's "YAML-configured" design philosophy
+4. Aligns with ductile's "YAML-configured" design philosophy
 
 ## Proposed Schema
 
@@ -208,7 +208,7 @@ func (d *Dispatcher) checkJobTreeComplete(rootID string) (bool, *JobResult) {
 ### Phase 2: API Handler Integration (Week 1)
 
 **Files to modify**:
-- `cmd/senechal-gw/api/handlers.go`: Update trigger handlers
+- `cmd/ductile/api/handlers.go`: Update trigger handlers
 
 ```go
 func (h *Handler) TriggerPlugin(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +479,7 @@ pipelines:
 
 ## Why This Saves the Project
 
-**Before this RFC**: senechal-gw is unusable for interactive use cases. Discord integration fails, web UIs can't get results, CLI tools are stuck. The async-only architecture is a dealbreaker for an entire class of users.
+**Before this RFC**: ductile is unusable for interactive use cases. Discord integration fails, web UIs can't get results, CLI tools are stuck. The async-only architecture is a dealbreaker for an entire class of users.
 
 **After this RFC**:
 - ✓ Chat bots work (Discord, Slack)

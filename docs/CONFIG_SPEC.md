@@ -1,19 +1,19 @@
-# Senechal Gateway: Configuration Specification
+# Ductile: Configuration Specification
 
 **Version:** 1.1 (Tiered Directory Model)  
 **Date:** 2026-02-12  
 **Status:** Approved  
 
-This document defines the configuration structure, integrity verification, and runtime compilation behavior for Senechal Gateway.
+This document defines the configuration structure, integrity verification, and runtime compilation behavior for Ductile.
 
 ---
 
 ## 1. Directory Structure
 
-Senechal uses a "Nagios-style" configuration directory, typically located at `~/.config/senechal-gw/`.
+Ductile uses a "Nagios-style" configuration directory, typically located at `~/.config/ductile/`.
 
 ```
-~/.config/senechal-gw/
+~/.config/ductile/
 ├── config.yaml                  # [Operational] Service-level settings
 ├── webhooks.yaml                # [High Security] Webhook endpoints & secrets
 ├── tokens.yaml                  # [High Security] API token registry
@@ -42,7 +42,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
 - **System Lock-in**: Moving the configuration directory breaks the seal.
-- **Authorization**: The `senechal-gw config lock` command is the only way to update the manifest.
+- **Authorization**: The `ductile config lock` command is the only way to update the manifest.
 
 ---
 
@@ -88,8 +88,8 @@ pipelines:
 ### 4.1 config.yaml (Service settings)
 ```yaml
 service:
-  name: senechal-gw
-  plugins_dir: /opt/senechal-gw/plugins
+  name: ductile
+  plugins_dir: /opt/ductile/plugins
   tick_interval: 60s
   log_level: info
   log_format: json
@@ -138,7 +138,7 @@ tokens:
 
 ## 5. Authentication Configuration
 
-Senechal supports two authentication modes. These are configured within the `api` section of the configuration (typically in `config.yaml` or a dedicated `auth.yaml`).
+Ductile supports two authentication modes. These are configured within the `api` section of the configuration (typically in `config.yaml` or a dedicated `auth.yaml`).
 
 ### 5.1 Legacy: Single API Key (Simple)
 For single-user or development environments.

@@ -1,4 +1,4 @@
-// Package doctor validates senechal-gw configuration and plugin setup.
+// Package doctor validates ductile configuration and plugin setup.
 package doctor
 
 import (
@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/plugin"
 )
 
 // Result holds the outcome of a validation run.

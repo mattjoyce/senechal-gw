@@ -1,15 +1,15 @@
-# Senechal Gateway Test Results
+# Ductile Test Results
 
 **Test Date**: 2026-02-12
 **Tester**: System Admin / QA
-**Environment**: Docker test container (~/senechal-gw/)
+**Environment**: Docker test container (~/ductile/)
 **Gateway Version**: Latest from main branch
 
 ---
 
 ## Executive Summary
 
-Completed systematic testing of senechal-gw in Docker test environment. Found and fixed 2 plugin issues. Identified 1 core database concurrency issue requiring dev team attention.
+Completed systematic testing of ductile in Docker test environment. Found and fixed 2 plugin issues. Identified 1 core database concurrency issue requiring dev team attention.
 
 ### Overall Status: ✅ FUNCTIONAL with Known Limitations
 
@@ -140,7 +140,7 @@ Completed systematic testing of senechal-gw in Docker test environment. Found an
 
 #### Test 4.1: Database Initialization
 - **Status**: ✅ PASS
-- **Result**: SQLite database created at ./data/senechal-test.db
+- **Result**: SQLite database created at ./data/ductile-test.db
 
 #### Test 4.2: State Persistence
 - **Status**: ✅ PASS
@@ -197,7 +197,7 @@ Completed systematic testing of senechal-gw in Docker test environment. Found an
 
 #### Test 7.2: Environment Variable Interpolation
 - **Status**: ✅ PASS
-- **Test**: ${SENECHAL_TOKEN_ADMIN} and other vars
+- **Test**: ${DUCTILE_TOKEN_ADMIN} and other vars
 - **Result**: Variables correctly substituted from .env.test
 
 ---
@@ -329,10 +329,10 @@ Completed systematic testing of senechal-gw in Docker test environment. Found an
 
 ## Test Environment Details
 
-- **Location**: ~/senechal-gw/
-- **Container**: senechal-gw-test
+- **Location**: ~/ductile/
+- **Container**: ductile-test
 - **Config**: config.test.yaml
-- **Database**: ./data/senechal-test.db
+- **Database**: ./data/ductile-test.db
 - **API**: http://localhost:8080
 - **Logging**: DEBUG level enabled
 
@@ -340,7 +340,7 @@ Completed systematic testing of senechal-gw in Docker test environment. Found an
 
 ## Conclusion
 
-The Senechal Gateway core functionality is **solid and working well**. The plugin system, API server, authentication, and basic job processing all work correctly. The main limitation is SQLite's concurrent write handling, which is a known trade-off of using SQLite.
+The Ductile core functionality is **solid and working well**. The plugin system, API server, authentication, and basic job processing all work correctly. The main limitation is SQLite's concurrent write handling, which is a known trade-off of using SQLite.
 
 **Ready for**: Development team testing with proper awareness of SQLite limitations
 

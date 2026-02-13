@@ -1,10 +1,10 @@
 # Versioning and Build Metadata
 
-This document defines how `senechal-gw` versions are assigned and how build metadata is injected into binaries.
+This document defines how `ductile` versions are assigned and how build metadata is injected into binaries.
 
 ## Versioning Policy
 
-Senechal follows Semantic Versioning (`MAJOR.MINOR.PATCH`):
+Ductile follows Semantic Versioning (`MAJOR.MINOR.PATCH`):
 
 - `MAJOR`: Breaking CLI/config/protocol changes.
 - `MINOR`: Backward-compatible features.
@@ -19,13 +19,13 @@ Pre-release builds use SemVer pre-release tags, for example:
 
 Both commands are supported:
 
-- `senechal-gw version`
-- `senechal-gw --version`
+- `ductile version`
+- `ductile --version`
 
 Machine-readable output is available with:
 
-- `senechal-gw version --json`
-- `senechal-gw --version --json`
+- `ductile version --json`
+- `ductile --version --json`
 
 Version output includes:
 
@@ -50,8 +50,8 @@ BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 go build \
   -ldflags "-X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
-  -o senechal-gw \
-  ./cmd/senechal-gw
+  -o ductile \
+  ./cmd/ductile
 ```
 
 ## Local/Dev Build Behavior
@@ -68,5 +68,5 @@ For local builds without explicit ldflags:
 2. Create and push an annotated SemVer tag (for example `v1.2.0`).
 3. Build with ldflags shown above.
 4. Verify:
-   - `./senechal-gw --version`
-   - `./senechal-gw --version --json`
+   - `./ductile --version`
+   - `./ductile --version --json`

@@ -8,7 +8,7 @@ tags: [sprint-3, tui, monitoring, observability]
 
 # Simple TUI Monitor
 
-Build a terminal UI for real-time monitoring of Senechal Gateway. Provides live visibility into job queue, plugin states, scheduler activity, and recent events without grepping logs.
+Build a terminal UI for real-time monitoring of Ductile. Provides live visibility into job queue, plugin states, scheduler activity, and recent events without grepping logs.
 
 ## Acceptance Criteria
 
@@ -31,7 +31,7 @@ Build a terminal UI for real-time monitoring of Senechal Gateway. Provides live 
 ## Layout Mockup
 
 ```
-┌─ Senechal Gateway ────────────────────────────────────────────────┐
+┌─ Ductile ────────────────────────────────────────────────┐
 │ Status: Running  │  Uptime: 2h 34m  │  Queue: 2 pending  │  Load: 0.3 │
 └───────────────────────────────────────────────────────────────────┘
 
@@ -163,14 +163,14 @@ func pollHealthz(apiURL, apiKey string) tea.Cmd {
 **Configuration:**
 ```yaml
 # In user's shell config or .env
-export SENECHAL_API_URL="http://localhost:8080"
-export SENECHAL_API_KEY="your-api-key"
+export DUCTILE_API_URL="http://localhost:8080"
+export DUCTILE_API_KEY="your-api-key"
 ```
 
 **CLI Integration:**
 ```bash
 # New subcommand
-./senechal-gw monitor [--api-url URL] [--api-key KEY]
+./ductile monitor [--api-url URL] [--api-key KEY]
 ```
 
 ## Dependencies
@@ -192,10 +192,10 @@ require (
 **Manual:**
 ```bash
 # Start service
-./senechal-gw start
+./ductile start
 
 # In another terminal, start TUI
-./senechal-gw monitor
+./ductile monitor
 
 # Trigger jobs, watch them appear in TUI
 curl -X POST http://localhost:8080/trigger/echo/poll
@@ -227,6 +227,6 @@ curl -X POST http://localhost:8080/trigger/echo/poll
 
 ## Narrative
 
-The TUI transforms "how's my gateway doing?" from a multi-step investigation (SSH, grep logs, check DB) into a single `./senechal-gw monitor` command. It's especially valuable during Sprint 4 (reliability controls) development—watching circuit breakers trip and recover in real-time makes tuning thresholds intuitive. Since it's just a consumer of the /events endpoint, it's isolated from core logic and can be enhanced over time without risk.
+The TUI transforms "how's my gateway doing?" from a multi-step investigation (SSH, grep logs, check DB) into a single `./ductile monitor` command. It's especially valuable during Sprint 4 (reliability controls) development—watching circuit breakers trip and recover in real-time makes tuning thresholds intuitive. Since it's just a consumer of the /events endpoint, it's isolated from core logic and can be enhanced over time without risk.
 
 **Scope:** This is a nice-to-have enhancement, not a blocker for production. Build after /events is proven stable (Sprint 3 complete). If time-constrained, defer to post-Sprint 4.

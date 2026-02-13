@@ -12,7 +12,7 @@ After completing Sprint 2-4 (routing, webhooks, reliability), evaluate whether t
 
 ## Context
 
-RFC-003 proposes evolving senechal-gw from a scheduled automation gateway into an execution runtime for agent-driven workflows. The core thesis: the scheduler tick IS an agentic loop (observe → decide → act → record → repeat), and we can generalize this pattern.
+RFC-003 proposes evolving ductile from a scheduled automation gateway into an execution runtime for agent-driven workflows. The core thesis: the scheduler tick IS an agentic loop (observe → decide → act → record → repeat), and we can generalize this pattern.
 
 Key insight: "Better personal automation" and "agent execution runtime" are overlapping goals, not competing ones.
 
@@ -77,7 +77,7 @@ No commitment needed now. Sprint 2-4 work is valuable regardless of direction.
 
 ## Landscape Context
 
-RFC-003 positions senechal-gw in a space between:
+RFC-003 positions ductile in a space between:
 - **Cron/systemd timers** (too simple, no state)
 - **Airflow/Temporal** (too complex, distributed)
 - **n8n/Zapier** (SaaS, not self-hosted)
@@ -87,9 +87,9 @@ The "agentic loop runtime" niche: deterministic execution kernel that agents can
 
 ## Reference
 
-- RFC-003: `/Volumes/Projects/senechal-gw/RFC-003-Agentic-Loop-Runtime.md`
+- RFC-003: `/Volumes/Projects/ductile/RFC-003-Agentic-Loop-Runtime.md`
 - Current roadmap: Sprint 2 (routing), Sprint 3 (webhooks), Sprint 4 (reliability)
 
 ## Narrative
 
-- 2026-02-09: Card created to defer RFC-003 architectural decision until after Sprint 4. Sprint 2-4 are prerequisites regardless of direction. Goal is to avoid distraction while acknowledging the landscape and far-away possibilities. "senechal tick, is a loop" - the scheduler already implements an observe-decide-act-record pattern; RFC-003 just generalizes it. Decision deferred until we have real usage data and can evaluate workflow complexity vs routing simplicity trade-offs. (by @claude)
+- 2026-02-09: Card created to defer RFC-003 architectural decision until after Sprint 4. Sprint 2-4 are prerequisites regardless of direction. Goal is to avoid distraction while acknowledging the landscape and far-away possibilities. "ductile tick, is a loop" - the scheduler already implements an observe-decide-act-record pattern; RFC-003 just generalizes it. Decision deferred until we have real usage data and can evaluate workflow complexity vs routing simplicity trade-offs. (by @claude)

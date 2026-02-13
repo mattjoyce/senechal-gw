@@ -1,12 +1,12 @@
-# Senechal Gateway: Pipelines & Orchestration
+# Ductile: Pipelines & Orchestration
 
-This guide explains how to design, build, and debug event-driven workflows (Pipelines) in Senechal Gateway.
+This guide explains how to design, build, and debug event-driven workflows (Pipelines) in Ductile.
 
 ---
 
 ## 1. The Governance Hybrid Model
 
-Senechal uses a unique "Governance Hybrid" architecture to manage data as it flows through a multi-hop chain. It separates **Governance** from **Execution**.
+Ductile uses a unique "Governance Hybrid" architecture to manage data as it flows through a multi-hop chain. It separates **Governance** from **Execution**.
 
 ### 1.1 Control Plane (Baggage)
 *   **What it is:** Metadata about the execution (e.g., `origin_user_id`, `discord_channel_id`, `trace_id`).
@@ -16,13 +16,13 @@ Senechal uses a unique "Governance Hybrid" architecture to manage data as it flo
 ### 1.2 Data Plane (Workspaces)
 *   **What it is:** Large physical artifacts (e.g., `.mp3` audio files, `.txt` transcripts, `.pdf` documents).
 *   **How it works:** Every job is assigned a `workspace_dir` on the filesystem.
-*   **Isolation:** When a pipeline branches, Senechal performs a **Zero-Copy Clone** (using hardlinks). This ensures Step B and Step C have their own isolated folders but don't consume double the disk space.
+*   **Isolation:** When a pipeline branches, Ductile performs a **Zero-Copy Clone** (using hardlinks). This ensures Step B and Step C have their own isolated folders but don't consume double the disk space.
 
 ---
 
 ## 2. Pipeline DSL
 
-Pipelines are defined in YAML files located in `~/.config/senechal-gw/pipelines/`.
+Pipelines are defined in YAML files located in `~/.config/ductile/pipelines/`.
 
 ### 2.1 Basic Syntax
 
@@ -89,7 +89,7 @@ Use `split` to trigger multiple parallel paths.
 
 ## 3. Decision Making: Multi-Event Branching
 
-Senechal avoids `if/else` logic in YAML. Instead, the **Plugin** makes the decision by choosing which event type to emit.
+Ductile avoids `if/else` logic in YAML. Instead, the **Plugin** makes the decision by choosing which event type to emit.
 
 ### 3.1 The Pattern
 1.  **Plugin:** Inspects the data and emits `quality_high` or `quality_low`.
@@ -114,7 +114,7 @@ Plugins receive orchestration metadata via `stdin`.
 {
   "protocol": 2,
   "job_id": "uuid-456",
-  "workspace_dir": "/tmp/senechal/ws/job-456/",
+  "workspace_dir": "/tmp/ductile/ws/job-456/",
   "context": {
     "origin_user": "matt",
     "channel_id": "123"
@@ -139,12 +139,12 @@ Plugins receive orchestration metadata via `stdin`.
 Use the `inspect` command to visualize the "Lineage" of a job. It shows exactly how the baggage accumulated and which files exist in each workspace.
 
 **CLI Principles:**
-All Senechal CLI commands support:
+All Ductile CLI commands support:
 *   `-v, --verbose`: To see internal routing decisions and baggage merges.
 *   `--dry-run`: To preview pipeline transitions without executing code.
 
 ```bash
-senechal-gw job inspect <job_id> -v
+ductile job inspect <job_id> -v
 ```
 
 **Output Example:**
@@ -162,4 +162,4 @@ senechal-gw job inspect <job_id> -v
 ```
 
 ### 5.2 Cycle Detection
-Senechal automatically detects circular dependencies (e.g., A calls B, B calls A) at load time and will refuse to start if a cycle is found.
+Ductile automatically detects circular dependencies (e.g., A calls B, B calls A) at load time and will refuse to start if a cycle is found.

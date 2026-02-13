@@ -9,21 +9,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/dispatch"
-	"github.com/mattjoyce/senechal-gw/internal/log"
-	"github.com/mattjoyce/senechal-gw/internal/plugin"
-	"github.com/mattjoyce/senechal-gw/internal/queue"
-	"github.com/mattjoyce/senechal-gw/internal/router"
-	"github.com/mattjoyce/senechal-gw/internal/state"
-	"github.com/mattjoyce/senechal-gw/internal/storage"
-	"github.com/mattjoyce/senechal-gw/internal/workspace"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/dispatch"
+	"github.com/mattjoyce/ductile/internal/log"
+	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/storage"
+	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 func TestEndToEndPipeline(t *testing.T) {
 	// 1. Setup Environment
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "senechal.db")
+	dbPath := filepath.Join(tmpDir, "ductile.db")
 	pluginsDir := filepath.Join(tmpDir, "plugins")
 	pipelinesDir := filepath.Join(tmpDir, "pipelines")
 	workspacesDir := filepath.Join(tmpDir, "workspaces")

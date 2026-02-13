@@ -6,7 +6,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the complete senechal-gw configuration.
+// Config represents the complete ductile configuration.
 type Config struct {
 	Include     []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
 	Service     ServiceConfig         `yaml:"service"`
@@ -292,7 +292,7 @@ func (cf *ConfigFiles) OperationalFiles() []string {
 func Defaults() *Config {
 	return &Config{
 		Service: ServiceConfig{
-			Name:            "senechal-gw",
+			Name:            "ductile",
 			TickInterval:    60 * time.Second,
 			LogLevel:        "info",
 			LogFormat:       "json",

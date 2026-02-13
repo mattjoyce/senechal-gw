@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-Senechal Gateway (`senechal-gw`) is currently a docs-first repository with a Go-based implementation planned/underway. Use the spec as the source of truth and keep changes small, reviewable, and tied to an MVP milestone.
+Ductile (`ductile`) is currently a docs-first repository with a Go-based implementation planned/underway. Use the spec as the source of truth and keep changes small, reviewable, and tied to an MVP milestone.
 
 ## Project Structure & Module Organization
 
@@ -16,8 +16,8 @@ After the Go skeleton exists (`go.mod`, `cmd/`, etc.), prefer these commands:
 
 ```bash
 go test ./...           # run unit tests
-go build ./cmd/senechal-gw
-./senechal-gw start --config ./config.yaml
+go build ./cmd/ductile
+./ductile start --config ./config.yaml
 ```
 
 For fast repo-wide search (docs + code):
@@ -29,7 +29,7 @@ rg "dispatch loop|protocol|dedupe_key"
 ## Coding Style & Naming Conventions
 
 - Go: run `gofmt` on changed files; keep packages small and cohesive under `internal/`.
-- Commands: the primary binary should live at `cmd/senechal-gw/`.
+- Commands: the primary binary should live at `cmd/ductile/`.
 - Plugins: `plugins/<name>/manifest.yaml` plus an executable entrypoint (e.g. `run.sh`, `run.py`).
 - Config: use `config.yaml` and `${ENV_VAR}` interpolation; do not hardcode secrets in YAML.
 

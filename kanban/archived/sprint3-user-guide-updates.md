@@ -27,7 +27,7 @@ Add documentation for Sprint 3 features shipped in PRs #11 and #12:
 ### 1. Configuration (New Section)
 
 Add section after "Getting Started" covering:
-- Multi-file config directory structure (`~/.config/senechal-gw/`)
+- Multi-file config directory structure (`~/.config/ductile/`)
 - Include array in config.yaml
 - Environment variable interpolation in includes
 - BLAKE3 hash verification for sensitive files

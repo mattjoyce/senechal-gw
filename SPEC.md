@@ -1,11 +1,11 @@
-# Senechal Gateway — Specification
+# Ductile — Specification
 
 **Version:** 1.0
 **Date:** 2026-02-08
 **Author:** Matt Joyce
 **Sources:** RFC-001, RFC-002, RFC-002-Decisions
 
-This is the unified, buildable specification for Senechal Gateway. It supersedes all prior RFCs and review documents.
+This is the unified, buildable specification for Ductile. It supersedes all prior RFCs and review documents.
 
 ---
 
@@ -13,7 +13,7 @@ This is the unified, buildable specification for Senechal Gateway. It supersedes
 
 ### 1.1 Problem
 
-Senechal currently exists as a FastAPI monolith handling health data ETL, LLM processing, and various integrations. Adding new connectors means modifying the core application. Existing integration servers (n8n, Huginn, Node-RED) are too heavy for a personal service.
+Ductile currently exists as a FastAPI monolith handling health data ETL, LLM processing, and various integrations. Adding new connectors means modifying the core application. Existing integration servers (n8n, Huginn, Node-RED) are too heavy for a personal service.
 
 ### 1.2 Solution
 
@@ -29,7 +29,7 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 
 ```
 ┌─────────────────────────────────────────────┐
-│                 senechal-gw                  │
+│                 ductile                  │
 │              (Go binary, ~1 process)         │
 │                                              │
 │  ┌───────────┐  ┌──────────┐  ┌───────────┐ │
@@ -83,10 +83,10 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 
 ### 2.2 Governance Hybrid (The "Control vs. Data Plane")
 
-Senechal employs a "Governance Hybrid" model to manage state and data across multi-hop plugin chains.
+Ductile employs a "Governance Hybrid" model to manage state and data across multi-hop plugin chains.
 
 *   **Control Plane (Baggage):** Metadata about the execution (e.g., `origin_user_id`, `trace_id`). This data is stored in the `event_context` SQLite ledger and is automatically merged and carried forward as "Baggage" to every subsequent job in the chain. Keys starting with `origin_` are immutable.
-*   **Data Plane (Workspaces):** Large physical artifacts (e.g., audio files, documents). Every job is assigned a unique `workspace_dir` on the filesystem. When a pipeline branches, Senechal performs a **Zero-Copy Clone** (using hardlinks) to isolate workspaces while saving disk space.
+*   **Data Plane (Workspaces):** Large physical artifacts (e.g., audio files, documents). Every job is assigned a unique `workspace_dir` on the filesystem. When a pipeline branches, Ductile performs a **Zero-Copy Clone** (using hardlinks) to isolate workspaces while saving disk space.
 
 ---
 
@@ -101,7 +101,7 @@ The central abstraction. All producers submit to a single queue.
 | Scheduler | Heartbeat tick finds a plugin is due |
 | Webhook receiver | Inbound HTTP event |
 | Router | Plugin output matches a routing rule |
-| CLI | Manual `senechal-gw run <plugin>` |
+| CLI | Manual `ductile run <plugin>` |
 
 ### 3.2 Job Model
 
@@ -221,7 +221,7 @@ One process per job. No long-lived plugin processes.
 
 Process spawn overhead is ~5ms on Linux — irrelevant when the shortest interval is 5 minutes.
 
-**Persistent connections (WebSockets, long-polling) are out of scope.** If needed, run as a separate service that pushes events into Senechal via the webhook endpoint. No streaming plugin mode — not now, not ever for this core.
+**Persistent connections (WebSockets, long-polling) are out of scope.** If needed, run as a separate service that pushes events into Ductile via the webhook endpoint. No streaming plugin mode — not now, not ever for this core.
 
 ### 5.2 Commands
 
@@ -229,7 +229,7 @@ Process spawn overhead is ~5ms on Linux — irrelevant when the shortest interva
 |---------|---------|------|
 | `poll` | Fetch data from external source | Scheduled by heartbeat |
 | `handle` | Process an inbound event | Routed from another plugin or webhook |
-| `health` | Diagnostic check | On-demand via `senechal-gw status` |
+| `health` | Diagnostic check | On-demand via `ductile status` |
 | `init` | One-time setup | On first discovery or config change |
 
 - `init` is not retried on failure — plugin is marked unhealthy.
@@ -316,7 +316,7 @@ See card #36 (Manifest Command Type Metadata).
 - `..` in `entrypoint` is rejected (path traversal prevention).
 - Entrypoint MUST be executable (`chmod +x`). Shebang line handles interpreter selection.
 - World-writable plugin directories are refused at load time.
-- Plugins run as the same OS user as the core. Use systemd `User=senechal` to limit blast radius.
+- Plugins run as the same OS user as the core. Use systemd `User=ductile` to limit blast radius.
 
 ### 5.6 Timeouts
 
@@ -378,7 +378,7 @@ Configurable consecutive failure threshold per `(plugin, command)` pair. Applies
 
 - Default threshold: 3 consecutive failures.
 - Default reset: 30 minutes.
-- Manual reset: `senechal-gw reset <plugin>`.
+- Manual reset: `ductile reset <plugin>`.
 
 ```yaml
 plugins:
@@ -799,7 +799,7 @@ No authentication. Localhost only. Useful for systemd watchdog and operator chec
 
 PID file with `flock(LOCK_EX | LOCK_NB)`:
 
-1. Create/open `<state_dir>/senechal-gw.lock`.
+1. Create/open `<state_dir>/ductile.lock`.
 2. Acquire `flock`. Fail → log error, exit 1.
 3. Write current PID.
 4. Lock held for process lifetime. Kernel releases on crash/exit.
@@ -817,7 +817,7 @@ On startup:
 
 ### 11.3 Config Reload
 
-`senechal-gw reload` sends `SIGHUP` to the running process (found via PID file).
+`ductile reload` sends `SIGHUP` to the running process (found via PID file).
 
 On SIGHUP:
 
@@ -854,14 +854,14 @@ Default 30 days. Configurable via `service.job_log_retention`.
 ### 11.6 CLI
 
 ```
-senechal-gw start              # run the service (foreground)
-senechal-gw run <plugin>       # manually run a plugin once
-senechal-gw status             # show plugin states, queue depth, last runs
-senechal-gw reload             # reload config without restart
-senechal-gw reset <plugin>     # reset circuit breaker for a plugin
-senechal-gw plugins            # list discovered plugins
-senechal-gw logs [plugin]      # tail structured logs
-senechal-gw queue              # show pending/active jobs
+ductile start              # run the service (foreground)
+ductile run <plugin>       # manually run a plugin once
+ductile status             # show plugin states, queue depth, last runs
+ductile reload             # reload config without restart
+ductile reset <plugin>     # reset circuit breaker for a plugin
+ductile plugins            # list discovered plugins
+ductile logs [plugin]      # tail structured logs
+ductile queue              # show pending/active jobs
 ```
 
 ### 11.7 CLI Principles
@@ -930,7 +930,7 @@ job_log (
 
 ## 13. Configuration Reference
 
-Senechal Gateway uses a **Monolithic Runtime** compiled from a modular, **Tiered Directory** structure.
+Ductile uses a **Monolithic Runtime** compiled from a modular, **Tiered Directory** structure.
 
 ### 13.1 Overview
 
@@ -950,16 +950,16 @@ For the complete configuration specification, including file formats, merge logi
 
 ```ini
 [Unit]
-Description=Senechal Gateway
+Description=Ductile
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/senechal-gw start --config /etc/senechal-gw/config.yaml
+ExecStart=/usr/local/bin/ductile start --config /etc/ductile/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
-User=senechal
-Group=senechal
+User=ductile
+Group=ductile
 
 [Install]
 WantedBy=multi-user.target
@@ -967,16 +967,16 @@ WantedBy=multi-user.target
 
 ### 14.2 Development
 
-Run `senechal-gw start` directly. No systemd required.
+Run `ductile start` directly. No systemd required.
 
 ---
 
 ## 15. Project Layout
 
 ```
-senechal-gw/
+ductile/
 ├── cmd/
-│   └── senechal-gw/
+│   └── ductile/
 │       └── main.go
 ├── internal/
 │   ├── config/
@@ -1012,7 +1012,7 @@ senechal-gw/
 | 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |
 | 7. Pipeline Orchestration | 4 | Sync/Async execution modes, Guarded Bridge, YAML DSL, completion channels | ✅ Complete |
 | 8. CLI & Ops | 5 | Status/run/reload/reset/plugins/queue/logs commands, systemd unit | 🔄 In Progress (Status: ✅ Status implemented) |
-| 9. First Plugins | 6 | Port Withings & Garmin from existing Senechal, notify plugin | Planned |
+| 9. First Plugins | 6 | Port Withings & Garmin from existing Ductile, notify plugin | Planned |
 
 **Note:** Phase 3 (API Triggers) was prioritized before Routing and Webhooks to enable LLM-driven automation via curl-based triggers. This allows external systems to programmatically enqueue jobs and retrieve results immediately, accelerating the path to production use cases.
 

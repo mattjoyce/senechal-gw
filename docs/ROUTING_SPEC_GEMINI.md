@@ -1,4 +1,4 @@
-# Senechal Gateway — Routing & Orchestration Specification
+# Ductile — Routing & Orchestration Specification
 
 **Version:** 1.0 (Gemini Consensus)  
 **Date:** 2026-02-11  
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-Senechal Gateway uses a **Graph-based Pipeline** model to orchestrate event flow. It separates **Governance** (metadata/context) from **Execution** (artifacts/workspace).
+Ductile uses a **Graph-based Pipeline** model to orchestrate event flow. It separates **Governance** (metadata/context) from **Execution** (artifacts/workspace).
 
 ### 1.1 Core Components
 *   **Control Plane (DB):** A SQLite ledger (`event_context`) that accumulates metadata ("Baggage") across hops.
@@ -80,7 +80,7 @@ When Step A transitions to Step B:
 Every job is assigned a unique `workspace_dir` on the filesystem.
 
 ### 4.1 Lifecycle
-1.  **Creation:** The Root job gets a fresh directory: `/tmp/senechal/ws/<job_id>`.
+1.  **Creation:** The Root job gets a fresh directory: `/tmp/ductile/ws/<job_id>`.
 2.  **Cloning (The Branch Mechanic):** When a pipeline `splits` or moves to the next step, the Core **clones** the workspace.
     *   To save space/time, the Core uses **Hard Links** (`cp -al`).
     *   This provides **Isolation**: Step B cannot accidentally delete a file needed by Step C in a parallel branch.
@@ -96,7 +96,7 @@ Plugins receive the following via `stdin`:
 {
   "protocol": 2,
   "job_id": "uuid-456",
-  "workspace_dir": "/tmp/senechal/ws/job-456/",
+  "workspace_dir": "/tmp/ductile/ws/job-456/",
   "context": {
     "origin_plugin": "discord",
     "channel_id": "123",
@@ -147,7 +147,7 @@ The Routing system exposes specific "Admin Utilities" for the LLM:
 
 ## 8. Branching & Decisions (Multi-Event Pattern)
 
-To keep the DSL declarative and simple, Senechal avoids `if/else` logic in YAML. Instead, it uses **Multi-Event Branching**.
+To keep the DSL declarative and simple, Ductile avoids `if/else` logic in YAML. Instead, it uses **Multi-Event Branching**.
 
 ### 8.1 The Pattern
 Plugins are responsible for decision-making. They inspect the data and emit a specific **Event Type** to signal the outcome.

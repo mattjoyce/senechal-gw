@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattjoyce/senechal-gw/internal/config"
-	"github.com/mattjoyce/senechal-gw/internal/queue" // Keep for queue.EnqueueRequest and queue.Job types
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/queue" // Keep for queue.EnqueueRequest and queue.Job types
 )
 
 // Scheduler manages the scheduling and recovery of plugin jobs.

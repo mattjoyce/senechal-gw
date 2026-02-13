@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Senechal Gateway is a lightweight, YAML-configured integration gateway written in Go. It orchestrates polyglot plugins via a subprocess protocol (JSON over stdin/stdout). The system is designed for personal-scale automation (~50 jobs/day) with emphasis on simplicity, reliability, and predictable behavior under crash/retry/timeout conditions.
+Ductile is a lightweight, YAML-configured integration gateway written in Go. It orchestrates polyglot plugins via a subprocess protocol (JSON over stdin/stdout). The system is designed for personal-scale automation (~50 jobs/day) with emphasis on simplicity, reliability, and predictable behavior under crash/retry/timeout conditions.
 
 **Core Philosophy:** Simple enough to understand in an afternoon. Extensible enough to grow with new connectors. Plugins stay dumb; the core controls flow.
 
@@ -30,8 +30,8 @@ Senechal Gateway is a lightweight, YAML-configured integration gateway written i
 ### Project Structure (from SPEC.md §13)
 
 ```
-senechal-gw/
-├── cmd/senechal-gw/           # CLI entrypoint
+ductile/
+├── cmd/ductile/           # CLI entrypoint
 │   └── main.go
 ├── internal/                   # Core components (not importable externally)
 │   ├── config/                # YAML parser, ${ENV} interpolation
@@ -118,7 +118,7 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never in config 
 3. Routing (event fan-out, traceability)
 4. Webhooks (HTTP listener, HMAC, /healthz)
 5. CLI & Ops (status/reload/reset, systemd unit)
-6. First Plugins (port Withings/Garmin from existing Senechal)
+6. First Plugins (port Withings/Garmin from existing Ductile)
 
 ## Multi-Agent Coordination
 
@@ -136,21 +136,21 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never in config 
 
 ```bash
 # Build
-go build -o senechal-gw ./cmd/senechal-gw
+go build -o ductile ./cmd/ductile
 
 # Run tests
 go test ./...
 
 # Run service (foreground)
-./senechal-gw start --config config.yaml
+./ductile start --config config.yaml
 
 # Planned CLI commands (SPEC.md §9.6)
-./senechal-gw run <plugin>     # manually trigger plugin once
-./senechal-gw status           # plugin states, queue depth, last runs
-./senechal-gw reload           # SIGHUP config reload
-./senechal-gw reset <plugin>   # reset circuit breaker
-./senechal-gw plugins          # list discovered plugins
-./senechal-gw queue            # show pending/active jobs
+./ductile run <plugin>     # manually trigger plugin once
+./ductile status           # plugin states, queue depth, last runs
+./ductile reload           # SIGHUP config reload
+./ductile reset <plugin>   # reset circuit breaker
+./ductile plugins          # list discovered plugins
+./ductile queue            # show pending/active jobs
 ```
 
 ## Testing Strategy

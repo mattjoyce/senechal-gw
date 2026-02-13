@@ -1,16 +1,16 @@
 services:
-  senechal-gw:
+  ductile:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: senechal-gw-test
+    container_name: ductile-test
     restart: unless-stopped
 
     # Use test configuration
     volumes:
       - ./config.test.yaml:/app/config.yaml:ro
       - ./plugins:/app/plugins:ro
-      - senechal-data:/app/data
+      - ductile-data:/app/data
       - ./logs:/app/logs
 
     # Environment variables for test
@@ -33,12 +33,12 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "test", "-f", "/app/senechal.pid"]
+      test: ["CMD", "test", "-f", "/app/ductile.pid"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
 
 volumes:
-  senechal-data:
+  ductile-data:
     driver: local

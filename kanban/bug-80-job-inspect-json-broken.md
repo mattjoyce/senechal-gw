@@ -32,7 +32,7 @@ $ curl -X POST http://localhost:8080/trigger/echo/poll \
 {"job_id":"86beb9ef-a18f-4032-9a3f-e08be3e76783","status":"queued"}
 
 # Try to inspect with --json
-$ ./senechal-gw job inspect 86beb9ef-a18f-4032-9a3f-e08be3e76783 --json
+$ ./ductile job inspect 86beb9ef-a18f-4032-9a3f-e08be3e76783 --json
 Inspect failed: job "86beb9ef-a18f-4032-9a3f-e08be3e76783" has no event_context_id
 
 # Note: Could not fully test due to jobs lacking context IDs
@@ -42,7 +42,7 @@ Inspect failed: job "86beb9ef-a18f-4032-9a3f-e08be3e76783" has no event_context_
 ## Expected Behavior
 
 **From card #61 specification:**
-- `senechal-gw job inspect <id> --json` returns structured JSON
+- `ductile job inspect <id> --json` returns structured JSON
 - JSON output includes baggage, artifacts, and job metadata for each hop
 - Follows CLI design principle: all "Read" actions must support `--json`
 
@@ -69,7 +69,7 @@ Inspect failed: job "86beb9ef-a18f-4032-9a3f-e08be3e76783" has no event_context_
       "workspace": "data/workspaces/d9b064f2-82de-4181-806d-e43b0b137a25",
       "baggage": {
         "content": "...",
-        "output_dir": "/home/matt/admin/senechal-test/reports",
+        "output_dir": "/home/matt/admin/ductile-test/reports",
         "pattern": "summarize"
       }
     },
@@ -86,7 +86,7 @@ Inspect failed: job "86beb9ef-a18f-4032-9a3f-e08be3e76783" has no event_context_
       "baggage": {
         "content": "...",
         "result": "ONE SENTENCE SUMMARY:\n...",
-        "output_dir": "/home/matt/admin/senechal-test/reports"
+        "output_dir": "/home/matt/admin/ductile-test/reports"
       }
     }
   ]
@@ -105,7 +105,7 @@ Inspect failed: job "86beb9ef-a18f-4032-9a3f-e08be3e76783" has no event_context_
 
 ## Root Cause (Suspected)
 
-**Likely issue:** Flag parsing problem in `cmd/senechal-gw/job.go`:
+**Likely issue:** Flag parsing problem in `cmd/ductile/job.go`:
 
 ```go
 // Probably missing or broken:
@@ -175,10 +175,10 @@ sleep 5
 JOB_ID="<job-id-from-response>"
 
 # Test human-readable (should work)
-./senechal-gw job inspect $JOB_ID
+./ductile job inspect $JOB_ID
 
 # Test JSON output (broken)
-./senechal-gw job inspect $JOB_ID --json
+./ductile job inspect $JOB_ID --json
 # Expected: Valid JSON
 # Actual: Usage message or error
 ```

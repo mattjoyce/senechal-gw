@@ -1,6 +1,6 @@
-# Senechal Gateway: API Reference
+# Ductile: API Reference
 
-This document provides a comprehensive reference for the Senechal Gateway REST API.
+This document provides a comprehensive reference for the Ductile REST API.
 
 ## Base URL
 Default: `http://localhost:8080`
@@ -13,7 +13,7 @@ All API requests (except `/healthz`) require a Bearer token in the `Authorizatio
 Authorization: Bearer <your_token>
 ```
 
-Senechal supports two authentication modes:
+Ductile supports two authentication modes:
 1. **Legacy API Key**: A single `api_key` configured in `api.auth`.
 2. **Scoped Tokens**: A list of `tokens` with specific scopes (e.g., `read:*`, `plugin:rw`).
 

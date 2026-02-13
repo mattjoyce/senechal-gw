@@ -19,13 +19,13 @@ Implement the "Write" affordances for the LLM operator to modify configuration s
 
 ## Practical Test Scenarios
 1. **Scenario: Safe Disable**
-   - Command: `senechal-gw config set plugins.echo.enabled=false --dry-run`
+   - Command: `ductile config set plugins.echo.enabled=false --dry-run`
    - Expect: A diff showing the `enabled` field changing to `false`, with a "Dry run: no changes applied" message.
 2. **Scenario: Invalid Type Rejected**
-   - Command: `senechal-gw config set service.tick_interval=blue`
+   - Command: `ductile config set service.tick_interval=blue`
    - Expect: A non-zero exit code and an error message: "Invalid value 'blue' for type duration."
 3. **Scenario: Full Mutation**
-   - Command: `senechal-gw config set plugins.echo.schedule.every=10m`
+   - Command: `ductile config set plugins.echo.schedule.every=10m`
    - Expect: The physical `plugins.yaml` file is updated and a success message is returned.
 
 ## Narrative
