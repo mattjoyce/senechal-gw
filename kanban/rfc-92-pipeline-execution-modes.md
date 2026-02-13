@@ -48,33 +48,39 @@ tags: [architecture, pipelines, interactive, dag, critical, implementation-ready
 
 ## Proposed Schema
 
-### Pipeline Configuration
+### Pipeline Configuration (GitHub-like Notation)
 
 ```yaml
+# pipelines/youtube-summary.yaml
 pipelines:
-  # Async pipeline (default, no change to existing configs)
-  - name: batch-processor
-    on: file.upload
+  - name: youtube-to-discord-summary
+    on: discord.command.youtube    # Triggered by Discord slash command or webhook
+    execution_mode: synchronous     # The API call blocks until the pipeline finishes
+    timeout: 3m                    # Extended timeout for downloads/LLM processing
     steps:
-      - uses: processor
-      - uses: archiver
-
-  # Synchronous pipeline (explicit opt-in)
-  - name: discord-fabric
-    on: fabric.handle
-    execution_mode: synchronous  # NEW: Explicit sync mode
-    timeout: 30s                 # NEW: Max wait time
-    steps:
-      - uses: fabric
-      - uses: formatter
+      - id: download
+        uses: youtube.download     # Downloads & extracts audio/text
+        
+      - id: summarize
+        uses: fabric.summarize     # Processes transcript through LLM
+        
+      - id: archive
+        uses: file_handler.save    # Persists the summary to the workspace
+        
+      - id: notify
+        uses: discord.respond      # Sends the summary back to the Discord user
 ```
 
-### Configuration Fields
+### Configuration Fields (Updated)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `execution_mode` | `async` \| `synchronous` | `async` | How trigger endpoint behaves |
 | `timeout` | duration | `30s` | Max wait time for synchronous pipelines |
+| `steps[].id` | string | (optional) | Unique identifier for the step |
+| `steps[].uses` | string | (required) | Plugin command to execute |
+| `steps[].async` | boolean | `false` | If true, step runs fire-and-forget within a sync pipeline |
+| `steps[].parallel` | []Step | (optional) | Alias for `split`, runs steps in parallel |
 
 ## How It Works
 
@@ -131,6 +137,19 @@ pipelines:
 This preserves event-driven architecture while enabling sync API responses.
 
 ## Implementation Plan
+
+### Phase 0: Revised Technical Requirements (NEW)
+
+1.  **Schema Extensions (`internal/config/types.go`):**
+    *   **Pipeline Level:** Add `ExecutionMode` (`async`|`synchronous`) and `Timeout`.
+    *   **Step Level:** Add `ID`, `Parallel` (alias for `Split`), and `Async` (fire-and-forget flag).
+2.  **The "Guarded Bridge" (`internal/dispatch/dispatcher.go`):**
+    *   Implement `WaitForJobTree` using a channel-based listener (non-blocking for the engine).
+    *   Aggregator logic to collect `stdout` and `artifacts` from the entire `job_queue` subtree.
+3.  **API Handler Refactor (`cmd/senechal-gw/api/handlers.go`):**
+    *   Blocking logic for `synchronous` pipelines with a global Semaphore guard.
+4.  **DSL-to-Event Routing (`internal/router/engine.go`):**
+    *   Automatically chain `Step N` completion events to `Step N+1` triggers.
 
 ### Phase 1: Config Schema (Week 1, Day 1-2)
 
@@ -633,3 +652,4 @@ pipelines:
 - 2026-02-13: Refactor-93 put on hold due to critique (breaking changes, HTTP blocking)
 - 2026-02-13: RFC-92 updated with detailed implementation, async default, explicit opt-in approach. Addresses all critique concerns while enabling interactive use cases.
 - 2026-02-13: Technical Critique: RFC-92 is the superior approach because it preserves the event-driven core. Tying the "wait" to the API boundary rather than the internal dispatcher loop prevents architectural regression. Recommendation: 1) Ensure Phase 5 (Semaphores) is prioritized to prevent HTTP pool exhaustion. 2) Define a strict aggregation schema for the `SyncResponse` to handle `split` and parallel branch results consistently. 3) Treat sync mode as a "guarded bridge" between synchronous clients and the async engine. (by @assistant)
+- 2026-02-13: Notation & Technical Requirements Update: Defined "GitHub-like" notation for pipelines (e.g., YouTube summary). Refined implementation plan to include "Guarded Bridge" dispatcher logic and "DSL-to-Event" routing automation. (by @assistant)
