@@ -1,6 +1,6 @@
 ---
 id: 38
-status: backlog
+status: doing
 priority: Normal
 blocked_by: [35, 36, 37, 39]
 tags: [sprint-4, cli, config, llm-friendly]
@@ -34,6 +34,14 @@ Implement `ductile config` subcommands for managing configuration files. LLM-fri
 - Auto-runs `ductile doctor` after modifications
 - Exit codes: 0=success, 1=error, 2=validation warnings
 - Help text optimized for LLM consumption (structured, examples)
+
+## Execution Plan (2026-02-14)
+
+1. Add shared mutation helpers for `--config-dir` resolution, atomic write + `.bak`, and automatic `config check`.
+2. Implement `config token` and `config scope` command groups with `--format human|json`.
+3. Implement `config plugin`, `config route`, and `config webhook` command groups.
+4. Implement `config init`, `config backup`, and `config restore`.
+5. Expand CLI tests and run `go test ./...` after each phase.
 
 ## Command Reference
 
@@ -667,3 +675,5 @@ The atomic file operations (backup before modify) and automatic validation (doct
 This is infrastructure for "conversational configuration"—where you tell an agent to add a GitHub webhook, and it safely modifies routes.yaml, webhooks.yaml, and tokens.yaml, validates everything, and reports back with the token to set in your environment.
 
 **Priority:** Normal. Implement after multi-file config (#39) is stable. Not blocking for Sprint 3, but valuable for Sprint 4 operational workflows.
+
+- 2026-02-14: Moved card to `doing` and split implementation into five phases to ship #38 incrementally with tests and frequent commits. (by @codex)
