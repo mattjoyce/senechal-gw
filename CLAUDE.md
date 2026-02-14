@@ -27,7 +27,7 @@ Ductile is a lightweight, YAML-configured integration gateway written in Go. It 
    - `state` - Dynamic, single JSON blob per plugin in SQLite, shallow-merged on updates
    - Plugins manage their own OAuth lifecycle via state (access_token, refresh_token in state)
 
-### Project Structure (from SPEC.md §13)
+### Project Structure (from docs/ARCHITECTURE.md §13)
 
 ```
 ductile/
@@ -51,7 +51,7 @@ ductile/
 
 **Internal packages are organized by concern, not by layer.** Each package owns a distinct responsibility.
 
-## Protocol v1 (SPEC.md §6)
+## Protocol v1 (docs/ARCHITECTURE.md §6)
 
 **Request envelope (core → plugin stdin):**
 ```json
@@ -86,9 +86,9 @@ ductile/
 2. **No Streaming** - No WebSockets, long-polling, or persistent plugin connections. If it needs to stream, it's not a plugin (run as separate service pushing to webhook endpoint).
 3. **Exact Match Routing** - No wildcards, regexes, or payload filters. Conditional logic belongs in receiving plugins.
 4. **Spawn-Per-Command** - No daemon management. Process spawn overhead (~5ms) is irrelevant at this scale.
-5. **HMAC Mandatory** - All webhook endpoints require HMAC-SHA256 signature verification (SPEC.md §8.2).
+5. **HMAC Mandatory** - All webhook endpoints require HMAC-SHA256 signature verification (docs/ARCHITECTURE.md §8.2).
 
-## Configuration Reference (SPEC.md §11)
+## Configuration Reference (docs/ARCHITECTURE.md §11)
 
 Environment variable interpolation via `${VAR}` syntax. Secrets never in config file.
 
@@ -112,7 +112,7 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never in config 
 
 **NOT in MVP:** Routing, webhooks, circuit breaker, deduplication, retry/backoff, config reload, health endpoint
 
-**Implementation phases (SPEC.md §14):**
+**Implementation phases (docs/ARCHITECTURE.md §14):**
 1. Skeleton (Go scaffold, CLI, config, SQLite, plugin discovery)
 2. Core Loop (queue, scheduler, dispatch, protocol)
 3. Routing (event fan-out, traceability)
@@ -144,7 +144,7 @@ go test ./...
 # Run service (foreground)
 ./ductile start --config config.yaml
 
-# Planned CLI commands (SPEC.md §9.6)
+# Planned CLI commands (docs/ARCHITECTURE.md §9.6)
 ./ductile run <plugin>     # manually trigger plugin once
 ./ductile status           # plugin states, queue depth, last runs
 ./ductile system monitor   # real-time TUI dashboard
@@ -175,12 +175,12 @@ Tasks tracked in `kanban/*.md` with YAML frontmatter:
 
 ## Critical References
 
-- **SPEC.md** - Single source of truth, supersedes all RFCs
+- **docs/ARCHITECTURE.md** - Single source of truth, supersedes all RFCs
 - **MVP.md** - Minimal subset to prove architecture
 - **RFC/** - Multi-LLM design reviews (historical context, not authoritative)
 - **Go idioms:** Simple, explicit error handling, composition over inheritance, no panic/recover in plugins
 
-## Deferred Decisions (SPEC.md §15)
+## Deferred Decisions (docs/ARCHITECTURE.md §15)
 
 Do NOT implement these without explicit requirement:
 - Protocol v2 changes (response envelope `protocol` field)
