@@ -1,7 +1,8 @@
 # Bug #94: Monitor TUI Not Displaying Events
 
-**Status**: backlog
+**Status**: done
 **Priority**: medium
+**Resolution**: Fixed in commit 4399202
 **Component**: tui/monitor
 **Introduced**: PR #38 (TUI monitor feature)
 **Affected Version**: 0.1.0-dev (commit 39c693e)
@@ -194,3 +195,34 @@ curl -N -H "Authorization: Bearer test_admin_token_local" \
 **Discovered**: 2026-02-14
 **Tester**: @matt
 **Session**: RFC-92 regression testing + plugin validation
+
+## Resolution
+
+**Fixed**: 2026-02-14  
+**Commit**: `4399202` - Fix Bug #94: Monitor TUI not displaying events
+
+### Changes Made
+
+**File**: `internal/tui/monitor.go`
+
+**Fix #1: SSE Parser** (39 lines added, 3 removed)
+- Replaced single-line parser with multi-line SSE parser
+- Parse id, event, and data fields separately
+- Construct complete Event struct with all fields
+- Handle empty line as event delimiter
+
+**Fix #2: Event Loop** (1 line added)
+- Added `m.receiveNextEvent()` to `Init()` batch
+- Kickstarts event consumption from channel
+
+**Import Added**:
+- `strconv` for ParseInt
+
+### Testing
+- Binary rebuilt with fixes
+- Gateway restarted  
+- Jobs triggered: echo, fabric, jina-reader
+- All jobs executed successfully
+- Monitor now displays events in real-time
+
+**Status**: ✅ Fixed and deployed
