@@ -21,6 +21,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/dispatch"
 	"github.com/mattjoyce/ductile/internal/doctor"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/inspect"
 	"github.com/mattjoyce/ductile/internal/lock"
 	"github.com/mattjoyce/ductile/internal/log"
@@ -30,8 +31,10 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
+	"github.com/mattjoyce/ductile/internal/tui"
 	"github.com/mattjoyce/ductile/internal/webhook"
 	"github.com/mattjoyce/ductile/internal/workspace"
+	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 )
 
@@ -288,6 +291,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemStatus(actionArgs)
+	case "monitor":
+		if hasHelpFlag(actionArgs) {
+			printSystemMonitorHelp()
+			return 0
+		}
+		return runMonitor(actionArgs)
 	case "help":
 		printSystemNounHelp(os.Stdout)
 		return 0
@@ -586,7 +595,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status")
+	fmt.Fprintln(w, "Actions: start, status, monitor")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -616,6 +625,34 @@ func printSystemStatusHelp() {
 	fmt.Println("Exit codes:")
 	fmt.Println("  0  All required checks passed")
 	fmt.Println("  1  One or more checks failed")
+}
+
+func printSystemMonitorHelp() {
+	fmt.Println("Usage: ductile system monitor [--api-url URL] [--api-key KEY]")
+	fmt.Println("Launch the real-time TUI dashboard.")
+}
+
+func runMonitor(args []string) int {
+	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
+	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
+	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if *apiKey == "" {
+		fmt.Fprintln(os.Stderr, "Error: API key required. Use --api-key or DUCTILE_API_KEY env var.")
+		return 1
+	}
+
+	m := tui.NewMonitor(*apiURL, *apiKey)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func printConfigLockHelp() {
@@ -709,6 +746,7 @@ func runStart(args []string) int {
 	q := queue.New(db)
 	st := state.NewStore(db)
 	contextStore := state.NewContextStore(db)
+	hub := events.NewHub(256)
 
 	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {
 		switch level {
@@ -753,8 +791,8 @@ func runStart(args []string) int {
 		}
 	}
 
-	sched := scheduler.New(cfg, q, logger)
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
+	sched := scheduler.New(cfg, q, hub, logger)
+	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -791,7 +829,7 @@ func runStart(args []string) int {
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
 		}
-		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, log.WithComponent("api"))
+		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, hub, log.WithComponent("api"))
 		go func() {
 			if err := apiServer.Start(ctx); err != nil && err != context.Canceled {
 				errCh <- fmt.Errorf("api: %w", err)

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/mattjoyce/ductile/internal/events"
 )
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +70,7 @@ func parseLastEventID(v string) int64 {
 	return n
 }
 
-func writeSSE(w http.ResponseWriter, ev Event) error {
+func writeSSE(w http.ResponseWriter, ev events.Event) error {
 	// SSE framing: https://html.spec.whatwg.org/multipage/server-sent-events.html
 	if _, err := fmt.Fprintf(w, "id: %d\n", ev.ID); err != nil {
 		return err

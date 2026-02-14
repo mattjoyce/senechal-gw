@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/log"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -41,6 +42,7 @@ type Dispatcher struct {
 	router    router.Engine
 	registry  *plugin.Registry
 	cfg       *config.Config
+	events    *events.Hub
 	logger    *slog.Logger
 
 	// completions tracks jobs being waited on for synchronous execution.
@@ -57,6 +59,7 @@ func New(
 	ws workspace.Manager,
 	rt router.Engine,
 	reg *plugin.Registry,
+	hub *events.Hub,
 	cfg *config.Config,
 ) *Dispatcher {
 	return &Dispatcher{
@@ -66,6 +69,7 @@ func New(
 		workspace:   ws,
 		router:      rt,
 		registry:    reg,
+		events:      hub,
 		cfg:         cfg,
 		logger:      log.WithComponent("dispatch"),
 		completions: make(map[string]chan struct{}),
@@ -120,6 +124,13 @@ func (d *Dispatcher) processNextJob(ctx context.Context) error {
 func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	jobLogger := d.logger.With("job_id", job.ID, "plugin", job.Plugin, "command", job.Command)
 	jobLogger.Info("job started", "attempt", job.Attempt)
+	d.events.Publish("job.started", map[string]any{
+		"job_id":        job.ID,
+		"plugin":        job.Plugin,
+		"command":       job.Command,
+		"attempt":       job.Attempt,
+		"parent_job_id": deref(job.ParentJobID),
+	})
 
 	// Get plugin from registry
 	plug, ok := d.registry.Get(job.Plugin)
@@ -220,7 +231,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Spawn plugin and execute
-	resp, rawResp, stderr, err := d.spawnPlugin(ctx, plug.Entrypoint, req, timeout, jobLogger)
+	resp, rawResp, stderr, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {
@@ -297,6 +308,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 // Returns the response, stderr output, and any error.
 func (d *Dispatcher) spawnPlugin(
 	ctx context.Context,
+	pluginName string,
 	entrypoint string,
 	req *protocol.Request,
 	timeout time.Duration,
@@ -326,6 +338,13 @@ func (d *Dispatcher) spawnPlugin(
 	if err := cmd.Start(); err != nil {
 		return nil, nil, "", fmt.Errorf("start process: %w", err)
 	}
+
+	d.events.Publish("plugin.spawned", map[string]any{
+		"job_id":  req.JobID,
+		"plugin":  pluginName,
+		"command": req.Command,
+		"pid":     cmd.Process.Pid,
+	})
 
 	// Write request to stdin in a goroutine
 	writeErr := make(chan error, 1)
@@ -529,6 +548,16 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 				return fmt.Errorf("enqueue routed job for plugin %q: %w", next.Plugin, err)
 			}
 
+			d.events.Publish("router.enqueued", map[string]any{
+				"job_id":           childJobID,
+				"parent_job_id":    job.ID,
+				"plugin":           next.Plugin,
+				"command":          next.Command,
+				"pipeline":         next.PipelineName,
+				"step_id":          next.StepID,
+				"event_context_id": deref(contextID),
+			})
+
 			if d.workspace != nil {
 				if _, err := d.workspace.Clone(ctx, job.ID, childJobID); err != nil {
 					return fmt.Errorf("clone workspace %q -> %q: %w", job.ID, childJobID, err)
@@ -620,6 +649,24 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 		duration = time.Since(*startTime)
 	}
 	logger.Info("job completed", "status", string(status), "duration", duration.String())
+
+	eventData := map[string]any{
+		"job_id":      jobID,
+		"status":      string(status),
+		"duration_ms": duration.Milliseconds(),
+	}
+	if lastError != nil {
+		eventData["error"] = *lastError
+	}
+
+	switch status {
+	case queue.StatusSucceeded:
+		d.events.Publish("job.completed", eventData)
+	case queue.StatusTimedOut:
+		d.events.Publish("job.timed_out", eventData)
+	case queue.StatusFailed, queue.StatusDead:
+		d.events.Publish("job.failed", eventData)
+	}
 
 	if err := d.queue.CompleteWithResult(ctx, jobID, status, result, lastError, stderr); err != nil {
 		d.logger.Error("failed to complete job", "job_id", jobID, "error", err)

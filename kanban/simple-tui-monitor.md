@@ -1,8 +1,8 @@
 ---
 id: 34
-status: backlog
+status: doing
 priority: Normal
-blocked_by: [33]
+blocked_by: []
 tags: [sprint-3, tui, monitoring, observability]
 ---
 
@@ -227,6 +227,6 @@ curl -X POST http://localhost:8080/trigger/echo/poll
 
 ## Narrative
 
-The TUI transforms "how's my gateway doing?" from a multi-step investigation (SSH, grep logs, check DB) into a single `./ductile monitor` command. It's especially valuable during Sprint 4 (reliability controls) development—watching circuit breakers trip and recover in real-time makes tuning thresholds intuitive. Since it's just a consumer of the /events endpoint, it's isolated from core logic and can be enhanced over time without risk.
+- 2026-02-14: Refactored EventHub to internal/events to unblock system-wide broadcasting. Instrumented Scheduler and Dispatcher to publish real-time events. Implemented initial Bubble Tea TUI with "btop" aesthetic and nested job tree view using circle status symbols (○◉●∅◑◔). Added `ductile system monitor` command. (by @gemini)
 
 **Scope:** This is a nice-to-have enhancement, not a blocker for production. Build after /events is proven stable (Sprint 3 complete). If time-constrained, defer to post-Sprint 4.
