@@ -120,10 +120,10 @@ type WebhooksConfig struct {
 
 // WebhookEndpoint defines a single webhook endpoint.
 type WebhookEndpoint struct {
-	Name            string `yaml:"name,omitempty"`       // Directory mode: endpoint name
+	Name            string `yaml:"name,omitempty"` // Directory mode: endpoint name
 	Path            string `yaml:"path"`
 	Plugin          string `yaml:"plugin"`
-	Secret          string `yaml:"secret,omitempty"`    // Legacy: direct secret (deprecated)
+	Secret          string `yaml:"secret,omitempty"`     // Legacy: direct secret (deprecated)
 	SecretRef       string `yaml:"secret_ref,omitempty"` // Preferred: reference to tokens.yaml
 	SignatureHeader string `yaml:"signature_header"`
 	MaxBodySize     string `yaml:"max_body_size"`
@@ -153,10 +153,12 @@ type RoutesFileConfig struct {
 
 // TokenEntry defines an API token with scoped permissions (directory mode tokens.yaml).
 type TokenEntry struct {
-	Name       string `yaml:"name"`
-	Key        string `yaml:"key"`
-	ScopesFile string `yaml:"scopes_file,omitempty"`
-	ScopesHash string `yaml:"scopes_hash,omitempty"`
+	Name        string `yaml:"name" json:"name"`
+	Key         string `yaml:"key" json:"key"`
+	ScopesFile  string `yaml:"scopes_file,omitempty" json:"scopes_file,omitempty"`
+	ScopesHash  string `yaml:"scopes_hash,omitempty" json:"scopes_hash,omitempty"`
+	CreatedAt   string `yaml:"created_at,omitempty" json:"created_at,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 // TokensFileConfig wraps token entries for standalone tokens.yaml.

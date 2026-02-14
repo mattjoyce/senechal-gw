@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattjoyce/ductile/internal/api"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
@@ -34,7 +35,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/tui"
 	"github.com/mattjoyce/ductile/internal/webhook"
 	"github.com/mattjoyce/ductile/internal/workspace"
-	tea "github.com/charmbracelet/bubbletea"
 	"gopkg.in/yaml.v3"
 )
 
@@ -351,6 +351,10 @@ func runConfigNoun(args []string) int {
 			return 0
 		}
 		return runConfigSet(actionArgs)
+	case "token":
+		return runConfigToken(actionArgs)
+	case "scope":
+		return runConfigScope(actionArgs)
 	case "help":
 		printConfigNounHelp(os.Stdout)
 		return 0
@@ -600,7 +604,7 @@ func printSystemNounHelp(w *os.File) {
 
 func printConfigNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	fmt.Fprintln(w, "Actions: lock, check, show, get, set")
+	fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope")
 }
 
 func printJobNounHelp(w *os.File) {
