@@ -1,6 +1,6 @@
 ---
 id: 34
-status: doing
+status: done
 priority: Normal
 blocked_by: []
 tags: [sprint-3, tui, monitoring, observability]
@@ -228,5 +228,6 @@ curl -X POST http://localhost:8080/trigger/echo/poll
 ## Narrative
 
 - 2026-02-14: Refactored EventHub to internal/events to unblock system-wide broadcasting. Instrumented Scheduler and Dispatcher to publish real-time events. Implemented initial Bubble Tea TUI with "btop" aesthetic and nested job tree view using circle status symbols (○◉●∅◑◔). Added `ductile system monitor` command. (by @gemini)
+- 2026-02-14: Merged feature/tui-monitor into main. Task complete. (by @gemini)
 
 **Scope:** This is a nice-to-have enhancement, not a blocker for production. Build after /events is proven stable (Sprint 3 complete). If time-constrained, defer to post-Sprint 4.

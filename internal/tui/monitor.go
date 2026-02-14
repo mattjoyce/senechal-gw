@@ -43,6 +43,8 @@ type JobNode struct {
 	ID        string
 	Plugin    string
 	Command   string
+	Pipeline  string
+	StepID    string
 	Status    string
 	StartTime time.Time
 	EndTime   time.Time
@@ -57,10 +59,10 @@ type Model struct {
 	width  int
 	height int
 
-	jobs      map[string]*JobNode
-	rootJobs  []*JobNode
-	eventLog  []events.Event
-	hubEvents chan events.Event
+	systemNode *JobNode
+	jobs       map[string]*JobNode
+	eventLog   []events.Event
+	hubEvents  chan events.Event
 
 	health struct {
 		Status        string
@@ -71,7 +73,7 @@ type Model struct {
 
 	jobTable table.Model
 	viewport viewport.Model
-	
+
 	lastTick time.Time
 	mu       sync.Mutex
 }
@@ -91,7 +93,7 @@ func NewMonitor(apiURL, apiKey string) *Model {
 	t := table.New(
 		table.WithColumns([]table.Column{
 			{Title: "ST", Width: 2},
-			{Title: "Plugin", Width: 20},
+			{Title: "Tree (Plugin/Step)", Width: 35},
 			{Title: "Command", Width: 10},
 			{Title: "ID", Width: 10},
 			{Title: "Duration", Width: 10},
@@ -113,10 +115,14 @@ func NewMonitor(apiURL, apiKey string) *Model {
 	t.SetStyles(s)
 
 	return &Model{
-		apiURL:    apiURL,
-		apiKey:    apiKey,
+		apiURL: apiURL,
+		apiKey: apiKey,
+		systemNode: &JobNode{
+			ID:     "system",
+			Plugin: "System",
+			Status: "succeeded",
+		},
 		jobs:      make(map[string]*JobNode),
-		rootJobs:  make([]*JobNode, 0),
 		eventLog:  make([]events.Event, 0),
 		hubEvents: make(chan events.Event, 100),
 		jobTable:  t,
@@ -195,25 +201,36 @@ func (m *Model) handleEvent(e events.Event) {
 		if !ok {
 			node = &JobNode{ID: jobID}
 			m.jobs[jobID] = node
-			
+
 			parentID, _ := data["parent_job_id"].(string)
 			if parentID != "" {
 				if parent, ok := m.jobs[parentID]; ok {
 					node.Parent = parent
 					parent.Children = append(parent.Children, node)
+				} else {
+					// Parent not in local view yet, attach to system for now
+					node.Parent = m.systemNode
+					m.systemNode.Children = append(m.systemNode.Children, node)
 				}
 			} else {
-				m.rootJobs = append(m.rootJobs, node)
+				node.Parent = m.systemNode
+				m.systemNode.Children = append(m.systemNode.Children, node)
 			}
 		}
-		
+
 		if plugin, ok := data["plugin"].(string); ok {
 			node.Plugin = plugin
 		}
 		if command, ok := data["command"].(string); ok {
 			node.Command = command
 		}
-		
+		if pipeline, ok := data["pipeline"].(string); ok {
+			node.Pipeline = pipeline
+		}
+		if stepID, ok := data["step_id"].(string); ok {
+			node.StepID = stepID
+		}
+
 		switch e.Type {
 		case "job.started":
 			node.Status = "running"
@@ -230,7 +247,7 @@ func (m *Model) handleEvent(e events.Event) {
 			node.Status, _ = data["status"].(string)
 			node.EndTime = time.Now()
 		}
-		
+
 	case "scheduler.tick":
 		m.lastTick = time.Now()
 	}
@@ -238,34 +255,34 @@ func (m *Model) handleEvent(e events.Event) {
 
 func (m *Model) updateTable() {
 	var rows []table.Row
-	
-	// Flatten tree for table view
-	for _, root := range m.rootJobs {
-		rows = append(rows, m.nodeToRow(root, 0)...)
-	}
-	
-	// Reverse to show newest at top (if not nested)
-	// For nested tree, we might want a different strategy, but let's keep it simple.
+
+	// Skip the virtual "System" node itself in the rows, or show it as root.
+	// Let's show it as root.
+	rows = append(rows, m.nodeToRow(m.systemNode, "", true)...)
 
 	m.jobTable.SetRows(rows)
 }
 
-func (m *Model) nodeToRow(node *JobNode, depth int) []table.Row {
-	indent := strings.Repeat("  ", depth)
-	statusSym := "○"
+func (m *Model) nodeToRow(node *JobNode, prefix string, isLast bool) []table.Row {
+	if node == nil {
+		return nil
+	}
+
+	var row table.Row
+	statusSym := "〇"
 	switch node.Status {
 	case "queued":
-		statusSym = statusQueued.Render("○")
+		statusSym = statusQueued.Render("〇")
 	case "running":
 		statusSym = statusRunning.Render("◉")
 	case "succeeded":
-		statusSym = statusOK.Render("●")
+		statusSym = statusOK.Render("⦿")
 	case "failed":
 		statusSym = statusFailed.Render("∅")
 	case "timed_out":
-		statusSym = statusFailed.Render("◑")
+		statusSym = statusFailed.Render("⊖")
 	case "dead":
-		statusSym = statusFailed.Render("◔")
+		statusSym = statusFailed.Render("⊘")
 	}
 
 	duration := "-"
@@ -277,18 +294,53 @@ func (m *Model) nodeToRow(node *JobNode, depth int) []table.Row {
 		duration = end.Sub(node.StartTime).Round(time.Millisecond).String()
 	}
 
-	row := table.Row{
+	// Build the tree line
+	var treeLine string
+	if node.ID == "system" {
+		treeLine = node.Plugin
+	} else {
+		marker := "├─ "
+		if isLast {
+			marker = "└─ "
+		}
+		
+		label := node.Plugin
+		if node.StepID != "" {
+			label = fmt.Sprintf("%s (%s)", node.Plugin, node.StepID)
+		}
+		treeLine = prefix + marker + label
+	}
+
+	displayID := node.ID
+	if len(displayID) > 8 {
+		displayID = displayID[:8]
+	}
+
+	row = table.Row{
 		statusSym,
-		indent + node.Plugin,
+		treeLine,
 		node.Command,
-		node.ID[:8],
+		displayID,
 		duration,
 	}
 
 	rows := []table.Row{row}
-	for _, child := range node.Children {
-		rows = append(rows, m.nodeToRow(child, depth+1)...)
+
+	// Prepare prefix for children
+	newPrefix := prefix
+	if node.ID != "system" {
+		if isLast {
+			newPrefix += "   "
+		} else {
+			newPrefix += "│  "
+		}
 	}
+
+	for i, child := range node.Children {
+		lastChild := i == len(node.Children)-1
+		rows = append(rows, m.nodeToRow(child, newPrefix, lastChild)...)
+	}
+
 	return rows
 }
 
