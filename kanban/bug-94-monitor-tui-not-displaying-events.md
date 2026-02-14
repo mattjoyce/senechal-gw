@@ -58,33 +58,117 @@ data: {"job_id":"...","status":"succeeded"}
 - Event format mismatch between hub and TUI
 - BubbleTea message handling not processing SSE events
 
-## Investigation Needed
+## Root Cause Analysis
 
-1. **Check SSE client implementation** in `monitor.go`:
-   - Is the HTTP client properly reading the SSE stream?
-   - Are events being parsed correctly from SSE format?
-   - Are BubbleTea messages being sent on event receipt?
+### Bug #1: SSE Parsing Error (Lines 383-390)
 
-2. **Verify event format compatibility**:
-   - Compare event format emitted by hub vs expected by TUI
-   - Check if event IDs, types, or data structure differs
+**Current code**:
+```go
+for scanner.Scan() {
+    line := scanner.Text()
+    if strings.HasPrefix(line, "data: ") {
+        var ev events.Event
+        if err := json.Unmarshal([]byte(line[6:]), &ev); err == nil {
+            m.hubEvents <- ev
+        }
+    }
+}
+```
 
-3. **Test BubbleTea update cycle**:
-   - Add debug logging to Update() method
-   - Verify messages are reaching the TUI
-   - Check if View() is being called after updates
+**Problem**: SSE events are multi-line:
+```
+id: 123
+event: job.started
+data: {"job_id":"...","plugin":"..."}
 
-4. **Buffer flushing**:
-   - SSE streams may be buffered
-   - Verify io.Reader is not blocking
-   - Check if events arrive but aren't processed in real-time
+```
+
+The code only reads `data:` lines and tries to unmarshal `{"job_id":"..."}` as an `Event{ID, Type, At, Data}` struct. This fails silently because the JSON payload doesn't contain `id`, `type`, or `at` fields - it only contains the event-specific data.
+
+**Fix**: Parse all three SSE fields (id, event, data) and construct the complete Event struct.
+
+### Bug #2: Event Loop Never Starts (Init function)
+
+**Current code** (lines 125-131):
+```go
+func (m Model) Init() tea.Cmd {
+    return tea.Batch(
+        m.subscribeToEvents(),  // Starts SSE goroutine
+        m.pollHealth(),
+        tea.EnterAltScreen,
+    )
+}
+```
+
+**Problem**: `subscribeToEvents()` starts reading events and sending to `m.hubEvents` channel, but nothing reads from the channel! The `receiveNextEvent()` function only gets called in `Update()` when an `eventMsg` arrives (line 155), creating a chicken-and-egg problem:
+- No initial call to `receiveNextEvent()` → no one reading from channel
+- Events pile up in channel buffer (100 capacity)
+- No `eventMsg` ever reaches `Update()` to trigger the loop
+
+**Fix**: Add `m.receiveNextEvent()` to the `Init()` batch to kickstart the event consumption loop.
+
+## Proposed Fix
+
+### Fix #1: Correct SSE Parsing
+
+Replace lines 383-390 in `monitor.go` with proper multi-line SSE parser:
+
+```go
+var currentEvent struct {
+    id    int64
+    typ   string
+    data  string
+}
+
+for scanner.Scan() {
+    line := scanner.Text()
+
+    if line == "" {
+        // Empty line marks end of event
+        if currentEvent.data != "" {
+            ev := events.Event{
+                ID:   currentEvent.id,
+                Type: currentEvent.typ,
+                At:   time.Now(), // Or parse from data if available
+                Data: []byte(currentEvent.data),
+            }
+            m.hubEvents <- ev
+            currentEvent = struct{ id int64; typ string; data string }{}
+        }
+        continue
+    }
+
+    if strings.HasPrefix(line, "id: ") {
+        currentEvent.id, _ = strconv.ParseInt(line[4:], 10, 64)
+    } else if strings.HasPrefix(line, "event: ") {
+        currentEvent.typ = line[7:]
+    } else if strings.HasPrefix(line, "data: ") {
+        currentEvent.data = line[6:]
+    }
+}
+```
+
+### Fix #2: Kickstart Event Loop
+
+Add `receiveNextEvent()` call in `Init()` function (line 125):
+
+```go
+func (m Model) Init() tea.Cmd {
+    return tea.Batch(
+        m.subscribeToEvents(),
+        m.receiveNextEvent(),  // ← ADD THIS LINE
+        m.pollHealth(),
+        tea.EnterAltScreen,
+    )
+}
+```
 
 ## Files to Review
 
-- `internal/tui/monitor.go` (424 lines) - TUI implementation
-- `internal/events/hub.go` - Event broadcasting
-- `internal/api/events_handler.go` - SSE endpoint
-- `cmd/ductile/main.go` - Monitor command setup
+- `internal/tui/monitor.go` (424 lines) - **TUI implementation (needs both fixes)**
+- `internal/events/hub.go` - Event broadcasting (working)
+- `internal/api/events_handler.go` - SSE endpoint (working)
+- `cmd/ductile/main.go` - Monitor command setup (working)
 
 ## Workaround
 
