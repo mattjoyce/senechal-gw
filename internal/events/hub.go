@@ -1,4 +1,4 @@
-package api
+package events
 
 import (
 	"encoding/json"
@@ -8,14 +8,14 @@ import (
 )
 
 type Event struct {
-	ID   int64
-	Type string
-	At   time.Time
-	Data []byte // JSON payload
+	ID   int64     `json:"id"`
+	Type string    `json:"type"`
+	At   time.Time `json:"at"`
+	Data []byte    `json:"data"` // JSON payload
 }
 
-// EventHub is an in-memory pub/sub with a small ring buffer for late clients.
-type EventHub struct {
+// Hub is an in-memory pub/sub with a small ring buffer for late clients.
+type Hub struct {
 	nextID atomic.Int64
 
 	mu    sync.Mutex
@@ -27,17 +27,17 @@ type EventHub struct {
 	nextSubID int
 }
 
-func NewEventHub(capacity int) *EventHub {
+func NewHub(capacity int) *Hub {
 	if capacity <= 0 {
-		capacity = 1
+		capacity = 100
 	}
-	return &EventHub{
+	return &Hub{
 		ring: make([]Event, capacity),
 		subs: make(map[int]chan Event),
 	}
 }
 
-func (h *EventHub) Publish(eventType string, data any) {
+func (h *Hub) Publish(eventType string, data any) {
 	id := h.nextID.Add(1)
 
 	payload := []byte("{}")
@@ -66,13 +66,13 @@ func (h *EventHub) Publish(eventType string, data any) {
 	h.mu.Unlock()
 }
 
-func (h *EventHub) Subscribe() (<-chan Event, func()) {
+func (h *Hub) Subscribe() (<-chan Event, func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	id := h.nextSubID
 	h.nextSubID++
-	ch := make(chan Event, 32)
+	ch := make(chan Event, 128) // Increased buffer for TUI
 	h.subs[id] = ch
 
 	cancel := func() {
@@ -89,7 +89,7 @@ func (h *EventHub) Subscribe() (<-chan Event, func()) {
 
 // SnapshotSince returns buffered events with ID > lastID, oldest-first.
 // If lastID is 0, the full ring buffer snapshot is returned.
-func (h *EventHub) SnapshotSince(lastID int64) []Event {
+func (h *Hub) SnapshotSince(lastID int64) []Event {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -103,7 +103,7 @@ func (h *EventHub) SnapshotSince(lastID int64) []Event {
 	return out
 }
 
-func (h *EventHub) pushLocked(ev Event) {
+func (h *Hub) pushLocked(ev Event) {
 	capacity := len(h.ring)
 	if capacity == 0 {
 		return

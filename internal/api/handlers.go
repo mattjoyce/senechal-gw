@@ -107,7 +107,7 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.events.Publish("job_enqueued", map[string]any{
+	s.events.Publish("job.enqueued", map[string]any{
 		"at":           time.Now().UTC().Format(time.RFC3339Nano),
 		"job_id":       jobID,
 		"plugin":       pluginName,

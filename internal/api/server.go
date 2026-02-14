@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
@@ -60,12 +61,12 @@ type Server struct {
 	logger        *slog.Logger
 	server        *http.Server
 	startedAt     time.Time
-	events        *EventHub
+	events        *events.Hub
 	syncSemaphore chan struct{}
 }
 
 // New creates a new API server instance
-func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, logger *slog.Logger) *Server {
+func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, hub *events.Hub, logger *slog.Logger) *Server {
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
@@ -77,7 +78,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		waiter:        waiter,
 		logger:        logger,
 		startedAt:     time.Now(),
-		events:        NewEventHub(256),
+		events:        hub,
 		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
 	}
 }

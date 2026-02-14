@@ -147,6 +147,7 @@ go test ./...
 # Planned CLI commands (SPEC.md §9.6)
 ./ductile run <plugin>     # manually trigger plugin once
 ./ductile status           # plugin states, queue depth, last runs
+./ductile system monitor   # real-time TUI dashboard
 ./ductile reload           # SIGHUP config reload
 ./ductile reset <plugin>   # reset circuit breaker
 ./ductile plugins          # list discovered plugins

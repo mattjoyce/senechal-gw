@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/queue" // Keep for queue.EnqueueRequest and queue.Job types
 )
 
@@ -17,16 +18,18 @@ import (
 type Scheduler struct {
 	cfg    *config.Config
 	queue  QueueService // Use the interface here
+	events *events.Hub
 	logger *slog.Logger
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
 
 // New creates a new Scheduler instance.
-func New(cfg *config.Config, q QueueService, logger *slog.Logger) *Scheduler { // Accept *slog.Logger here
+func New(cfg *config.Config, q QueueService, hub *events.Hub, logger *slog.Logger) *Scheduler { // Accept *slog.Logger here
 	return &Scheduler{
 		cfg:    cfg,
 		queue:  q,
+		events: hub,
 		logger: logger.With("component", "scheduler"),
 		stopCh: make(chan struct{}),
 	}
@@ -81,6 +84,9 @@ func (s *Scheduler) tickLoop(ctx context.Context) {
 // tick performs a single scheduling pass.
 func (s *Scheduler) tick(ctx context.Context) {
 	s.logger.Debug("Scheduler tick")
+	s.events.Publish("scheduler.tick", map[string]any{
+		"at": time.Now().UTC(),
+	})
 
 	// Sort plugin names for deterministic iteration (critical for testing)
 	var pluginNames []string
@@ -170,6 +176,11 @@ func (s *Scheduler) enqueuePollJob(ctx context.Context, pluginName string, plugi
 		// For now, treating all enqueue errors as significant.
 		return fmt.Errorf("enqueue poll job for %s: %w", pluginName, err)
 	}
+	s.events.Publish("scheduler.scheduled", map[string]any{
+		"job_id":  jobID,
+		"plugin":  pluginName,
+		"command": "poll",
+	})
 	s.logger.Info("Enqueued poll job", "plugin", pluginName, "job_id", jobID, "dedupe_key", dedupeKey)
 	return nil
 }

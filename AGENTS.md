@@ -18,6 +18,7 @@ After the Go skeleton exists (`go.mod`, `cmd/`, etc.), prefer these commands:
 go test ./...           # run unit tests
 go build ./cmd/ductile
 ./ductile start --config ./config.yaml
+./ductile system monitor # launch real-time TUI dashboard
 ```
 
 For fast repo-wide search (docs + code):
