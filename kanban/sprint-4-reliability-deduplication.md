@@ -1,6 +1,6 @@
 ---
 id: 95
-status: todo
+status: doing
 priority: Normal
 blocked_by: []
 assignee: "@gemini"
@@ -20,3 +20,4 @@ Enforce at-most-once semantics for specific tasks using `dedupe_key` and `dedupe
 
 ## Narrative
 - 2026-02-14: Created as a sub-task of epic #23. (by @gemini)
+- 2026-02-14: Implementation started on branch `card-95-deduplication`; plan is queue-level dedupe check with TTL, INFO drop logging, scheduler handling for dedupe drop, and queue tests for hit/miss semantics. (by @codex)
