@@ -1862,7 +1862,13 @@ plugins: {}
 	for _, path := range created {
 		fmt.Printf("Created: %s\n", path)
 	}
-	return 0
+	validation, code, err := validateConfigAtPath(configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Validation failed to run: %v\n", err)
+		return 1
+	}
+	printValidationSummary(validation)
+	return code
 }
 
 func runConfigBackup(args []string) int {

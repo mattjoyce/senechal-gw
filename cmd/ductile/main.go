@@ -460,7 +460,18 @@ func runConfigSet(args []string) int {
 	}
 
 	fmt.Printf("Successfully set %q to %q\n", path, value)
-	return 0
+	resolvedTarget, _, err := resolveConfigTarget(configPath, configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Validation skipped: %v\n", err)
+		return 0
+	}
+	validation, code, err := validateConfigAtPath(resolvedTarget)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Validation failed to run: %v\n", err)
+		return 1
+	}
+	printValidationSummary(validation)
+	return code
 }
 
 // ... (skipping to action implementations)

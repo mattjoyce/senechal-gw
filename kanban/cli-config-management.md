@@ -1,6 +1,6 @@
 ---
 id: 38
-status: doing
+status: done
 priority: Normal
 blocked_by: [35, 36, 37, 39]
 tags: [sprint-4, cli, config, llm-friendly]
@@ -677,3 +677,5 @@ This is infrastructure for "conversational configuration"—where you tell an ag
 **Priority:** Normal. Implement after multi-file config (#39) is stable. Not blocking for Sprint 3, but valuable for Sprint 4 operational workflows.
 
 - 2026-02-14: Moved card to `doing` and split implementation into five phases to ship #38 incrementally with tests and frequent commits. (by @codex)
+- 2026-02-14: Implemented `config token/scope/plugin/route/webhook/init/backup/restore` commands with `--config-dir`, JSON output, atomic file writes + `.bak`, checksum refresh, and post-change validation with 0/1/2 exit semantics. Added CLI tests for create/list/inspect flows, scope mutation, plugin/route/webhook commands, and init/backup/restore lifecycle. (by @codex)
+- 2026-02-14: Verified `go test ./cmd/ductile` passes after changes. Repository-wide `go test ./...` still fails in unrelated packages due existing constructor signature drift in `internal/api`, `internal/dispatch`, `internal/e2e`, and `internal/scheduler` tests. (by @codex)
