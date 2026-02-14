@@ -27,28 +27,56 @@ def handle_command(config, state, event):
     """Handle command - processes events with fabric patterns"""
     payload = event.get("payload", {})
 
+    # Extract input parameters
     text = payload.get("text")
-    if not text:
-        return error_response("Missing 'text' field in event payload")
+    url = payload.get("url")
+    youtube_url = payload.get("youtube_url")
 
-    pattern = payload.get("pattern") or config.get("FABRIC_DEFAULT_PATTERN")
+    # Only use default pattern if pattern not explicitly provided AND not in prompt-only mode
+    # Prompt-only mode: prompt provided without text/url/youtube_url and without explicit pattern
+    pattern = payload.get("pattern")
+    if pattern is None and not (payload.get("prompt") and not any([text, url, youtube_url])):
+        pattern = config.get("FABRIC_DEFAULT_PATTERN")
+
     prompt = payload.get("prompt") or config.get("FABRIC_DEFAULT_PROMPT")
-
     model = payload.get("model") or config.get("FABRIC_DEFAULT_MODEL")
     fabric_bin = config.get("FABRIC_BIN_PATH", "fabric")
 
-    # Support two modes:
-    # 1) pattern mode: fabric --pattern <preset> (existing behavior)
+    # Validate input: need at least one of text, url, youtube_url, or prompt
+    if not any([text, url, youtube_url, prompt]):
+        return error_response("Missing input: provide 'text', 'url', 'youtube_url', or 'prompt'")
+
+    # Build fabric command
+    # Support multiple modes:
+    # 1) pattern mode: fabric --pattern <preset>
     # 2) prompt mode: no pattern required; prompt is prepended to text input
+    # 3) URL mode: fabric --scrape_url=<url>
+    # 4) YouTube mode: fabric --youtube=<url>
     cmd = [fabric_bin]
+
     if pattern:
         cmd.extend(["--pattern", pattern])
     if model:
         cmd.extend(["--model", model])
+    if url:
+        cmd.extend(["--scrape_url", url])
+    if youtube_url:
+        cmd.extend(["--youtube", youtube_url])
 
-    input_text = text
-    if prompt:
-        input_text = f"{prompt}\n\n{text}"
+    # Prepare input text
+    # If using URL/YouTube, fabric fetches content automatically
+    # If using text, optionally prepend prompt
+    input_text = ""
+    if text:
+        input_text = text
+        if prompt:
+            input_text = f"{prompt}\n\n{text}"
+    elif prompt and not (url or youtube_url):
+        # One-shot question mode: just a prompt with no text/URL
+        input_text = prompt
+    elif prompt and (url or youtube_url):
+        # URL/YouTube with prompt: fabric will fetch content, we prepend prompt
+        input_text = prompt
 
     try:
         result = subprocess.run(
@@ -80,7 +108,9 @@ def handle_command(config, state, event):
         "pattern": pattern or "",
         "prompt": prompt or "",
         "model": model or "default",
-        "input_length": len(text),
+        "url": url or "",
+        "youtube_url": youtube_url or "",
+        "input_length": len(text) if text else 0,
         "output_length": len(output),
     }
 
@@ -107,11 +137,7 @@ def handle_command(config, state, event):
         "logs": [
             {
                 "level": "info",
-                "message": (
-                    f"Executed fabric pattern: {pattern}"
-                    if pattern else
-                    "Executed fabric with prompt/no-pattern mode"
-                ),
+                "message": build_log_message(pattern, url, youtube_url, prompt),
             },
         ],
     }
@@ -163,6 +189,22 @@ def health_command(config):
             {"level": "info", "message": f"Fabric healthy, {pattern_count} patterns available"},
         ],
     }
+
+
+def build_log_message(pattern, url, youtube_url, prompt):
+    """Build descriptive log message based on execution mode"""
+    parts = []
+    if pattern:
+        parts.append(f"pattern={pattern}")
+    if url:
+        parts.append(f"url={url[:50]}...")
+    if youtube_url:
+        parts.append(f"youtube={youtube_url[:50]}...")
+    if prompt and not (url or youtube_url):
+        parts.append("prompt-mode")
+
+    mode = ", ".join(parts) if parts else "text-mode"
+    return f"Executed fabric ({mode})"
 
 
 def error_response(message, retry=False):
