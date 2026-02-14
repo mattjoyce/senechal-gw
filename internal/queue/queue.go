@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,11 +16,41 @@ import (
 const maxStderrBytes = 64 * 1024
 
 type Queue struct {
-	db *sql.DB
+	db        *sql.DB
+	logger    *slog.Logger
+	dedupeTTL time.Duration
 }
 
-func New(db *sql.DB) *Queue {
-	return &Queue{db: db}
+type Option func(*Queue)
+
+func WithLogger(logger *slog.Logger) Option {
+	return func(q *Queue) {
+		if logger != nil {
+			q.logger = logger
+		}
+	}
+}
+
+func WithDedupeTTL(ttl time.Duration) Option {
+	return func(q *Queue) {
+		if ttl > 0 {
+			q.dedupeTTL = ttl
+		}
+	}
+}
+
+func New(db *sql.DB, opts ...Option) *Queue {
+	q := &Queue{
+		db:        db,
+		logger:    slog.Default(),
+		dedupeTTL: 24 * time.Hour,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(q)
+		}
+	}
+	return q
 }
 
 // Depth returns the number of outstanding jobs (queued or running).
@@ -46,6 +78,27 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	if req.SubmittedBy == "" {
 		return "", fmt.Errorf("submitted_by is empty")
 	}
+	if req.DedupeKey != nil {
+		dedupeKey := strings.TrimSpace(*req.DedupeKey)
+		if dedupeKey != "" && q.dedupeTTL > 0 {
+			existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, dedupeKey, q.dedupeTTL)
+			if err != nil {
+				return "", fmt.Errorf("dedupe lookup: %w", err)
+			}
+			if found {
+				q.logger.Info(
+					"dropped duplicate enqueue",
+					"dedupe_key", dedupeKey,
+					"existing_job_id", existingID,
+					"dedupe_ttl", q.dedupeTTL.String(),
+				)
+				return "", &DedupeDropError{
+					DedupeKey:     dedupeKey,
+					ExistingJobID: existingID,
+				}
+			}
+		}
+	}
 
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -55,17 +108,15 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 		maxAttempts = 4
 	}
 
-	        var payload any
+	var payload any
 
-	        if len(req.Payload) > 0 {
+	if len(req.Payload) > 0 {
 
-	                payload = string(req.Payload)
+		payload = string(req.Payload)
 
-	        }
+	}
 
-	
-
-	        _, err := q.db.ExecContext(ctx, `
+	_, err := q.db.ExecContext(ctx, `
 
 	INSERT OR IGNORE INTO job_queue(
 
@@ -79,14 +130,35 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 
 	`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
 
-	        if err != nil {
+	if err != nil {
 
-	                return "", fmt.Errorf("enqueue job: %w", err)
+		return "", fmt.Errorf("enqueue job: %w", err)
 
-	        }
+	}
 
-	
 	return id, nil
+}
+
+func (q *Queue) findRecentSucceededByDedupeKey(ctx context.Context, dedupeKey string, ttl time.Duration) (string, bool, error) {
+	cutoff := time.Now().UTC().Add(-ttl).Format(time.RFC3339Nano)
+	var id string
+	err := q.db.QueryRowContext(ctx, `
+SELECT id
+FROM job_queue
+WHERE dedupe_key = ?
+  AND status = ?
+  AND completed_at IS NOT NULL
+  AND completed_at >= ?
+ORDER BY completed_at DESC
+LIMIT 1;
+`, dedupeKey, StatusSucceeded, cutoff).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
 }
 
 // Dequeue claims the oldest queued job and marks it running. Returns (nil, nil)
