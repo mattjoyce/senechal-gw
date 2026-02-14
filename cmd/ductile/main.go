@@ -213,6 +213,14 @@ System Commands:
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
   config check      Validate syntax, policy, and integrity
+  config token      Manage scoped tokens
+  config scope      Manage token scopes
+  config plugin     Manage plugin configuration
+  config route      Manage event routes
+  config webhook    Manage webhooks
+  config init       Initialize config directory
+  config backup     Create backup archive
+  config restore    Restore config backup
 
 Job Commands:
   job inspect <id>  Show lineage, baggage, and workspace artifacts
@@ -355,6 +363,18 @@ func runConfigNoun(args []string) int {
 		return runConfigToken(actionArgs)
 	case "scope":
 		return runConfigScope(actionArgs)
+	case "plugin":
+		return runConfigPlugin(actionArgs)
+	case "route":
+		return runConfigRoute(actionArgs)
+	case "webhook":
+		return runConfigWebhook(actionArgs)
+	case "init":
+		return runConfigInit(actionArgs)
+	case "backup":
+		return runConfigBackup(actionArgs)
+	case "restore":
+		return runConfigRestore(actionArgs)
 	case "help":
 		printConfigNounHelp(os.Stdout)
 		return 0
@@ -367,11 +387,12 @@ func runConfigNoun(args []string) int {
 // ... (skipping to action implementations)
 
 func runConfigSet(args []string) int {
-	var configPath string
+	var configPath, configDir string
 	var dryRun, apply bool
 
 	fs := flag.NewFlagSet("set", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
+	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview changes")
 	fs.BoolVar(&apply, "apply", false, "Apply changes")
 
@@ -403,7 +424,7 @@ func runConfigSet(args []string) int {
 	parts := strings.SplitN(kvPair, "=", 2)
 	path, value := parts[0], parts[1]
 
-	cfg, err := loadConfigForTool(configPath)
+	cfg, err := loadConfigForToolWithDir(configPath, configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
@@ -423,8 +444,19 @@ func runConfigSet(args []string) int {
 
 	// Real application
 	if err := cfg.SetPath(path, value, true); err != nil {
-		fmt.Fprintf(os.Stderr, "Apply failed: %v\n", err)
-		return 1
+		if !strings.Contains(err.Error(), "no valid configuration source found") {
+			fmt.Fprintf(os.Stderr, "Apply failed: %v\n", err)
+			return 1
+		}
+		resolvedTarget, _, resolveErr := resolveConfigTarget(configPath, configDir)
+		if resolveErr != nil {
+			fmt.Fprintf(os.Stderr, "Apply failed: %v\n", err)
+			return 1
+		}
+		if fallbackErr := applyConfigSetFallback(resolvedTarget, path, value); fallbackErr != nil {
+			fmt.Fprintf(os.Stderr, "Apply failed: %v\n", fallbackErr)
+			return 1
+		}
 	}
 
 	fmt.Printf("Successfully set %q to %q\n", path, value)
@@ -436,13 +468,14 @@ func runConfigSet(args []string) int {
 func runConfigShow(args []string) int {
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")
+	configDir := fs.String("config-dir", "", "Path to configuration directory")
 	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
 	}
 
-	cfg, err := loadConfigForTool(*configPath)
+	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
@@ -472,6 +505,7 @@ func runConfigShow(args []string) int {
 func runConfigGet(args []string) int {
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")
+	configDir := fs.String("config-dir", "", "Path to configuration directory")
 	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
@@ -484,7 +518,7 @@ func runConfigGet(args []string) int {
 	}
 	path := fs.Arg(0)
 
-	cfg, err := loadConfigForTool(*configPath)
+	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
@@ -506,6 +540,16 @@ func runConfigGet(args []string) int {
 }
 
 func loadConfigForTool(configPath string) (*config.Config, error) {
+	return loadConfigForToolWithDir(configPath, "")
+}
+
+func loadConfigForToolWithDir(configPath, configDir string) (*config.Config, error) {
+	if configPath != "" && configDir != "" {
+		return nil, fmt.Errorf("use only one of --config or --config-dir")
+	}
+	if configDir != "" {
+		configPath = configDir
+	}
 	if configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
@@ -514,6 +558,49 @@ func loadConfigForTool(configPath string) (*config.Config, error) {
 		configPath = discovered
 	}
 	return config.Load(configPath)
+}
+
+func applyConfigSetFallback(configTarget, path, value string) error {
+	configFile := configTarget
+	info, err := os.Stat(configTarget)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		configFile = filepath.Join(configTarget, "config.yaml")
+	}
+
+	original, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+
+	var doc map[string]any
+	if err := yaml.Unmarshal(original, &doc); err != nil {
+		return err
+	}
+	if doc == nil {
+		doc = map[string]any{}
+	}
+
+	setNestedMapValue(doc, strings.Split(path, "."), parseScalarValue(value))
+
+	updated, err := yaml.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomicWithBackup(configFile, updated, 0o644); err != nil {
+		return err
+	}
+
+	if _, err := config.Load(configTarget); err != nil {
+		backupPath := configFile + ".bak"
+		if backup, readErr := os.ReadFile(backupPath); readErr == nil {
+			_ = os.WriteFile(configFile, backup, 0o644)
+		}
+		return fmt.Errorf("validation failed: %w", err)
+	}
+	return nil
 }
 
 func runJobNoun(args []string) int {
@@ -604,7 +691,7 @@ func printSystemNounHelp(w *os.File) {
 
 func printConfigNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope")
+	fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
 }
 
 func printJobNounHelp(w *os.File) {
@@ -665,22 +752,22 @@ func printConfigLockHelp() {
 }
 
 func printConfigCheckHelp() {
-	fmt.Println("Usage: ductile config check [--config PATH] [--format human|json] [--strict] [--json]")
+	fmt.Println("Usage: ductile config check [--config PATH | --config-dir PATH] [--format human|json] [--strict] [--json]")
 	fmt.Println("Validate configuration syntax, policy, and integrity.")
 }
 
 func printConfigShowHelp() {
-	fmt.Println("Usage: ductile config show [entity] [--config PATH] [--json]")
+	fmt.Println("Usage: ductile config show [entity] [--config PATH | --config-dir PATH] [--json]")
 	fmt.Println("Show full resolved configuration or a filtered entity node.")
 }
 
 func printConfigGetHelp() {
-	fmt.Println("Usage: ductile config get <path> [--config PATH] [--json]")
+	fmt.Println("Usage: ductile config get <path> [--config PATH | --config-dir PATH] [--json]")
 	fmt.Println("Read a single value from the resolved configuration.")
 }
 
 func printConfigSetHelp() {
-	fmt.Println("Usage: ductile config set <path>=<value> [--config PATH] [--dry-run | --apply]")
+	fmt.Println("Usage: ductile config set <path>=<value> [--config PATH | --config-dir PATH] [--dry-run | --apply]")
 	fmt.Println("Set a configuration value with either preview or apply mode.")
 }
 
@@ -1185,12 +1272,13 @@ func runInspect(args []string) int {
 }
 
 func runConfigCheck(args []string) int {
-	var configPath string
+	var configPath, configDir string
 	var strict, jsonOut bool
 	var format string
 
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
+	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
 	fs.BoolVar(&strict, "strict", false, "Treat warnings as errors")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
 	// Handle -json alias for format=json
@@ -1205,6 +1293,13 @@ func runConfigCheck(args []string) int {
 		format = "json"
 	}
 
+	if configPath != "" && configDir != "" {
+		fmt.Fprintln(os.Stderr, "Error: use only one of --config or --config-dir")
+		return 1
+	}
+	if configDir != "" {
+		configPath = configDir
+	}
 	if configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
@@ -1220,7 +1315,7 @@ func runConfigCheck(args []string) int {
 		return 1
 	}
 
-	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {})
+	registry, err := discoverRegistry(cfg, configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Plugin discovery error: %v\n", err)
 		return 1

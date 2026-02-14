@@ -449,6 +449,242 @@ func containsString(list []string, value string) bool {
 	return false
 }
 
+func writeRouteFixture(t *testing.T, dir string) {
+	t.Helper()
+
+	pluginsDir := filepath.Join(dir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+service:
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ` + filepath.Join(dir, "state.db") + `
+plugins_dir: ` + pluginsDir + `
+plugins:
+  withings:
+    enabled: false
+    schedule:
+      every: daily
+  slack:
+    enabled: false
+    schedule:
+      every: daily
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createTestPlugin(t *testing.T, pluginsDir, name string) {
+	t.Helper()
+
+	pluginDir := filepath.Join(pluginsDir, name)
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `
+name: ` + name + `
+version: "1.0.0"
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: handle
+    type: write
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunConfigPluginSetCreatesPluginFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigPluginSet([]string{
+			"echo",
+			"schedule.every",
+			"2h",
+			"--config-dir", tmpDir,
+		})
+	})
+	if code != 0 {
+		t.Fatalf("runConfigPluginSet() code = %d, stderr: %s", code, stderr)
+	}
+
+	pluginFile := filepath.Join(tmpDir, "plugins", "echo.yaml")
+	raw, err := os.ReadFile(pluginFile)
+	if err != nil {
+		t.Fatalf("read plugin file: %v", err)
+	}
+	if !strings.Contains(string(raw), "every: 2h") {
+		t.Fatalf("plugin file missing updated schedule: %s", string(raw))
+	}
+}
+
+func TestRunConfigRouteAddAndRemove(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeRouteFixture(t, tmpDir)
+
+	addCode, _, addStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigRouteAdd([]string{
+			"--config-dir", tmpDir,
+			"--from", "withings",
+			"--event", "weight_updated",
+			"--to", "slack",
+		})
+	})
+	if addCode != 0 {
+		t.Fatalf("runConfigRouteAdd() code = %d, stderr: %s", addCode, addStderr)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmpDir, "routes.yaml"))
+	if err != nil {
+		t.Fatalf("read routes file: %v", err)
+	}
+	if !strings.Contains(string(raw), "withings") || !strings.Contains(string(raw), "weight_updated") {
+		t.Fatalf("route not written: %s", string(raw))
+	}
+
+	removeCode, _, removeStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigRouteRemove([]string{
+			"--config-dir", tmpDir,
+			"--from", "withings",
+			"--event", "weight_updated",
+			"--to", "slack",
+		})
+	})
+	if removeCode != 0 {
+		t.Fatalf("runConfigRouteRemove() code = %d, stderr: %s", removeCode, removeStderr)
+	}
+}
+
+func TestRunConfigWebhookAddAndList(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	createTestPlugin(t, pluginsDir, "github-handler")
+
+	addCode, _, addStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigWebhookAdd([]string{
+			"--config-dir", tmpDir,
+			"--name", "github",
+			"--path", "/webhook/github",
+			"--plugin", "github-handler",
+			"--secret", "abc123",
+		})
+	})
+	if addCode != 0 && addCode != 2 {
+		t.Fatalf("runConfigWebhookAdd() code = %d, stderr: %s", addCode, addStderr)
+	}
+
+	listCode, stdout, listStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigWebhookList([]string{"--config-dir", tmpDir, "--format", "json"})
+	})
+	if listCode != 0 {
+		t.Fatalf("runConfigWebhookList() code = %d, stderr: %s", listCode, listStderr)
+	}
+
+	var hooks []struct {
+		Name   string `json:"name"`
+		Path   string `json:"path"`
+		Plugin string `json:"plugin"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &hooks); err != nil {
+		t.Fatalf("failed to parse webhook list json: %v\noutput=%s", err, stdout)
+	}
+	if len(hooks) != 1 || hooks[0].Path != "/webhook/github" || hooks[0].Plugin != "github-handler" {
+		t.Fatalf("unexpected webhook list: %+v", hooks)
+	}
+}
+
+func TestRunConfigInitBackupRestore(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, "cfg")
+
+	initCode, _, initStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigInit([]string{"--config-dir", configDir})
+	})
+	if initCode != 0 {
+		t.Fatalf("runConfigInit() code = %d, stderr: %s", initCode, initStderr)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "config.yaml")); err != nil {
+		t.Fatalf("config.yaml missing after init: %v", err)
+	}
+
+	backupPath := filepath.Join(tmpDir, "backup.tar.gz")
+	backupCode, _, backupStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigBackup([]string{"--config-dir", configDir, "--output", backupPath})
+	})
+	if backupCode != 0 {
+		t.Fatalf("runConfigBackup() code = %d, stderr: %s", backupCode, backupStderr)
+	}
+	if _, err := os.Stat(backupPath); err != nil {
+		t.Fatalf("backup archive missing: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(configDir, "tokens.yaml"), []byte("tokens:\n  - name: changed\n    key: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreCode, _, restoreStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigRestore([]string{backupPath, "--config-dir", configDir})
+	})
+	if restoreCode != 0 {
+		t.Fatalf("runConfigRestore() code = %d, stderr: %s", restoreCode, restoreStderr)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(configDir, "tokens.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "changed") {
+		t.Fatalf("restore did not replace modified tokens.yaml: %s", string(raw))
+	}
+}
+
+func TestRunConfigCheckSupportsConfigDirFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runConfigCheck([]string{"--config-dir", tmpDir})
+	})
+	if code != 0 {
+		t.Fatalf("runConfigCheck() code = %d, stderr: %s", code, stderr)
+	}
+}
+
+func TestRunConfigGetAndSetSupportConfigDirFlag(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	setCode, _, setStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigSet([]string{"--config-dir", tmpDir, "--apply", "service.log_level=debug"})
+	})
+	if setCode != 0 {
+		t.Fatalf("runConfigSet() code = %d, stderr: %s", setCode, setStderr)
+	}
+
+	getCode, stdout, getStderr := captureOutputWithExitCode(t, func() int {
+		return runConfigGet([]string{"--config-dir", tmpDir, "service.log_level"})
+	})
+	if getCode != 0 {
+		t.Fatalf("runConfigGet() code = %d, stderr: %s", getCode, getStderr)
+	}
+	if !strings.Contains(stdout, "debug") {
+		t.Fatalf("runConfigGet() output missing updated value: %s", stdout)
+	}
+}
+
 func TestRunSystemStatusJSONHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")
