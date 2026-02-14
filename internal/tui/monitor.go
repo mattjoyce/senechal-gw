@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +126,7 @@ func NewMonitor(apiURL, apiKey string) *Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.subscribeToEvents(),
+		m.receiveNextEvent(), // Kickstart event loop
 		m.pollHealth(),
 		tea.EnterAltScreen,
 	)
@@ -380,14 +382,48 @@ func (m Model) subscribeToEvents() tea.Cmd {
 		defer resp.Body.Close()
 
 		scanner := bufio.NewScanner(resp.Body)
+
+		// SSE events are multi-line: id, event, data
+		var currentEvent struct {
+			id   int64
+			typ  string
+			data string
+		}
+
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
-				var ev events.Event
-				if err := json.Unmarshal([]byte(line[6:]), &ev); err == nil {
+
+			// Empty line marks end of event
+			if line == "" {
+				if currentEvent.data != "" {
+					ev := events.Event{
+						ID:   currentEvent.id,
+						Type: currentEvent.typ,
+						At:   time.Now(),
+						Data: []byte(currentEvent.data),
+					}
 					m.hubEvents <- ev
+					// Reset for next event
+					currentEvent = struct {
+						id   int64
+						typ  string
+						data string
+					}{}
 				}
+				continue
 			}
+
+			// Parse SSE fields
+			if strings.HasPrefix(line, "id: ") {
+				if id, err := strconv.ParseInt(line[4:], 10, 64); err == nil {
+					currentEvent.id = id
+				}
+			} else if strings.HasPrefix(line, "event: ") {
+				currentEvent.typ = line[7:]
+			} else if strings.HasPrefix(line, "data: ") {
+				currentEvent.data = line[6:]
+			}
+			// Ignore other lines (e.g., ": keep-alive" comments)
 		}
 		return nil
 	}
