@@ -43,6 +43,78 @@ Implement `ductile config` subcommands for managing configuration files. LLM-fri
 4. Implement `config init`, `config backup`, and `config restore`.
 5. Expand CLI tests and run `go test ./...` after each phase.
 
+## Proto Documentation (Implemented 2026-02-14)
+
+### Global conventions
+
+- Most commands support `--config PATH` or `--config-dir PATH` (mutually exclusive).
+- Mutating commands run validation after write:
+  - `0` = success, no warnings
+  - `2` = success, with warnings
+  - `1` = failure
+- Mutating file writes are atomic and produce `.bak` backups.
+
+### Command map
+
+```bash
+# Existing core
+ductile config lock [--config PATH | --config-dir PATH] [-v|--verbose] [--dry-run]
+ductile config check [--config PATH | --config-dir PATH] [--format human|json] [--strict] [--json]
+ductile config show [entity] [--config PATH | --config-dir PATH] [--json]
+ductile config get <path> [--config PATH | --config-dir PATH] [--json]
+ductile config set <path>=<value> [--config PATH | --config-dir PATH] [--dry-run | --apply]
+
+# Tokens and scopes
+ductile config token create --name <name> (--scopes <csv> | --scopes-file <path|->) [--description <text>] [--format human|json]
+ductile config token list [--format human|json]
+ductile config token inspect <name> [--format human|json]
+ductile config token rehash <name> [--format human|json]
+ductile config token delete <name> [--format human|json]
+
+ductile config scope add <token> <scope-or-csv> [--format human|json]
+ductile config scope remove <token> <scope-or-csv> [--format human|json]
+ductile config scope set <token> <scope-or-csv> [--format human|json]
+ductile config scope validate <scope> [--format human|json]
+
+# Plugins, routes, webhooks
+ductile config plugin list [--format human|json]
+ductile config plugin show <plugin> [--format human|json]
+ductile config plugin set <plugin> <path> <value> [--format human|json]
+
+ductile config route list [--format human|json]
+ductile config route add --from <plugin> --event <type> --to <plugin> [--format human|json]
+ductile config route remove --from <plugin> --event <type> --to <plugin> [--format human|json]
+
+ductile config webhook list [--format human|json]
+ductile config webhook add --path <path> --plugin <plugin> (--secret <value> | --secret-ref <ref>) [--name <name>] [--format human|json]
+
+# Lifecycle
+ductile config init [--config-dir PATH] [--force]
+ductile config backup [--config PATH | --config-dir PATH] [--output backup.tar.gz]
+ductile config restore <backup.tar.gz> [--config PATH | --config-dir PATH]
+```
+
+### Practical quick start
+
+```bash
+# 1) Initialize a directory
+ductile config init --config-dir /tmp/ductile-demo
+
+# 2) Create token + scope file
+ductile config token create \
+  --config-dir /tmp/ductile-demo \
+  --name github-integration \
+  --scopes "read:jobs,read:events,github-handler:rw"
+
+# 3) Add route
+ductile config route add \
+  --config-dir /tmp/ductile-demo \
+  --from withings --event weight_updated --to slack
+
+# 4) Validate config
+ductile config check --config-dir /tmp/ductile-demo
+```
+
 ## Command Reference
 
 ### Token Management
@@ -679,3 +751,4 @@ This is infrastructure for "conversational configuration"—where you tell an ag
 - 2026-02-14: Moved card to `doing` and split implementation into five phases to ship #38 incrementally with tests and frequent commits. (by @codex)
 - 2026-02-14: Implemented `config token/scope/plugin/route/webhook/init/backup/restore` commands with `--config-dir`, JSON output, atomic file writes + `.bak`, checksum refresh, and post-change validation with 0/1/2 exit semantics. Added CLI tests for create/list/inspect flows, scope mutation, plugin/route/webhook commands, and init/backup/restore lifecycle. (by @codex)
 - 2026-02-14: Verified `go test ./cmd/ductile` passes after changes. Repository-wide `go test ./...` still fails in unrelated packages due existing constructor signature drift in `internal/api`, `internal/dispatch`, `internal/e2e`, and `internal/scheduler` tests. (by @codex)
+- 2026-02-14: Added a proto-documentation section with the implemented command surface, exit semantics, and quick-start flow to make card #38 immediately usable as operator guidance. (by @codex)
