@@ -1,6 +1,6 @@
 ---
 id: 96
-status: todo
+status: done
 priority: High
 blocked_by: []
 assignee: "@gemini"
@@ -12,13 +12,13 @@ tags: [sprint-4, reliability, retry, backoff, dispatcher]
 Automate recovery for transient job failures using exponential backoff delays.
 
 ## Acceptance Criteria
-- [ ] Update `Dispatcher` to re-enqueue failed/timed-out jobs if `attempt < max_attempts`.
-- [ ] Implement exponential backoff: `delay = base * 2^(attempt-1) + jitter`.
-- [ ] Support non-retryable failures:
-    - [ ] Plugin exit code `78` (Configuration error).
-    - [ ] Plugin response `"retry": false`.
-- [ ] Update SQL `Dequeue` logic to strictly respect `next_retry_at`.
-- [ ] Unit tests for backoff calculation and retry state transitions.
+- [x] Update `Dispatcher` to re-enqueue failed/timed-out jobs if `attempt < max_attempts`.
+- [x] Implement exponential backoff: `delay = base * 2^(attempt-1) + jitter`.
+- [x] Support non-retryable failures:
+    - [x] Plugin exit code `78` (Configuration error).
+    - [x] Plugin response `"retry": false`.
+- [x] Update SQL `Dequeue` logic to strictly respect `next_retry_at`.
+- [x] Unit tests for backoff calculation and retry state transitions.
 
 ## Observability Requirements
 
@@ -53,3 +53,5 @@ job.retry_exhausted:
 ## Narrative
 - 2026-02-14: Created as a sub-task of epic #23. (by @gemini)
 - 2026-02-15: Added observability requirements for TUI watch integration. (by @claude)
+- 2026-02-15: Implementation started on branch `card-96-retries-backoff`; adding dispatcher retry scheduling with exponential backoff + jitter, non-retryable handling (`retry:false`, exit code 78), and retry observability events. (by @codex)
+- 2026-02-15: Completed dispatcher retry scheduling for failed/timed-out jobs using exponential backoff (`base * 2^(attempt-1) + jitter`) and `next_retry_at` requeue semantics. Added non-retryable handling for plugin exit code `78` and protocol response `retry:false`. Emitted `job.retry_scheduled` and `job.retry_exhausted` events with retry/backoff metadata for TUI watch. Added unit/integration coverage for backoff math, retry scheduling, non-retryable transitions, and `next_retry_at` dequeue gating. Verified with `go test ./internal/queue ./internal/dispatch ./internal/e2e -count=1`. (by @codex)

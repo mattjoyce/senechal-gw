@@ -55,17 +55,15 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 		maxAttempts = 4
 	}
 
-	        var payload any
+	var payload any
 
-	        if len(req.Payload) > 0 {
+	if len(req.Payload) > 0 {
 
-	                payload = string(req.Payload)
+		payload = string(req.Payload)
 
-	        }
+	}
 
-	
-
-	        _, err := q.db.ExecContext(ctx, `
+	_, err := q.db.ExecContext(ctx, `
 
 	INSERT OR IGNORE INTO job_queue(
 
@@ -79,13 +77,12 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 
 	`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
 
-	        if err != nil {
+	if err != nil {
 
-	                return "", fmt.Errorf("enqueue job: %w", err)
+		return "", fmt.Errorf("enqueue job: %w", err)
 
-	        }
+	}
 
-	
 	return id, nil
 }
 
@@ -99,7 +96,8 @@ func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
 WITH next AS (
   SELECT id
   FROM job_queue
-  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)
+  WHERE status = ?
+    AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)
   ORDER BY created_at ASC, rowid ASC
   LIMIT 1
 )
