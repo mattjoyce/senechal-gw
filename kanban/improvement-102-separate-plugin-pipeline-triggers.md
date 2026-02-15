@@ -142,3 +142,10 @@ This is a fundamental UX improvement. The current design treats everything as ev
     - **Discovery**: The `ductile skill` command should be updated to partition capabilities by these new endpoints.
     - **Conclusion**: This moves Ductile from a passive event bus toward an active orchestration gateway. Suggested move to `doing`.
 - 2026-02-15: Added an implementation critique to clarify why #102 remains backlog and to highlight required decisions before coding (endpoint model selection, API-layer responsibility, and precise acceptance criteria). (by @codex)
+- 2026-02-15: **Testing session validation** (by @claude):
+    - Confirmed real-world UX issue: User called `/trigger/jina-reader/handle` expecting scrape-only operation, but `url-to-fabric` pipeline executed (scrape → fabric summarize).
+    - Current API handler (`internal/api/handlers.go:96-113`) always checks `router.GetPipelineByTrigger()` before job enqueue, making direct plugin execution impossible.
+    - **Implementation path confirmed**: Option A (`/plugin/...` and `/pipeline/...`) requires new API handlers that bypass router for `/plugin/*` but invoke router for `/pipeline/*`.
+    - **Backward compatibility note**: Existing `/trigger` endpoint behavior preserved means pipelines using `on: {plugin}.{command}` continue working, but documentation should migrate to domain events.
+    - **Skill manifest impact**: `ductile skill` output should list both atomic plugin skills (via `/plugin`) and orchestrated pipeline skills (via `/pipeline`) separately for clarity.
+    - **Move to doing supported**: This addresses a fundamental usability gap discovered through live testing.
