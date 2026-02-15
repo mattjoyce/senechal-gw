@@ -109,7 +109,32 @@ if __name__ == "__main__":
 
 ---
 
-## 5. Security & Isolation
+## 5. The Manifest (`manifest.yaml`)
+
+Every plugin must have a `manifest.yaml` in its directory.
+
+```yaml
+name: echo
+version: 0.1.0
+protocol: 2
+entrypoint: run.sh
+description: "A demonstration plugin that echoes input." # Used by LLM operators
+commands:
+  - name: poll
+    type: write
+    description: "Emits echo.poll events." # Critical for TUI/LLM clarity
+  - name: health
+    type: read
+    description: "Returns plugin version."
+```
+
+### Manifest Fields
+- `description`: A human-readable (and LLM-readable) summary of what the plugin or command does.
+- `type`: `read` (no side effects) or `write` (mutates state or external systems). This determines the token scope required to invoke it.
+
+---
+
+## 6. Security & Isolation
 
 -   **Allowed Paths:** Plugins should only read/write within their provided `workspace_dir` or explicitly configured paths.
 -   **Execution:** Plugins run as the same OS user as the gateway. Use filesystem permissions to limit their scope.

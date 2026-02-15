@@ -222,6 +222,7 @@ System Commands:
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
   config check      Validate syntax, policy, and integrity
+  config token create Interactively create a scoped API token
   config token      Manage scoped tokens
   config scope      Manage token scopes
   config plugin     Manage plugin configuration
@@ -943,6 +944,41 @@ func runStart(args []string) int {
 
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
+
+	// Strict mode enforcement
+	if cfg.Service.StrictMode {
+		logger.Info("strict mode enabled, performing pre-flight checks")
+
+		// 1. Check integrity (checksums)
+		files, err := config.DiscoverConfigFiles(*configPath)
+		if err == nil {
+			result, err := config.VerifyIntegrity(*configPath, files)
+			if err != nil || !result.Passed {
+				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
+				return 1
+			}
+		}
+
+		// 2. Perform "doctor" validation
+		// We need registry for full validation, discover it temporarily
+		tempRegistry, _ := plugin.Discover(cfg.PluginsDir, nil)
+		doc := doctor.New(cfg, tempRegistry)
+		report := doc.Validate()
+		if !report.Valid {
+			logger.Error("configuration validation failed (strict mode)")
+			for _, e := range report.Errors {
+				logger.Error("config error", "detail", e)
+			}
+			return 1
+		}
+
+		// 3. Ensure tokens are present if API is enabled
+		if cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
+			logger.Error("no API tokens configured (strict mode requires at least one token when API is enabled)")
+			return 1
+		}
+	}
+
 	logger.Info("ductile starting", "version", version, "config", *configPath)
 
 	pidLockPath := getPIDLockPath(cfg)

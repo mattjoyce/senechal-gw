@@ -31,6 +31,7 @@ type ServiceConfig struct {
 	LogFormat       string        `yaml:"log_format"`
 	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
 	JobLogRetention time.Duration `yaml:"job_log_retention"`
+	StrictMode      bool          `yaml:"strict_mode"`
 }
 
 // StateConfig defines state storage settings.
