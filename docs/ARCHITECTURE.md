@@ -952,7 +952,7 @@ Ductile uses a **Monolithic Runtime** compiled from a modular, **Tiered Director
 ### 13.1 Overview
 
 For the complete configuration specification, including file formats, merge logic, and integrity verification rules, see:  
-👉 **[docs/CONFIG_SPEC.md](docs/CONFIG_SPEC.md)**
+👉 **[docs/CONFIG_REFERENCE.md](CONFIG_REFERENCE.md)**
 
 ### 13.2 Key Principles
 

@@ -3,6 +3,7 @@ package queue
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -75,6 +76,20 @@ type PollResult struct {
 }
 
 var ErrJobNotFound = errors.New("job not found")
+var ErrDedupeDrop = errors.New("job dedupe drop")
+
+type DedupeDropError struct {
+	DedupeKey     string
+	ExistingJobID string
+}
+
+func (e *DedupeDropError) Error() string {
+	return fmt.Sprintf("job deduplicated for key %q (existing job %s)", e.DedupeKey, e.ExistingJobID)
+}
+
+func (e *DedupeDropError) Is(target error) bool {
+	return target == ErrDedupeDrop
+}
 
 // JobResult is a lightweight projection for API job retrieval.
 type JobResult struct {

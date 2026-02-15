@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -189,6 +190,16 @@ func (s *Scheduler) enqueuePollJob(ctx context.Context, pluginName string, plugi
 
 	jobID, err := s.queue.Enqueue(ctx, req)
 	if err != nil {
+		var dedupeErr *queue.DedupeDropError
+		if errors.As(err, &dedupeErr) {
+			s.logger.Info(
+				"Skipped poll enqueue due to dedupe hit",
+				"plugin", pluginName,
+				"dedupe_key", dedupeErr.DedupeKey,
+				"existing_job_id", dedupeErr.ExistingJobID,
+			)
+			return nil
+		}
 		// If the error is due to deduplication, we can log it at debug level instead of error.
 		// For now, treating all enqueue errors as significant.
 		return fmt.Errorf("enqueue poll job for %s: %w", pluginName, err)
