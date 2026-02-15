@@ -186,6 +186,57 @@ func TestGetJobByIDNotFound(t *testing.T) {
 	}
 }
 
+func TestQueueDequeueRespectsNextRetryAtStrictly(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	future := time.Now().UTC().Add(2 * time.Minute)
+	if err := q.UpdateJobForRecovery(context.Background(), id, StatusQueued, 2, &future, "temporary"); err != nil {
+		t.Fatalf("UpdateJobForRecovery future: %v", err)
+	}
+
+	job, err := q.Dequeue(context.Background())
+	if err != nil {
+		t.Fatalf("dequeue before next_retry_at: %v", err)
+	}
+	if job != nil {
+		t.Fatalf("expected no dequeued job before next_retry_at, got %+v", job)
+	}
+
+	past := time.Now().UTC().Add(-2 * time.Minute)
+	if err := q.UpdateJobForRecovery(context.Background(), id, StatusQueued, 2, &past, "temporary"); err != nil {
+		t.Fatalf("UpdateJobForRecovery past: %v", err)
+	}
+
+	job, err = q.Dequeue(context.Background())
+	if err != nil {
+		t.Fatalf("dequeue after next_retry_at: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job dequeue after next_retry_at passed")
+	}
+	if job.ID != id {
+		t.Fatalf("dequeued job id = %s, want %s", job.ID, id)
+	}
+}
+
 func TestQueueEnqueueDedupeMissBeforeSuccess(t *testing.T) {
 	t.Parallel()
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/dispatch"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/log"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
@@ -123,7 +124,8 @@ except Exception as e:
 		cfg.Plugins[p] = config.PluginConf{Enabled: true}
 	}
 
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
+	hub := events.NewHub(128)
+	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 
 	// 5. Execution Loop
 	// Step A: Manually enqueue the root job

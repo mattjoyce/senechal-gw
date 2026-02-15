@@ -171,7 +171,8 @@ func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
 WITH next AS (
   SELECT id
   FROM job_queue
-  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)
+  WHERE status = ?
+    AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)
   ORDER BY created_at ASC, rowid ASC
   LIMIT 1
 )

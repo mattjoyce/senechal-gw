@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/log"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -48,11 +49,12 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 	}
 
 	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
 
 	cfg := config.Defaults()
 	cfg.PluginsDir = pluginsDir
 
-	disp := New(q, st, contextStore, nil, nil, registry, cfg)
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
 
 	cleanup := func() {
 		db.Close()
@@ -198,6 +200,7 @@ echo '{"status": "error", "error": "something went wrong"}'
 	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
 		Plugin:      "failing",
 		Command:     "poll",
+		MaxAttempts: 1,
 		SubmittedBy: "test",
 	})
 	if err != nil {
@@ -252,6 +255,7 @@ exec sleep 10
 	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
 		Plugin:      "sleeper",
 		Command:     "poll",
+		MaxAttempts: 1,
 		SubmittedBy: "test",
 	})
 	if err != nil {
@@ -308,6 +312,7 @@ echo 'not valid json'
 	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
 		Plugin:      "broken",
 		Command:     "poll",
+		MaxAttempts: 1,
 		SubmittedBy: "test",
 	})
 	if err != nil {
@@ -330,6 +335,191 @@ echo 'not valid json'
 
 	if status != "failed" {
 		t.Errorf("expected status=failed, got %s", status)
+	}
+}
+
+func TestCalculateBackoffDelay(t *testing.T) {
+	base := 2 * time.Second
+
+	delay1 := calculateBackoffDelay(base, 1, 0)
+	if delay1 != 2*time.Second {
+		t.Fatalf("attempt 1 delay = %v, want %v", delay1, 2*time.Second)
+	}
+
+	delay2 := calculateBackoffDelay(base, 2, 500*time.Millisecond)
+	if delay2 != 4500*time.Millisecond {
+		t.Fatalf("attempt 2 delay = %v, want %v", delay2, 4500*time.Millisecond)
+	}
+
+	delay3 := calculateBackoffDelay(base, 3, 0)
+	if delay3 != 8*time.Second {
+		t.Fatalf("attempt 3 delay = %v, want %v", delay3, 8*time.Second)
+	}
+}
+
+func TestDispatcher_ExecuteJob_RetryScheduledOnPluginError(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status":"error","error":"transient failure"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "retrying", script)
+	disp.registry.Add(plug)
+	disp.cfg.Plugins["retrying"] = config.PluginConf{
+		Enabled: true,
+		Retry: &config.RetryConfig{
+			MaxAttempts: 3,
+			BackoffBase: 1 * time.Second,
+		},
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "retrying",
+		Command:     "poll",
+		SubmittedBy: "test",
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	disp.executeJob(ctx, job)
+
+	var (
+		status      string
+		attempt     int
+		nextRetryAt sql.NullString
+	)
+	if err := db.QueryRow(`SELECT status, attempt, next_retry_at FROM job_queue WHERE id = ?`, jobID).Scan(&status, &attempt, &nextRetryAt); err != nil {
+		t.Fatalf("query retry state: %v", err)
+	}
+	if status != string(queue.StatusQueued) {
+		t.Fatalf("status = %s, want queued", status)
+	}
+	if attempt != 2 {
+		t.Fatalf("attempt = %d, want 2", attempt)
+	}
+	if !nextRetryAt.Valid || nextRetryAt.String == "" {
+		t.Fatalf("next_retry_at should be set")
+	}
+
+	retryEvents := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_scheduled")
+	if len(retryEvents) == 0 {
+		t.Fatalf("expected job.retry_scheduled event")
+	}
+}
+
+func TestDispatcher_ExecuteJob_NonRetryableResponse(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status":"error","error":"bad request","retry":false}'
+`
+	plug := createTestPlugin(t, pluginsDir, "noretry", script)
+	disp.registry.Add(plug)
+	disp.cfg.Plugins["noretry"] = config.PluginConf{
+		Enabled: true,
+		Retry: &config.RetryConfig{
+			MaxAttempts: 3,
+			BackoffBase: 1 * time.Second,
+		},
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "noretry",
+		Command:     "poll",
+		SubmittedBy: "test",
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	disp.executeJob(ctx, job)
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM job_queue WHERE id = ?`, jobID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != string(queue.StatusFailed) {
+		t.Fatalf("status = %s, want failed", status)
+	}
+	retryScheduled := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_scheduled")
+	if len(retryScheduled) != 0 {
+		t.Fatalf("expected no retry_scheduled events, got %d", len(retryScheduled))
+	}
+	retryExhausted := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_exhausted")
+	if len(retryExhausted) == 0 {
+		t.Fatalf("expected retry_exhausted event for non-retryable failure")
+	}
+}
+
+func TestDispatcher_ExecuteJob_NonRetryableExitCode78(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status":"error","error":"config invalid"}'
+exit 78
+`
+	plug := createTestPlugin(t, pluginsDir, "exit78", script)
+	disp.registry.Add(plug)
+	disp.cfg.Plugins["exit78"] = config.PluginConf{
+		Enabled: true,
+		Retry: &config.RetryConfig{
+			MaxAttempts: 3,
+			BackoffBase: 1 * time.Second,
+		},
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "exit78",
+		Command:     "poll",
+		SubmittedBy: "test",
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	disp.executeJob(ctx, job)
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM job_queue WHERE id = ?`, jobID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != string(queue.StatusFailed) {
+		t.Fatalf("status = %s, want failed", status)
+	}
+	retryScheduled := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_scheduled")
+	if len(retryScheduled) != 0 {
+		t.Fatalf("expected no retry_scheduled events, got %d", len(retryScheduled))
 	}
 }
 
@@ -563,7 +753,8 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 		},
 	}
 
-	disp := New(q, st, contextStore, wsManager, routerEngine, registry, cfg)
+	hub := events.NewHub(128)
+	disp := New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 	ctx := context.Background()
 
 	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
@@ -650,4 +841,14 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 	if childStatus != string(queue.StatusSucceeded) {
 		t.Fatalf("child status = %s, want %s", childStatus, queue.StatusSucceeded)
 	}
+}
+
+func filterEventsByType(eventsIn []events.Event, typ string) []events.Event {
+	out := make([]events.Event, 0, len(eventsIn))
+	for _, ev := range eventsIn {
+		if ev.Type == typ {
+			out = append(out, ev)
+		}
+	}
+	return out
 }

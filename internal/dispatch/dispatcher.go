@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/rand"
 	"os/exec"
 	"strings"
 	"sync"
@@ -31,6 +33,8 @@ const (
 
 	// terminationGracePeriod is the time we wait after SIGTERM before sending SIGKILL.
 	terminationGracePeriod = 5 * time.Second
+
+	nonRetryableExitCode = 78
 )
 
 // Dispatcher dequeues jobs and executes them by spawning plugin subprocesses.
@@ -231,21 +235,26 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Spawn plugin and execute
-	resp, rawResp, stderr, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
+	resp, rawResp, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			errMsg := fmt.Sprintf("plugin execution timed out after %v", timeout)
 			jobLogger.Warn(errMsg)
-			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusTimedOut, nil, &errMsg, &stderr)
+			d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusTimedOut, nil, &errMsg, &stderr, "timeout", true)
 			return
 		}
 
 		// Handle other spawn errors
 		errMsg := fmt.Sprintf("plugin spawn failed: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+		retryable := exitCode != nonRetryableExitCode
+		reason := "spawn_error"
+		if exitCode == nonRetryableExitCode {
+			reason = "exit_code_78"
+		}
+		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, reason, retryable)
 		return
 	}
 
@@ -253,7 +262,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp == nil {
 		errMsg := "plugin returned nil response"
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, "nil_response", true)
 		return
 	}
 
@@ -266,8 +275,15 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp.Status == "error" {
 		jobLogger.Warn("plugin returned error", "error", resp.Error)
 		errMsg := resp.Error
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
-		// TODO: Handle retry logic based on resp.ShouldRetry() - not in MVP
+		retryable := resp.ShouldRetry() && exitCode != nonRetryableExitCode
+		reason := "plugin_error"
+		if !resp.ShouldRetry() {
+			reason = "plugin_retry_false"
+		}
+		if exitCode == nonRetryableExitCode {
+			reason = "exit_code_78"
+		}
+		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, reason, retryable)
 		return
 	}
 
@@ -313,7 +329,7 @@ func (d *Dispatcher) spawnPlugin(
 	req *protocol.Request,
 	timeout time.Duration,
 	logger *slog.Logger,
-) (*protocol.Response, json.RawMessage, string, error) {
+) (*protocol.Response, json.RawMessage, string, int, error) {
 	// Create timer for timeout enforcement
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
@@ -324,7 +340,7 @@ func (d *Dispatcher) spawnPlugin(
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("create stdin pipe: %w", err)
+		return nil, nil, "", 0, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
 	// Capture stdout and stderr
@@ -336,7 +352,7 @@ func (d *Dispatcher) spawnPlugin(
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		return nil, nil, "", fmt.Errorf("start process: %w", err)
+		return nil, nil, "", 0, fmt.Errorf("start process: %w", err)
 	}
 
 	d.events.Publish("plugin.spawned", map[string]any{
@@ -394,23 +410,25 @@ func (d *Dispatcher) spawnPlugin(
 		}
 
 		stderrStr := truncateStderr(stderr.String())
-		return nil, nil, stderrStr, context.DeadlineExceeded
+		return nil, nil, stderrStr, 0, context.DeadlineExceeded
 
 	case err := <-waitErr:
 		// Process completed
 		if werr := <-writeErr; werr != nil {
 			stderrStr := truncateStderr(stderr.String())
-			return nil, nil, stderrStr, werr
+			return nil, nil, stderrStr, 0, werr
 		}
 
 		stderrStr := truncateStderr(stderr.String())
+		exitCode := 0
 
 		// Check exit code
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
-				logger.Warn("plugin exited with non-zero status", "exit_code", exitErr.ExitCode())
+				exitCode = exitErr.ExitCode()
+				logger.Warn("plugin exited with non-zero status", "exit_code", exitCode)
 			} else {
-				return nil, nil, stderrStr, fmt.Errorf("wait for process: %w", err)
+				return nil, nil, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
 			}
 		}
 
@@ -418,11 +436,117 @@ func (d *Dispatcher) spawnPlugin(
 		resp, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdout.Bytes()))
 		if err != nil {
 			logger.Error("failed to decode plugin response", "error", err, "stdout", string(rawBytes))
-			return nil, json.RawMessage(rawBytes), stderrStr, fmt.Errorf("decode response: %w", err)
+			return nil, json.RawMessage(rawBytes), stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
 		}
 
-		return resp, json.RawMessage(rawBytes), stderrStr, nil
+		return resp, json.RawMessage(rawBytes), stderrStr, exitCode, nil
 	}
+}
+
+func (d *Dispatcher) failOrRetry(
+	ctx context.Context,
+	logger *slog.Logger,
+	job *queue.Job,
+	pluginCfg config.PluginConf,
+	status queue.Status,
+	result json.RawMessage,
+	lastError,
+	stderr *string,
+	reason string,
+	retryable bool,
+) {
+	if retryable && job.Attempt < job.MaxAttempts {
+		backoff := d.computeRetryDelay(pluginCfg.Retry, job.Attempt)
+		nextRetryAt := time.Now().UTC().Add(backoff)
+		nextAttempt := job.Attempt + 1
+
+		if err := d.queue.UpdateJobForRecovery(ctx, job.ID, queue.StatusQueued, nextAttempt, &nextRetryAt, deref(lastError)); err != nil {
+			logger.Error("failed to schedule retry; marking job terminal", "error", err)
+			d.completeJob(ctx, logger, job.ID, job.StartedAt, status, result, lastError, stderr)
+			return
+		}
+
+		logger.Warn(
+			"retry scheduled",
+			"job_id", job.ID,
+			"attempt", job.Attempt,
+			"max_attempts", job.MaxAttempts,
+			"backoff_ms", backoff.Milliseconds(),
+			"next_retry_at", nextRetryAt.Format(time.RFC3339Nano),
+			"reason", reason,
+		)
+
+		d.events.Publish("job.retry_scheduled", map[string]any{
+			"job_id":       job.ID,
+			"attempt":      job.Attempt,
+			"max_attempts": job.MaxAttempts,
+			"retry_count":  job.Attempt,
+			"max_retries":  job.MaxAttempts,
+			"backoff_ms":   backoff.Milliseconds(),
+			"backoff_schedule": []int64{
+				backoff.Milliseconds(),
+			},
+			"next_retry_at": nextRetryAt.Format(time.RFC3339Nano),
+			"reason":        reason,
+		})
+		return
+	}
+
+	if retryable {
+		d.events.Publish("job.retry_exhausted", map[string]any{
+			"job_id":      job.ID,
+			"attempts":    job.Attempt,
+			"final_error": deref(lastError),
+		})
+	} else {
+		d.events.Publish("job.retry_exhausted", map[string]any{
+			"job_id":      job.ID,
+			"attempts":    job.Attempt,
+			"final_error": deref(lastError),
+			"reason":      reason,
+		})
+	}
+
+	d.completeJob(ctx, logger, job.ID, job.StartedAt, status, result, lastError, stderr)
+}
+
+func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int) time.Duration {
+	base := config.DefaultPluginConf().Retry.BackoffBase
+	if retryCfg != nil && retryCfg.BackoffBase > 0 {
+		base = retryCfg.BackoffBase
+	}
+
+	jitter := time.Duration(0)
+	maxJitter := base / 4
+	if maxJitter > 0 {
+		jitter = time.Duration(rand.Int63n(int64(maxJitter) + 1))
+	}
+
+	return calculateBackoffDelay(base, attempt, jitter)
+}
+
+func calculateBackoffDelay(base time.Duration, attempt int, jitter time.Duration) time.Duration {
+	if base <= 0 {
+		base = 30 * time.Second
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+
+	factor := int64(math.Pow(2, float64(attempt-1)))
+	if factor < 1 {
+		factor = 1
+	}
+
+	delay := time.Duration(factor) * base
+	if delay < 0 {
+		delay = base
+	}
+	delay += jitter
+	if delay < 0 {
+		delay = base
+	}
+	return delay
 }
 
 func (d *Dispatcher) ensureWorkspaceForJob(ctx context.Context, job *queue.Job) (string, error) {
