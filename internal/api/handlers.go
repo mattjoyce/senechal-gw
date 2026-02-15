@@ -62,9 +62,14 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Prepare event for pipeline entry using the actual pipeline trigger type
+	eventType := strings.TrimSpace(pipeline.Trigger)
+	if eventType == "" {
+		eventType = "api.pipeline.trigger"
+	}
+
+	// Prepare event for pipeline entry.
 	event := protocol.Event{
-		Type:    pipeline.Trigger,
+		Type:    eventType,
 		Payload: make(map[string]any),
 	}
 	if len(req.Payload) > 0 {
@@ -86,23 +91,27 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
-	var firstJobID string
-	var enqueuedIDs []string
+	forceAsync := r.URL.Query().Get("async") == "true"
+	if pipeline.ExecutionMode == "synchronous" && !forceAsync && len(dispatches) != 1 {
+		s.writeError(w, http.StatusBadRequest, "synchronous pipeline trigger requires exactly one entry dispatch; use ?async=true for fan-out entry pipelines")
+		return
+	}
 
-	// Enqueue each entry point
-	for _, d := range dispatches {
-		// Create a unique event context for each entry step to preserve lineage/step identity
+	jobIDs := make([]string, 0, len(dispatches))
+	for i, d := range dispatches {
 		var eventContextID *string
 		if s.contextStore != nil {
-			// Each entry step might be different in a split-root pipeline
-			ctxRec, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, d.StepID, json.RawMessage(`{}`))
+			stepID := d.StepID
+			if stepID == "" {
+				stepID = pipeline.EntryStepID
+			}
+			root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, stepID, json.RawMessage(`{}`))
 			if err != nil {
-				s.logger.Error("failed to create event context for pipeline step", "pipeline", pipeline.Name, "step_id", d.StepID, "error", err)
+				s.logger.Error("failed to create event context for pipeline entry", "pipeline", pipeline.Name, "step_id", stepID, "error", err)
 				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
-				// Atomicity: would be better to "undo" previous enqueues, but for now we hard-fail
 				return
 			}
-			eventContextID = &ctxRec.ID
+			eventContextID = &root.ID
 		}
 
 		// Wrap payload for handle command
@@ -120,26 +129,33 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.logger.Error("failed to enqueue pipeline job", "pipeline", pipelineName, "plugin", d.Plugin, "error", err)
-			s.writeError(w, http.StatusInternalServerError, "failed to enqueue job (partial start prevented)")
+			if i == 0 {
+				s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
+			} else {
+				s.writeError(w, http.StatusInternalServerError, "pipeline partially enqueued; check prior job status and retry")
+			}
 			return
 		}
-		if firstJobID == "" {
-			firstJobID = jobID
-		}
-		enqueuedIDs = append(enqueuedIDs, jobID)
+		jobIDs = append(jobIDs, jobID)
 	}
+
+	if len(jobIDs) == 0 {
+		s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
+		return
+	}
+	firstJobID := jobIDs[0]
 
 	s.events.Publish("pipeline.enqueued", map[string]any{
 		"at":           time.Now().UTC().Format(time.RFC3339Nano),
 		"job_id":       firstJobID,
-		"job_ids":      enqueuedIDs,
+		"job_ids":      append([]string(nil), jobIDs...),
+		"job_count":    len(jobIDs),
 		"pipeline":     pipelineName,
 		"submitted_by": "api",
 	})
 
 	s.logger.Info("pipeline enqueued via API", "job_id", firstJobID, "pipeline", pipelineName)
 
-	forceAsync := r.URL.Query().Get("async") == "true"
 	if pipeline.ExecutionMode == "synchronous" && !forceAsync {
 		select {
 		case s.syncSemaphore <- struct{}{}:
@@ -183,7 +199,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
 				finalStatus = string(res.Status)
 			}
-			
+
 			for _, termStepID := range pipeline.TerminalStepIDs {
 				if res.StepID == termStepID {
 					terminalResult = res.Result

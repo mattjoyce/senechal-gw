@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -95,6 +95,7 @@ func (m *mockRouter) GetEntryDispatches(pipelineName string, event protocol.Even
 			Plugin:  "echo",
 			Command: "handle",
 			Event:   event,
+			StepID:  "step-1",
 		},
 	}, nil
 }
@@ -838,53 +839,205 @@ func TestHandlePluginTrigger_DirectExecution(t *testing.T) {
 	}
 }
 
-func TestHandlePipelineTrigger_MultiEntry(t *testing.T) {
-	var capturedReqs []queue.EnqueueRequest
+func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
+	var capturedPayload json.RawMessage
 	q := &mockQueue{
 		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			capturedReqs = append(capturedReqs, req)
-			return fmt.Sprintf("job-%d", len(capturedReqs)), nil
+			capturedPayload = req.Payload
+			return "pipeline-root-job", nil
 		},
 	}
 
 	reg := &mockRegistry{}
 	rt := &mockRouter{
 		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
-			if name == "split-pipe" {
+			if name == "test-pipe" {
 				return &router.PipelineInfo{
-					Name:    "split-pipe",
-					Trigger: "custom.event",
+					Name:    "test-pipe",
+					Trigger: "file.read",
 				}
 			}
 			return nil
-		},
-		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
-			if event.Type != "custom.event" {
-				return nil, fmt.Errorf("wrong event type: %s", event.Type)
-			}
-			return []router.Dispatch{
-				{Plugin: "p1", Command: "handle", StepID: "step-a"},
-				{Plugin: "p2", Command: "handle", StepID: "step-b"},
-			}, nil
 		},
 	}
 
 	server := newTestServer(q, reg)
 	server.router = rt
 
-	req := httptest.NewRequest(http.MethodPost, "/pipeline/split-pipe", nil)
+	body := bytes.NewBufferString(`{"payload": {"input": "val"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", body)
 	req.Header.Set("Authorization", "Bearer test-key-123")
+	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d", rr.Code)
+		t.Fatalf("expected status 202, got %d", rr.Code)
 	}
 
-	if len(capturedReqs) != 2 {
-		t.Errorf("expected 2 jobs enqueued, got %d", len(capturedReqs))
+	var resp TriggerResponse
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp.JobID != "pipeline-root-job" {
+		t.Errorf("expected job_id pipeline-root-job, got %s", resp.JobID)
 	}
-	
-	// Verify event context created for both (mockWaiter/Store not fully used in this test but logic hit)
+
+	var event protocol.Event
+	if err := json.Unmarshal(capturedPayload, &event); err != nil {
+		t.Fatalf("expected handle payload to be protocol.Event: %v", err)
+	}
+	if event.Type != "file.read" {
+		t.Fatalf("expected explicit pipeline event type file.read, got %q", event.Type)
+	}
+	if got := event.Payload["input"]; got != "val" {
+		t.Fatalf("expected payload input=val, got %v", got)
+	}
+}
+
+func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
+	var captured []queue.EnqueueRequest
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			captured = append(captured, req)
+			return "job-" + req.Plugin, nil
+		},
+	}
+
+	var createdSteps []string
+	contextStore := &mockContextStore{
+		createFunc: func(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error) {
+			createdSteps = append(createdSteps, stepID)
+			return &state.EventContext{
+				ID:           "ctx-" + stepID,
+				PipelineName: pipelineName,
+				StepID:       stepID,
+			}, nil
+		},
+	}
+
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			return &router.PipelineInfo{
+				Name:        "test-pipe",
+				Trigger:     "file.read",
+				EntryStepID: "fallback",
+			}
+		},
+		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+			return []router.Dispatch{
+				{Plugin: "echo", Command: "handle", Event: event, StepID: "step-a"},
+				{Plugin: "fabric", Command: "handle", Event: event, StepID: "step-b"},
+			}, nil
+		},
+	}
+
+	server := New(
+		Config{Listen: "localhost:8080", APIKey: "test-key-123"},
+		q,
+		&mockRegistry{},
+		rt,
+		&mockWaiter{},
+		contextStore,
+		events.NewHub(10),
+		slog.Default(),
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", bytes.NewBufferString(`{"payload":{"x":1}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d", rr.Code)
+	}
+	if len(createdSteps) != 2 || createdSteps[0] != "step-a" || createdSteps[1] != "step-b" {
+		t.Fatalf("unexpected created steps: %v", createdSteps)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("expected 2 enqueue requests, got %d", len(captured))
+	}
+	if captured[0].EventContextID == nil || *captured[0].EventContextID != "ctx-step-a" {
+		t.Fatalf("first dispatch EventContextID mismatch: %+v", captured[0].EventContextID)
+	}
+	if captured[1].EventContextID == nil || *captured[1].EventContextID != "ctx-step-b" {
+		t.Fatalf("second dispatch EventContextID mismatch: %+v", captured[1].EventContextID)
+	}
+}
+
+func TestHandlePipelineTrigger_SyncFanoutRequiresAsync(t *testing.T) {
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			t.Fatal("enqueue should not be called for synchronous fan-out without async override")
+			return "", nil
+		},
+	}
+
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			return &router.PipelineInfo{
+				Name:          "test-pipe",
+				Trigger:       "file.read",
+				ExecutionMode: "synchronous",
+			}
+		},
+		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+			return []router.Dispatch{
+				{Plugin: "echo", Command: "handle", Event: event, StepID: "step-a"},
+				{Plugin: "fabric", Command: "handle", Event: event, StepID: "step-b"},
+			}, nil
+		},
+	}
+
+	server := newTestServer(q, &mockRegistry{})
+	server.router = rt
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rr.Code)
+	}
+}
+
+func TestHandlePipelineTrigger_PartialEnqueueReturnsError(t *testing.T) {
+	var calls int
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			calls++
+			if calls == 1 {
+				return "first-job", nil
+			}
+			return "", errors.New("db unavailable")
+		},
+	}
+
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			return &router.PipelineInfo{Name: "test-pipe", Trigger: "file.read"}
+		},
+		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+			return []router.Dispatch{
+				{Plugin: "echo", Command: "handle", Event: event, StepID: "step-a"},
+				{Plugin: "fabric", Command: "handle", Event: event, StepID: "step-b"},
+			}, nil
+		},
+	}
+
+	server := newTestServer(q, &mockRegistry{})
+	server.router = rt
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "partially enqueued") {
+		t.Fatalf("expected partial enqueue error, got: %s", rr.Body.String())
+	}
 }
