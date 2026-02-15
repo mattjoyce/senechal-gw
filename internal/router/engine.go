@@ -233,11 +233,12 @@ func (r *Router) GetPipelineByTrigger(trigger string) *PipelineInfo {
 	}
 
 	return &PipelineInfo{
-		Name:          pipeline.Name,
-		Trigger:       pipeline.Trigger,
-		EntryStepID:   firstEntryStepID(pipeline.EntryNodeIDs),
-		ExecutionMode: pipeline.ExecutionMode,
-		Timeout:       pipeline.Timeout,
+		Name:            pipeline.Name,
+		Trigger:         pipeline.Trigger,
+		EntryStepID:     firstEntryStepID(pipeline.EntryNodeIDs),
+		TerminalStepIDs: append([]string(nil), pipeline.TerminalNodeIDs...),
+		ExecutionMode:   pipeline.ExecutionMode,
+		Timeout:         pipeline.Timeout,
 	}
 }
 
@@ -246,11 +247,12 @@ func (r *Router) PipelineSummary() []PipelineInfo {
 	var out []PipelineInfo
 	for name, pipeline := range r.set.Pipelines {
 		out = append(out, PipelineInfo{
-			Name:          name,
-			Trigger:       pipeline.Trigger,
-			EntryStepID:   firstEntryStepID(pipeline.EntryNodeIDs),
-			ExecutionMode: pipeline.ExecutionMode,
-			Timeout:       pipeline.Timeout,
+			Name:            name,
+			Trigger:         pipeline.Trigger,
+			EntryStepID:     firstEntryStepID(pipeline.EntryNodeIDs),
+			TerminalStepIDs: append([]string(nil), pipeline.TerminalNodeIDs...),
+			ExecutionMode:   pipeline.ExecutionMode,
+			Timeout:         pipeline.Timeout,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

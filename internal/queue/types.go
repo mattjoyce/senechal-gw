@@ -97,6 +97,7 @@ type JobResult struct {
 	Status      Status
 	Plugin      string
 	Command     string
+	StepID      string          // From event_context.step_id via event_context_id
 	Result      json.RawMessage
 	LastError   *string
 	StartedAt   *time.Time
