@@ -612,7 +612,7 @@ WHERE id = ?;
 	}
 
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO job_log(
+INSERT OR IGNORE INTO job_log(
   id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
 )
 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

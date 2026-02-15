@@ -414,10 +414,7 @@ func (d *Dispatcher) spawnPlugin(
 
 	case err := <-waitErr:
 		// Process completed
-		if werr := <-writeErr; werr != nil {
-			stderrStr := truncateStderr(stderr.String())
-			return nil, nil, stderrStr, 0, werr
-		}
+		werr := <-writeErr
 
 		stderrStr := truncateStderr(stderr.String())
 		exitCode := 0
@@ -435,8 +432,19 @@ func (d *Dispatcher) spawnPlugin(
 		// Decode response from stdout
 		resp, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdout.Bytes()))
 		if err != nil {
+			// If we also had a stdin write error, include it for diagnostics
+			if werr != nil {
+				logger.Warn("stdin write failed (process may not read stdin)", "error", werr)
+			}
 			logger.Error("failed to decode plugin response", "error", err, "stdout", string(rawBytes))
 			return nil, json.RawMessage(rawBytes), stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
+		}
+
+		// Log stdin write errors as warnings — some plugins don't read stdin
+		// and may exit before the write completes, which is not a failure if
+		// the process produced a valid response.
+		if werr != nil {
+			logger.Debug("stdin write error (ignored, valid response received)", "error", werr)
 		}
 
 		return resp, json.RawMessage(rawBytes), stderrStr, exitCode, nil
