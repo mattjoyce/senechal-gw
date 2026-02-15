@@ -10,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
 
@@ -203,6 +205,18 @@ func TestRunSystemNounActionHelp(t *testing.T) {
 	}
 }
 
+func TestRunSystemNounResetActionHelp(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemNoun([]string{"reset", "--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: ductile system reset") {
+		t.Fatalf("stdout missing reset action help usage: %s", stdout)
+	}
+}
+
 func TestPrintUsageUsesActionTerminology(t *testing.T) {
 	_, stdout, _ := captureOutputWithExitCode(t, func() int {
 		printUsage()
@@ -296,6 +310,64 @@ plugins:
 	}
 	if reloaded.Plugins["echo"].Enabled {
 		t.Fatal("plugin:echo.enabled should remain false after failed apply")
+	}
+}
+
+func TestRunSystemResetResetsCircuitBreaker(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+state:
+  path: ` + dbPath + `
+plugins:
+  echo:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := queue.New(db)
+	openedAt := time.Now().UTC().Add(-5 * time.Minute)
+	if err := q.UpsertCircuitBreaker(context.Background(), queue.CircuitBreaker{
+		Plugin:       "echo",
+		Command:      "poll",
+		State:        queue.CircuitOpen,
+		FailureCount: 3,
+		OpenedAt:     &openedAt,
+	}); err != nil {
+		t.Fatalf("UpsertCircuitBreaker: %v", err)
+	}
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemReset([]string{"--config", configPath, "echo"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemReset() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Reset circuit breaker for echo (poll)") {
+		t.Fatalf("stdout missing reset confirmation: %s", stdout)
+	}
+
+	got, err := q.GetCircuitBreaker(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("GetCircuitBreaker: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected circuit breaker row after reset")
+	}
+	if got.State != queue.CircuitClosed {
+		t.Fatalf("state=%q want %q", got.State, queue.CircuitClosed)
+	}
+	if got.FailureCount != 0 {
+		t.Fatalf("failure_count=%d want 0", got.FailureCount)
 	}
 }
 

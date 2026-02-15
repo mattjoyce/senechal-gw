@@ -1,6 +1,6 @@
 ---
 id: 97
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 assignee: "@gemini"
@@ -12,14 +12,14 @@ tags: [sprint-4, reliability, circuit-breaker, poll-guard, scheduler]
 Protect external systems and infrastructure by failing fast when plugins are unhealthy or overloaded.
 
 ## Acceptance Criteria
-- [ ] Create `circuit_breakers` SQLite table to track failure counts and cooldowns.
-- [ ] Implement Circuit Breaker logic in `Scheduler`:
-    - [ ] Stop enqueuing `poll` jobs if `failure_count >= threshold`.
-    - [ ] Circuit resets after `reset_after` duration or manual reset via CLI.
-- [ ] Implement Poll Guard:
-    - [ ] Check for existing `queued` or `running` poll jobs before enqueuing.
-    - [ ] Respect `max_outstanding_polls` (default 1).
-- [ ] Unit tests for state transitions (Closed -> Open -> Half-Open/Closed).
+- [x] Create `circuit_breakers` SQLite table to track failure counts and cooldowns.
+- [x] Implement Circuit Breaker logic in `Scheduler`:
+    - [x] Stop enqueuing `poll` jobs if `failure_count >= threshold`.
+    - [x] Circuit resets after `reset_after` duration or manual reset via CLI.
+- [x] Implement Poll Guard:
+    - [x] Check for existing `queued` or `running` poll jobs before enqueuing.
+    - [x] Respect `max_outstanding_polls` (default 1).
+- [x] Unit tests for state transitions (Closed -> Open -> Half-Open/Closed).
 
 ## Observability Requirements
 
@@ -71,4 +71,6 @@ poll.throttled:
 
 ## Narrative
 - 2026-02-14: Created as a sub-task of epic #23. (by @gemini)
+- 2026-02-14: Started implementation on branch `card-97-circuit-breaker-poll-guard`; adding persistent circuit breaker state, scheduler poll guard enforcement, and CLI reset support. (by @codex)
+- 2026-02-14: Completed circuit breaker + poll guard reliability controls. Added persistent `circuit_breakers` table and queue APIs for state/get/reset, latest scheduler poll result reconciliation, and outstanding poll counting. Scheduler now gates poll enqueue on circuit state (`closed/open/half_open`) and `max_outstanding_polls`, and supports cooldown-based half-open probing. Added manual reset command `ductile system reset <plugin> [--config PATH]` (plus root alias `ductile reset`). Verified with `go test ./internal/storage ./internal/queue ./internal/scheduler ./cmd/ductile -count=1`. (by @codex)
 - 2026-02-15: Added observability requirements for TUI watch integration. (by @claude)

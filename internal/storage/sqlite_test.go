@@ -16,7 +16,7 @@ func TestOpenSQLiteBootstrapsTables(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	for _, table := range []string{"job_queue", "plugin_state", "event_context", "job_log"} {
+	for _, table := range []string{"job_queue", "plugin_state", "event_context", "job_log", "circuit_breakers"} {
 		var name string
 		if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", table).Scan(&name); err != nil {
 			t.Fatalf("table %q missing: %v", table, err)

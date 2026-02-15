@@ -78,6 +78,12 @@ func runCLI(cliArgs []string) int {
 	// --- ROOT ALIASES (Backward Compatibility) ---
 	case "start":
 		return runStart(args)
+	case "reset":
+		if hasHelpFlag(args) {
+			printSystemResetHelp()
+			return 0
+		}
+		return runSystemReset(args)
 	case "inspect":
 		return runInspect(args)
 	case "doctor": // Alias for backward compat with Claude's branch
@@ -209,6 +215,7 @@ Core Resources (Nouns):
 System Commands:
   system start      Start the gateway service in foreground
   system status     Show global gateway health
+  system reset      Reset a plugin poll circuit breaker
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
@@ -305,6 +312,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runMonitor(actionArgs)
+	case "reset":
+		if hasHelpFlag(actionArgs) {
+			printSystemResetHelp()
+			return 0
+		}
+		return runSystemReset(actionArgs)
 	case "help":
 		printSystemNounHelp(os.Stdout)
 		return 0
@@ -697,7 +710,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status, monitor")
+	fmt.Fprintln(w, "Actions: start, status, monitor, reset")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -734,6 +747,11 @@ func printSystemMonitorHelp() {
 	fmt.Println("Launch the real-time TUI dashboard.")
 }
 
+func printSystemResetHelp() {
+	fmt.Println("Usage: ductile system reset <plugin> [--config PATH]")
+	fmt.Println("Reset scheduler poll circuit breaker state for a plugin.")
+}
+
 func runMonitor(args []string) int {
 	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
 	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
@@ -754,6 +772,60 @@ func runMonitor(args []string) int {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+func runSystemReset(args []string) int {
+	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: ductile system reset <plugin> [--config PATH]")
+		return 1
+	}
+	pluginName := strings.TrimSpace(fs.Arg(0))
+	if pluginName == "" {
+		fmt.Fprintln(os.Stderr, "plugin name is required")
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+	if _, ok := cfg.Plugins[pluginName]; !ok {
+		fmt.Fprintf(os.Stderr, "Unknown plugin: %s\n", pluginName)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	if err := q.ResetCircuitBreaker(context.Background(), pluginName, "poll"); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to reset circuit breaker: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Reset circuit breaker for %s (poll)\n", pluginName)
 	return 0
 }
 

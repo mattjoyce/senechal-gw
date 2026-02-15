@@ -51,6 +51,79 @@ func (mr *MockQueueServiceMockRecorder) Enqueue(ctx, req interface{}) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enqueue", reflect.TypeOf((*MockQueueService)(nil).Enqueue), ctx, req)
 }
 
+// CountOutstandingPollJobs mocks base method.
+func (m *MockQueueService) CountOutstandingPollJobs(ctx context.Context, plugin string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountOutstandingPollJobs", ctx, plugin)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountOutstandingPollJobs indicates an expected call of CountOutstandingPollJobs.
+func (mr *MockQueueServiceMockRecorder) CountOutstandingPollJobs(ctx, plugin interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOutstandingPollJobs", reflect.TypeOf((*MockQueueService)(nil).CountOutstandingPollJobs), ctx, plugin)
+}
+
+// LatestCompletedPollResult mocks base method.
+func (m *MockQueueService) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*queue.PollResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LatestCompletedPollResult", ctx, plugin, submittedBy)
+	ret0, _ := ret[0].(*queue.PollResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LatestCompletedPollResult indicates an expected call of LatestCompletedPollResult.
+func (mr *MockQueueServiceMockRecorder) LatestCompletedPollResult(ctx, plugin, submittedBy interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LatestCompletedPollResult", reflect.TypeOf((*MockQueueService)(nil).LatestCompletedPollResult), ctx, plugin, submittedBy)
+}
+
+// GetCircuitBreaker mocks base method.
+func (m *MockQueueService) GetCircuitBreaker(ctx context.Context, plugin, command string) (*queue.CircuitBreaker, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCircuitBreaker", ctx, plugin, command)
+	ret0, _ := ret[0].(*queue.CircuitBreaker)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCircuitBreaker indicates an expected call of GetCircuitBreaker.
+func (mr *MockQueueServiceMockRecorder) GetCircuitBreaker(ctx, plugin, command interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCircuitBreaker", reflect.TypeOf((*MockQueueService)(nil).GetCircuitBreaker), ctx, plugin, command)
+}
+
+// UpsertCircuitBreaker mocks base method.
+func (m *MockQueueService) UpsertCircuitBreaker(ctx context.Context, cb queue.CircuitBreaker) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpsertCircuitBreaker", ctx, cb)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpsertCircuitBreaker indicates an expected call of UpsertCircuitBreaker.
+func (mr *MockQueueServiceMockRecorder) UpsertCircuitBreaker(ctx, cb interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpsertCircuitBreaker", reflect.TypeOf((*MockQueueService)(nil).UpsertCircuitBreaker), ctx, cb)
+}
+
+// ResetCircuitBreaker mocks base method.
+func (m *MockQueueService) ResetCircuitBreaker(ctx context.Context, plugin, command string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetCircuitBreaker", ctx, plugin, command)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetCircuitBreaker indicates an expected call of ResetCircuitBreaker.
+func (mr *MockQueueServiceMockRecorder) ResetCircuitBreaker(ctx, plugin, command interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetCircuitBreaker", reflect.TypeOf((*MockQueueService)(nil).ResetCircuitBreaker), ctx, plugin, command)
+}
+
 // FindJobsByStatus mocks base method.
 func (m *MockQueueService) FindJobsByStatus(ctx context.Context, status queue.Status) ([]*queue.Job, error) {
 	m.ctrl.T.Helper()
