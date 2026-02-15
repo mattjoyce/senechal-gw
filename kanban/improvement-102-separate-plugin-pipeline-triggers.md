@@ -121,12 +121,24 @@ Support all execution contexts:
 
 ## Notes
 
+This is a fundamental UX improvement. The current design treats everything as events, which is powerful but confusing. Users need explicit control over whether they're running a plugin or a pipeline.
+
+## Critique Notes (2026-02-15)
+
+- The card is still planning-only (`status: backlog`) and none of the acceptance criteria are implemented yet.
+- Current API behavior remains ambiguous: `/trigger/{plugin}/{command}` still resolves pipeline triggers, creates event context, and may execute a multi-step flow.
+- The card contains two competing options (A and B) without selecting one, which blocks clear implementation scope and test design.
+- The implementation step "Update router to distinguish plugin vs pipeline triggers" is likely misplaced; endpoint semantics should be handled in the API layer, while router remains event routing logic.
+- Acceptance criterion "Scheduler works with both endpoints" is not directly applicable because scheduler enqueues jobs internally, not through HTTP endpoints.
+- Deprecation needs explicit policy details (header name, migration guidance, and sunset timeline).
+
 ## Narrative
 
 - 2026-02-15: Created to address trigger ambiguity. (by @mattjoyce)
-- 2026-02-15: **Critique by @gemini**: 
+- 2026-02-15: **Critique by @gemini**:
     - Strong alignment with RFC-004 "Safety Boundary" goals.
     - **Recommendation**: Proceed with **Option A** (`/plugin/...` and `/pipeline/...`) as it is more idiomatic and prevents deep nesting.
-    - **Synchronous requirement**: The `/pipeline` endpoint MUST support the blocked `synchronous` execution mode to allow LLMs to await full workflow results.
+    - **Synchronous requirement**: The `/pipeline` endpoint MUST support blocked `synchronous` execution mode so LLM operators can await full workflow results.
     - **Discovery**: The `ductile skill` command should be updated to partition capabilities by these new endpoints.
-    - **Conclusion**: This moves Ductile from a "passive event bus" to an "active orchestration gateway." Moving to **Doing**.
+    - **Conclusion**: This moves Ductile from a passive event bus toward an active orchestration gateway. Suggested move to `doing`.
+- 2026-02-15: Added an implementation critique to clarify why #102 remains backlog and to highlight required decisions before coding (endpoint model selection, API-layer responsibility, and precise acceptance criteria). (by @codex)
