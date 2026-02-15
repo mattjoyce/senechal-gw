@@ -76,6 +76,8 @@ func runCLI(cliArgs []string) int {
 	case "trigger":
 		printTriggerHelp()
 		return 0
+	case "skill":
+		return runSystemSkills(args)
 
 	// --- ROOT ALIASES (Backward Compatibility) ---
 	case "start":
@@ -243,6 +245,9 @@ Plugin Commands:
 
 Manual Triggering:
   trigger           Show instructions for triggering plugins via API
+
+Capability Export:
+  skill             Export live capability registry as LLM-readable Markdown
 
 General:
   --version         Show version information
@@ -871,41 +876,80 @@ func runSystemSkills(args []string) int {
 		return 1
 	}
 
+	fmt.Println("# Ductile Gateway: LLM Operator Skill Manifest")
+	fmt.Println()
+	fmt.Println("This manifest describes the capabilities of the current Ductile instance.")
+	fmt.Println()
+
+	fmt.Println("## 1. Core CLI Skills")
+	fmt.Println("Use these via direct CLI execution. Prefer `--json` for structured data.")
+	fmt.Println()
+	fmt.Println("### config")
+	fmt.Println("- `config check`: Validate syntax, policy, and integrity.")
+	fmt.Println("- `config lock`: Authorize current state (re-generate hashes).")
+	fmt.Println("- `config show [entity]`: View resolved configuration.")
+	fmt.Println("- `config get <path>`: Read specific config values.")
+	fmt.Println("- `config set <path>=<val>`: Update config (use `--dry-run` first).")
+	fmt.Println()
+	fmt.Println("### system")
+	fmt.Println("- `system status`: Check gateway health and PID lock.")
+	fmt.Println("- `system reset <plugin>`: Reset a tripped circuit breaker.")
+	fmt.Println("- `system watch`: Real-time diagnostic TUI.")
+	fmt.Println()
+	fmt.Println("### job")
+	fmt.Println("- `job inspect <job_id>`: Retrieve logs and lineage for a job.")
+	fmt.Println()
+
+	// Plugins
 	plugins := registry.All()
-	var names []string
+	var pNames []string
 	for name := range plugins {
-		names = append(names, name)
+		pNames = append(pNames, name)
 	}
-	sort.Strings(names)
+	sort.Strings(pNames)
 
-	fmt.Println("## Plugin Skills (Auto-generated)")
-	fmt.Println()
-	fmt.Println("The following skills are available based on currently registered plugins. Use `trigger` via API to invoke them.")
+	fmt.Println("## 2. Atomic Plugin Skills")
+	fmt.Println("Invoke these via `POST /trigger/{plugin}/{command}`.")
 	fmt.Println()
 
-	for _, name := range names {
+	for _, name := range pNames {
 		p := plugins[name]
 		fmt.Printf("### %s\n", p.Name)
 		if p.Description != "" {
 			fmt.Printf("**Description:** %s\n\n", p.Description)
-		} else {
-			fmt.Println("**Description:** (No description provided)")
-			fmt.Println()
 		}
-
 		fmt.Println("**Actions:**")
 		for _, cmd := range p.Commands {
 			tier := "WRITE"
 			if cmd.Type == plugin.CommandTypeRead {
 				tier = "READ"
 			}
-			desc := cmd.Description
-			if desc == "" {
-				desc = "(No action description)"
-			}
-			fmt.Printf("- `%s`: [%s] %s\n", cmd.Name, tier, desc)
+			fmt.Printf("- `%s`: [%s] %s\n", cmd.Name, tier, cmd.Description)
 		}
 		fmt.Println()
+	}
+
+	// Pipelines
+	routerEngine, err := router.LoadFromConfigDir(*configPath, registry, log.WithComponent("skills-export"))
+	if err == nil {
+		if r, ok := routerEngine.(*router.Router); ok {
+			pipelines := r.PipelineSummary()
+			if len(pipelines) > 0 {
+				fmt.Println("## 3. Orchestrated Pipeline Skills")
+				fmt.Println("High-level workflows triggered by events or direct API calls.")
+				fmt.Println()
+				for _, p := range pipelines {
+					mode := "ASYNC"
+					if p.ExecutionMode == "synchronous" {
+						mode = "SYNC (Blocks for result)"
+					}
+					fmt.Printf("### %s\n", p.Name)
+					fmt.Printf("- **Trigger:** `%s`\n", p.Trigger)
+					fmt.Printf("- **Mode:** %s\n", mode)
+					fmt.Println()
+				}
+			}
+		}
 	}
 
 	return 0

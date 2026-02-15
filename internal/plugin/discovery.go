@@ -49,6 +49,9 @@ func (r *Registry) Add(plugin *Plugin) error {
 // Discover scans pluginsDir for plugins with manifest.yaml and validates them.
 // Returns a registry of valid plugins. Invalid plugins are logged but not fatal.
 func Discover(pluginsDir string, logger func(level, msg string, args ...interface{})) (*Registry, error) {
+	if logger == nil {
+		logger = func(level, msg string, args ...interface{}) {}
+	}
 	absPluginsDir, err := filepath.Abs(pluginsDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve plugins directory: %w", err)
