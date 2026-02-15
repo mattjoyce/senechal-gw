@@ -183,6 +183,23 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		var rootResult json.RawMessage
 		finalStatus := string(queue.StatusSucceeded)
 
+		// Find terminal step result (if pipeline has terminal steps)
+		var terminalResult json.RawMessage
+		if pipeline != nil && len(pipeline.TerminalStepIDs) > 0 {
+			// Look for a job matching one of the terminal step IDs
+			for _, res := range results {
+				for _, termStepID := range pipeline.TerminalStepIDs {
+					if res.StepID == termStepID {
+						terminalResult = res.Result
+						break
+					}
+				}
+				if terminalResult != nil {
+					break
+				}
+			}
+		}
+
 		for _, res := range results {
 			if res.JobID == jobID {
 				rootResult = res.Result
@@ -204,11 +221,17 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 
+		// Use terminal step result if found, otherwise fallback to root job result
+		finalResult := terminalResult
+		if finalResult == nil {
+			finalResult = rootResult
+		}
+
 		respondJSON(w, http.StatusOK, SyncResponse{
 			JobID:      jobID,
 			Status:     finalStatus,
 			DurationMs: duration.Milliseconds(),
-			Result:     rootResult,
+			Result:     finalResult,
 			Tree:       tree,
 		})
 		return

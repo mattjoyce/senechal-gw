@@ -631,18 +631,20 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 func (q *Queue) GetJobTree(ctx context.Context, rootJobID string) ([]*JobResult, error) {
 	rows, err := q.db.QueryContext(ctx, `
 WITH RECURSIVE job_tree AS (
-    SELECT id, status, plugin, command, last_error, started_at, completed_at, attempt
+    SELECT id, status, plugin, command, last_error, started_at, completed_at, attempt, event_context_id
     FROM job_queue WHERE id = ?
     UNION ALL
-    SELECT jq.id, jq.status, jq.plugin, jq.command, jq.last_error, jq.started_at, jq.completed_at, jq.attempt
+    SELECT jq.id, jq.status, jq.plugin, jq.command, jq.last_error, jq.started_at, jq.completed_at, jq.attempt, jq.event_context_id
     FROM job_queue jq
     JOIN job_tree jt ON jq.parent_job_id = jt.id
 )
 SELECT
   t.id, t.status, t.plugin, t.command, t.last_error, t.started_at, t.completed_at,
-  l.result
+  l.result,
+  COALESCE(ec.step_id, '') AS step_id
 FROM job_tree t
-LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt);
+LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt)
+LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 `, rootJobID)
 	if err != nil {
 		return nil, fmt.Errorf("get job tree: %w", err)
@@ -660,8 +662,9 @@ LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt);
 			startedAtS  sql.NullString
 			completedAt sql.NullString
 			resultS     sql.NullString
+			stepID      string
 		)
-		if err := rows.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS); err != nil {
+		if err := rows.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
 			return nil, fmt.Errorf("scan job tree row: %w", err)
 		}
 
@@ -694,6 +697,7 @@ LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt);
 			Status:      Status(statusS),
 			Plugin:      plugin,
 			Command:     command,
+			StepID:      stepID,
 			Result:      result,
 			LastError:   lastErr,
 			StartedAt:   startedAt,
@@ -712,9 +716,11 @@ func (q *Queue) GetJobByID(ctx context.Context, jobID string) (*JobResult, error
 	row := q.db.QueryRowContext(ctx, `
 SELECT
   q.id, q.status, q.plugin, q.command, q.last_error, q.started_at, q.completed_at,
-  l.result
+  l.result,
+  COALESCE(ec.step_id, '') AS step_id
 FROM job_queue q
 LEFT JOIN job_log l ON l.id = (q.id || '-' || q.attempt)
+LEFT JOIN event_context ec ON ec.id = q.event_context_id
 WHERE q.id = ?;
 `, jobID)
 
@@ -727,8 +733,9 @@ WHERE q.id = ?;
 		startedAtS  sql.NullString
 		completedAt sql.NullString
 		resultS     sql.NullString
+		stepID      string
 	)
-	if err := row.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS); err != nil {
+	if err := row.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrJobNotFound
 		}
@@ -764,6 +771,7 @@ WHERE q.id = ?;
 		Status:      Status(statusS),
 		Plugin:      plugin,
 		Command:     command,
+		StepID:      stepID,
 		Result:      result,
 		LastError:   lastErr,
 		StartedAt:   startedAt,

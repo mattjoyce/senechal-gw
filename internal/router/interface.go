@@ -9,11 +9,12 @@ import (
 
 // PipelineInfo describes a loaded pipeline's execution properties.
 type PipelineInfo struct {
-	Name          string
-	Trigger       string
-	EntryStepID   string
-	ExecutionMode string
-	Timeout       time.Duration
+	Name            string
+	Trigger         string
+	EntryStepID     string
+	TerminalStepIDs []string
+	ExecutionMode   string
+	Timeout         time.Duration
 }
 
 // Request captures the control-plane inputs needed to calculate fan-out in the

@@ -646,6 +646,20 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		}
 
 		for _, next := range nextDispatches {
+			// Auto-propagate designated context fields from input event to output event
+			// (if not already present in output). This eliminates manual propagation loops
+			// in plugins. Context fields: pattern, prompt, model, output_dir, output_path, filename.
+			if next.Event.Payload != nil && len(events) > 0 && events[i].Payload != nil {
+				contextFields := []string{"pattern", "prompt", "model", "output_dir", "output_path", "filename"}
+				for _, field := range contextFields {
+					if _, exists := next.Event.Payload[field]; !exists {
+						if val, ok := events[i].Payload[field]; ok {
+							next.Event.Payload[field] = val
+						}
+					}
+				}
+			}
+
 			payload, err := json.Marshal(next.Event)
 			if err != nil {
 				return fmt.Errorf("marshal routed event payload: %w", err)
