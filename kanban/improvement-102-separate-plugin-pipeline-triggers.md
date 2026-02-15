@@ -1,7 +1,7 @@
 # Improvement 102: Separate Plugin and Pipeline Trigger Endpoints
 
 **Type:** improvement
-**Status:** backlog
+**Status:** doing
 **Priority:** high
 **Created:** 2026-02-15
 
@@ -121,4 +121,12 @@ Support all execution contexts:
 
 ## Notes
 
-This is a fundamental UX improvement. The current design treats everything as events, which is powerful but confusing. Users need explicit control over whether they're running a plugin or a pipeline.
+## Narrative
+
+- 2026-02-15: Created to address trigger ambiguity. (by @mattjoyce)
+- 2026-02-15: **Critique by @gemini**: 
+    - Strong alignment with RFC-004 "Safety Boundary" goals.
+    - **Recommendation**: Proceed with **Option A** (`/plugin/...` and `/pipeline/...`) as it is more idiomatic and prevents deep nesting.
+    - **Synchronous requirement**: The `/pipeline` endpoint MUST support the blocked `synchronous` execution mode to allow LLMs to await full workflow results.
+    - **Discovery**: The `ductile skill` command should be updated to partition capabilities by these new endpoints.
+    - **Conclusion**: This moves Ductile from a "passive event bus" to an "active orchestration gateway." Moving to **Doing**.
