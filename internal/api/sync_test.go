@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
@@ -61,7 +62,8 @@ func TestHandleTrigger_SyncSuccess(t *testing.T) {
 		},
 	}
 
-	server := New(Config{APIKey: "test"}, q, reg, rt, wt, slog.Default())
+	hub := events.NewHub(10)
+	server := New(Config{APIKey: "test"}, q, reg, rt, wt, hub, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/poll", nil)
 	req.Header.Set("Authorization", "Bearer test")
@@ -124,7 +126,8 @@ func TestHandleTrigger_SyncTimeout(t *testing.T) {
 		},
 	}
 
-	server := New(Config{APIKey: "test"}, q, reg, rt, wt, slog.Default())
+	hub := events.NewHub(10)
+	server := New(Config{APIKey: "test"}, q, reg, rt, wt, hub, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/poll", nil)
 	req.Header.Set("Authorization", "Bearer test")
@@ -181,7 +184,8 @@ func TestHandleTrigger_SyncLimitReached(t *testing.T) {
 	wt := &mockWaiter{}
 
 	// Create server with limit of 1
-	server := New(Config{APIKey: "test", MaxConcurrentSync: 1}, q, reg, rt, wt, slog.Default())
+	hub := events.NewHub(10)
+	server := New(Config{APIKey: "test", MaxConcurrentSync: 1}, q, reg, rt, wt, hub, slog.Default())
 
 	// Occupy the semaphore
 	server.syncSemaphore <- struct{}{}

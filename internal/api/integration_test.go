@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/api"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
@@ -55,7 +56,8 @@ func TestAPIIntegration(t *testing.T) {
 		Listen: testPort,
 		APIKey: "test-key-123",
 	}
-	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, slog.Default())
+	hub := events.NewHub(10)
+	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, hub, slog.Default())
 
 	// Start server in background
 	serverCtx, cancel := context.WithCancel(ctx)

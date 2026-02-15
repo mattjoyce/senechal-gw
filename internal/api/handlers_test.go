@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
@@ -92,7 +93,8 @@ func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 		Listen: "localhost:8080",
 		APIKey: "test-key-123",
 	}
-	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, logger)
+	hub := events.NewHub(10)
+	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, hub, logger)
 }
 
 func TestHandleHealthz_NoAuth(t *testing.T) {
