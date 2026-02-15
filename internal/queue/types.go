@@ -50,6 +50,31 @@ type EnqueueRequest struct {
 	SourceEventID  *string
 }
 
+type CircuitState string
+
+const (
+	CircuitClosed   CircuitState = "closed"
+	CircuitOpen     CircuitState = "open"
+	CircuitHalfOpen CircuitState = "half_open"
+)
+
+type CircuitBreaker struct {
+	Plugin       string
+	Command      string
+	State        CircuitState
+	FailureCount int
+	OpenedAt     *time.Time
+	LastFailure  *time.Time
+	LastJobID    *string
+	UpdatedAt    time.Time
+}
+
+type PollResult struct {
+	JobID       string
+	Status      Status
+	CompletedAt time.Time
+}
+
 var ErrJobNotFound = errors.New("job not found")
 var ErrDedupeDrop = errors.New("job dedupe drop")
 

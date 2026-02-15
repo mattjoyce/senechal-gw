@@ -68,6 +68,24 @@ WHERE status IN (?, ?);
 	return n, nil
 }
 
+// CountOutstandingPollJobs returns queued+running poll jobs for a plugin.
+func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (int, error) {
+	if plugin == "" {
+		return 0, fmt.Errorf("plugin is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM job_queue
+WHERE plugin = ? AND command = 'poll' AND status IN (?, ?);
+`, plugin, StatusQueued, StatusRunning)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count outstanding poll jobs: %w", err)
+	}
+	return n, nil
+}
+
 func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error) {
 	if req.Plugin == "" {
 		return "", fmt.Errorf("plugin is empty")
@@ -109,31 +127,19 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	}
 
 	var payload any
-
 	if len(req.Payload) > 0 {
-
 		payload = string(req.Payload)
-
 	}
 
 	_, err := q.db.ExecContext(ctx, `
-
-	INSERT OR IGNORE INTO job_queue(
-
-	  id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-
-	  created_at, parent_job_id, source_event_id, event_context_id
-
-	)
-
-	VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?);
-
-	`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
-
+INSERT OR IGNORE INTO job_queue(
+  id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
+  created_at, parent_job_id, source_event_id, event_context_id
+)
+VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?);
+`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
 	if err != nil {
-
 		return "", fmt.Errorf("enqueue job: %w", err)
-
 	}
 
 	return id, nil
@@ -171,8 +177,7 @@ func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
 WITH next AS (
   SELECT id
   FROM job_queue
-  WHERE status = ?
-    AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)
+  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)
   ORDER BY created_at ASC, rowid ASC
   LIMIT 1
 )
@@ -331,6 +336,169 @@ WHERE status = ?;
 	}
 
 	return jobs, nil
+}
+
+// LatestCompletedPollResult returns the most recently completed poll result for a plugin
+// submitted by the scheduler identity.
+func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*PollResult, error) {
+	if plugin == "" {
+		return nil, fmt.Errorf("plugin is empty")
+	}
+	if submittedBy == "" {
+		return nil, fmt.Errorf("submitted_by is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT id, status, completed_at
+FROM job_queue
+WHERE plugin = ? AND command = 'poll' AND submitted_by = ? AND completed_at IS NOT NULL
+  AND status IN (?, ?, ?, ?)
+ORDER BY completed_at DESC, rowid DESC
+LIMIT 1;
+`, plugin, submittedBy, StatusSucceeded, StatusFailed, StatusTimedOut, StatusDead)
+
+	var (
+		jobID       string
+		statusS     string
+		completedAt string
+	)
+	if err := row.Scan(&jobID, &statusS, &completedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("latest completed poll result: %w", err)
+	}
+
+	completedAtT, err := time.Parse(time.RFC3339Nano, completedAt)
+	if err != nil {
+		return nil, fmt.Errorf("latest completed poll result: parse completed_at: %w", err)
+	}
+
+	return &PollResult{
+		JobID:       jobID,
+		Status:      Status(statusS),
+		CompletedAt: completedAtT,
+	}, nil
+}
+
+// GetCircuitBreaker returns the persisted circuit breaker row for plugin+command.
+func (q *Queue) GetCircuitBreaker(ctx context.Context, plugin, command string) (*CircuitBreaker, error) {
+	if plugin == "" {
+		return nil, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return nil, fmt.Errorf("command is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT plugin, command, state, failure_count, opened_at, last_failure_at, last_job_id, updated_at
+FROM circuit_breakers
+WHERE plugin = ? AND command = ?;
+`, plugin, command)
+
+	var (
+		cb           CircuitBreaker
+		stateS       string
+		openedAtS    sql.NullString
+		lastFailureS sql.NullString
+		lastJobID    sql.NullString
+		updatedAtS   string
+	)
+	if err := row.Scan(
+		&cb.Plugin,
+		&cb.Command,
+		&stateS,
+		&cb.FailureCount,
+		&openedAtS,
+		&lastFailureS,
+		&lastJobID,
+		&updatedAtS,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get circuit breaker: %w", err)
+	}
+
+	cb.State = CircuitState(stateS)
+	if openedAtS.Valid {
+		t, err := time.Parse(time.RFC3339Nano, openedAtS.String)
+		if err == nil {
+			cb.OpenedAt = &t
+		}
+	}
+	if lastFailureS.Valid {
+		t, err := time.Parse(time.RFC3339Nano, lastFailureS.String)
+		if err == nil {
+			cb.LastFailure = &t
+		}
+	}
+	if lastJobID.Valid {
+		cb.LastJobID = &lastJobID.String
+	}
+	if t, err := time.Parse(time.RFC3339Nano, updatedAtS); err == nil {
+		cb.UpdatedAt = t
+	}
+
+	return &cb, nil
+}
+
+// UpsertCircuitBreaker inserts or updates persisted breaker state.
+func (q *Queue) UpsertCircuitBreaker(ctx context.Context, cb CircuitBreaker) error {
+	if cb.Plugin == "" {
+		return fmt.Errorf("plugin is empty")
+	}
+	if cb.Command == "" {
+		return fmt.Errorf("command is empty")
+	}
+	if cb.State == "" {
+		cb.State = CircuitClosed
+	}
+
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	var openedAt any
+	if cb.OpenedAt != nil {
+		openedAt = cb.OpenedAt.Format(time.RFC3339Nano)
+	}
+
+	var lastFailure any
+	if cb.LastFailure != nil {
+		lastFailure = cb.LastFailure.Format(time.RFC3339Nano)
+	}
+
+	var lastJobID any
+	if cb.LastJobID != nil {
+		lastJobID = *cb.LastJobID
+	}
+
+	_, err := q.db.ExecContext(ctx, `
+INSERT INTO circuit_breakers(
+  plugin, command, state, failure_count, opened_at, last_failure_at, last_job_id, updated_at
+)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(plugin, command) DO UPDATE SET
+  state = excluded.state,
+  failure_count = excluded.failure_count,
+  opened_at = excluded.opened_at,
+  last_failure_at = excluded.last_failure_at,
+  last_job_id = excluded.last_job_id,
+  updated_at = excluded.updated_at;
+`, cb.Plugin, cb.Command, cb.State, cb.FailureCount, openedAt, lastFailure, lastJobID, updatedAt)
+	if err != nil {
+		return fmt.Errorf("upsert circuit breaker: %w", err)
+	}
+	return nil
+}
+
+// ResetCircuitBreaker closes a plugin+command circuit and clears failure history.
+func (q *Queue) ResetCircuitBreaker(ctx context.Context, plugin, command string) error {
+	return q.UpsertCircuitBreaker(ctx, CircuitBreaker{
+		Plugin:       plugin,
+		Command:      command,
+		State:        CircuitClosed,
+		FailureCount: 0,
+	})
 }
 
 // UpdateJobForRecovery updates a job's status, attempt count, next retry time, and last error.

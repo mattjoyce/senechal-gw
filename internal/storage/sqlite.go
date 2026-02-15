@@ -107,6 +107,17 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
   source_event_id TEXT,
   event_context_id TEXT
 );`,
+		`CREATE TABLE IF NOT EXISTS circuit_breakers (
+  plugin          TEXT NOT NULL,
+  command         TEXT NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'closed',
+  failure_count   INTEGER NOT NULL DEFAULT 0,
+  opened_at       TEXT,
+  last_failure_at TEXT,
+  last_job_id     TEXT,
+  updated_at      TEXT NOT NULL,
+  PRIMARY KEY(plugin, command)
+);`,
 		`CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, created_at);`,
 		`CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);`,
 		`CREATE INDEX IF NOT EXISTS event_context_parent_id_idx ON event_context(parent_id);`,

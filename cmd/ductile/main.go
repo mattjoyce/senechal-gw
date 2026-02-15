@@ -79,6 +79,12 @@ func runCLI(cliArgs []string) int {
 	// --- ROOT ALIASES (Backward Compatibility) ---
 	case "start":
 		return runStart(args)
+	case "reset":
+		if hasHelpFlag(args) {
+			printSystemResetHelp()
+			return 0
+		}
+		return runSystemReset(args)
 	case "inspect":
 		return runInspect(args)
 	case "doctor": // Alias for backward compat with Claude's branch
@@ -210,6 +216,7 @@ Core Resources (Nouns):
 System Commands:
   system start      Start the gateway service in foreground
   system status     Show global gateway health
+  system reset      Reset a plugin poll circuit breaker
   system watch      Real-time diagnostic monitoring TUI
 
 Config Commands:
@@ -307,6 +314,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runMonitor(actionArgs)
+	case "reset":
+		if hasHelpFlag(actionArgs) {
+			printSystemResetHelp()
+			return 0
+		}
+		return runSystemReset(actionArgs)
 	case "watch":
 		if hasHelpFlag(actionArgs) {
 			printSystemWatchHelp()
@@ -539,7 +552,7 @@ func runConfigGet(args []string) int {
 
 	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
 
@@ -705,7 +718,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status, monitor, watch")
+	fmt.Fprintln(w, "Actions: start, status, monitor, reset, watch")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -742,6 +755,11 @@ func printSystemMonitorHelp() {
 	fmt.Println("Launch the real-time TUI dashboard.")
 }
 
+func printSystemResetHelp() {
+	fmt.Println("Usage: ductile system reset <plugin> [--config PATH]")
+	fmt.Println("Reset scheduler poll circuit breaker state for a plugin.")
+}
+
 func runMonitor(args []string) int {
 	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
 	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
@@ -762,6 +780,60 @@ func runMonitor(args []string) int {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 		return 1
 	}
+	return 0
+}
+
+func runSystemReset(actionArgs []string) int {
+	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(actionArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: ductile system reset <plugin> [--config PATH]")
+		return 1
+	}
+	pluginName := strings.TrimSpace(fs.Arg(0))
+	if pluginName == "" {
+		fmt.Fprintln(os.Stderr, "plugin name is required")
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+	if _, ok := cfg.Plugins[pluginName]; !ok {
+		fmt.Fprintf(os.Stderr, "Unknown plugin: %s\n", pluginName)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	if err := q.ResetCircuitBreaker(context.Background(), pluginName, "poll"); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to reset circuit breaker: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Reset circuit breaker for %s (poll)\n", pluginName)
 	return 0
 }
 
@@ -1020,510 +1092,4 @@ func runStart(args []string) int {
 
 	logger.Info("ductile stopped")
 	return 0
-}
-
-type systemStatusCheck struct {
-	Name      string `json:"name"`
-	OK        bool   `json:"ok"`
-	Path      string `json:"path,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	ActivePID int    `json:"active_pid,omitempty"`
-}
-
-type systemStatusReport struct {
-	Healthy bool                `json:"healthy"`
-	Checks  []systemStatusCheck `json:"checks"`
-}
-
-func runSystemStatus(args []string) int {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	jsonOut := fs.Bool("json", false, "Output status as JSON")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
-	}
-
-	report := collectSystemStatus(*configPath)
-
-	if *jsonOut {
-		data, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to render JSON status: %v\n", err)
-			return 1
-		}
-		fmt.Println(string(data))
-	} else {
-		renderSystemStatusHuman(report)
-	}
-
-	if report.Healthy {
-		return 0
-	}
-	return 1
-}
-
-func collectSystemStatus(configPath string) systemStatusReport {
-	report := systemStatusReport{
-		Healthy: true,
-		Checks:  make([]systemStatusCheck, 0, 4),
-	}
-
-	resolvedConfigPath := configPath
-	if resolvedConfigPath == "" {
-		discovered, err := config.DiscoverConfigDir()
-		if err != nil {
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "config_discovery",
-				OK:     false,
-				Detail: err.Error(),
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "config_load",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "state_db",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "pid_lock",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Healthy = false
-			return report
-		}
-		resolvedConfigPath = discovered
-	}
-
-	report.Checks = append(report.Checks, systemStatusCheck{
-		Name:   "config_discovery",
-		OK:     true,
-		Path:   resolvedConfigPath,
-		Detail: "config path resolved",
-	})
-
-	cfg, err := config.Load(resolvedConfigPath)
-	if err != nil {
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "config_load",
-			OK:     false,
-			Path:   resolvedConfigPath,
-			Detail: err.Error(),
-		})
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "state_db",
-			OK:     false,
-			Detail: "skipped: config load failed",
-		})
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "pid_lock",
-			OK:     false,
-			Detail: "skipped: config load failed",
-		})
-		report.Healthy = false
-		return report
-	}
-
-	report.Checks = append(report.Checks, systemStatusCheck{
-		Name:   "config_load",
-		OK:     true,
-		Path:   resolvedConfigPath,
-		Detail: "configuration loaded",
-	})
-
-	stateDBCheck := checkStateDBReadiness(cfg.State.Path)
-	if !stateDBCheck.OK {
-		report.Healthy = false
-	}
-	report.Checks = append(report.Checks, stateDBCheck)
-
-	pidLockCheck := checkPIDLockState(getPIDLockPath(cfg))
-	if !pidLockCheck.OK {
-		report.Healthy = false
-	}
-	report.Checks = append(report.Checks, pidLockCheck)
-
-	return report
-}
-
-func checkStateDBReadiness(statePath string) systemStatusCheck {
-	check := systemStatusCheck{
-		Name: "state_db",
-		Path: statePath,
-	}
-
-	if statePath == "" {
-		check.OK = false
-		check.Detail = "state path is empty"
-		return check
-	}
-
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		check.OK = true
-		check.Detail = "database file does not exist yet (will be created on start)"
-		return check
-	}
-
-	dsn := fmt.Sprintf("file:%s?mode=ro", filepath.ToSlash(statePath))
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		check.OK = false
-		check.Detail = fmt.Sprintf("open failed: %v", err)
-		return check
-	}
-	defer db.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := db.PingContext(ctx); err != nil {
-		check.OK = false
-		check.Detail = fmt.Sprintf("ping failed: %v", err)
-		return check
-	}
-
-	check.OK = true
-	check.Detail = "database is readable"
-	return check
-}
-
-func checkPIDLockState(lockPath string) systemStatusCheck {
-	check := systemStatusCheck{
-		Name: "pid_lock",
-		Path: lockPath,
-	}
-
-	data, err := os.ReadFile(lockPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			check.OK = true
-			check.Detail = "no active PID lock file"
-			return check
-		}
-		check.OK = false
-		check.Detail = fmt.Sprintf("failed to read lock file: %v", err)
-		return check
-	}
-
-	line := strings.TrimSpace(string(data))
-	if line == "" {
-		check.OK = true
-		check.Detail = "lock file present but empty (not active)"
-		return check
-	}
-
-	pid, err := strconv.Atoi(line)
-	if err != nil || pid <= 0 {
-		check.OK = false
-		check.Detail = "lock file contains invalid pid"
-		return check
-	}
-
-	if processExists(pid) {
-		check.OK = false
-		check.ActivePID = pid
-		check.Detail = fmt.Sprintf("another instance appears active (pid %d)", pid)
-		return check
-	}
-
-	check.OK = true
-	check.Detail = fmt.Sprintf("stale lock file detected (pid %d not running)", pid)
-	return check
-}
-
-func processExists(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
-func renderSystemStatusHuman(report systemStatusReport) {
-	state := "HEALTHY"
-	if !report.Healthy {
-		state = "DEGRADED"
-	}
-	fmt.Printf("System Status: %s\n", state)
-	for _, c := range report.Checks {
-		status := "OK"
-		if !c.OK {
-			status = "FAIL"
-		}
-		fmt.Printf("- %s: %s", c.Name, status)
-		if c.Path != "" {
-			fmt.Printf(" (path=%s)", c.Path)
-		}
-		if c.Detail != "" {
-			fmt.Printf(" - %s", c.Detail)
-		}
-		fmt.Println()
-	}
-}
-
-func runInspect(args []string) int {
-	// Custom flag parsing because we want to support flags AFTER the job ID
-	// like 'ductile job inspect <id> --json'
-	var configPath string
-	var jsonOut bool
-
-	// Create a new flag set but don't parse everything at once
-	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
-	fs.StringVar(&configPath, "config", "", "Path to configuration")
-	fs.BoolVar(&jsonOut, "json", false, "Output report in JSON")
-
-	// Filter out positional jobID and then parse remaining flags
-	var jobID string
-	var remainingArgs []string
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && jobID == "" {
-			jobID = arg
-		} else {
-			remainingArgs = append(remainingArgs, arg)
-		}
-	}
-
-	if err := fs.Parse(remainingArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
-	}
-
-	if jobID == "" {
-		fmt.Fprintf(os.Stderr, "Usage: ductile job inspect <job_id> [--config PATH] [--json]\n")
-		return 1
-	}
-
-	if configPath == "" {
-		discovered, err := config.DiscoverConfigDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
-			return 1
-		}
-		configPath = discovered
-	}
-
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		return 1
-	}
-
-	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
-		return 1
-	}
-	defer db.Close()
-
-	var report string
-	if jsonOut {
-		report, err = inspect.BuildJSONReport(context.Background(), db, cfg.State.Path, jobID)
-	} else {
-		report, err = inspect.BuildReport(context.Background(), db, cfg.State.Path, jobID)
-	}
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Inspect failed: %v\n", err)
-		return 1
-	}
-
-	fmt.Print(report)
-	return 0
-}
-
-func runConfigCheck(args []string) int {
-	var configPath, configDir string
-	var strict, jsonOut bool
-	var format string
-
-	fs := flag.NewFlagSet("check", flag.ExitOnError)
-	fs.StringVar(&configPath, "config", "", "Path to configuration")
-	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
-	fs.BoolVar(&strict, "strict", false, "Treat warnings as errors")
-	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	// Handle -json alias for format=json
-	fs.BoolVar(&jsonOut, "json", false, "Output in JSON")
-
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
-	}
-
-	if jsonOut {
-		format = "json"
-	}
-
-	if configPath != "" && configDir != "" {
-		fmt.Fprintln(os.Stderr, "Error: use only one of --config or --config-dir")
-		return 1
-	}
-	if configDir != "" {
-		configPath = configDir
-	}
-	if configPath == "" {
-		discovered, err := config.DiscoverConfigDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
-			return 1
-		}
-		configPath = discovered
-	}
-
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Config load error: %v\n", err)
-		return 1
-	}
-
-	registry, err := discoverRegistry(cfg, configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Plugin discovery error: %v\n", err)
-		return 1
-	}
-
-	doc := doctor.New(cfg, registry)
-	result := doc.Validate()
-
-	switch format {
-	case "json":
-		out, err := doctor.FormatJSON(result)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "JSON format error: %v\n", err)
-			return 1
-		}
-		fmt.Println(out)
-	default:
-		fmt.Print(doctor.FormatHuman(result))
-	}
-
-	if !result.Valid {
-		return 1
-	}
-	if strict && len(result.Warnings) > 0 {
-		return 2
-	}
-	return 0
-}
-
-func runConfigHashUpdate(args []string) int {
-	var configPath, configDir string
-	var verbose, verboseShort, dryRun bool
-
-	fs := flag.NewFlagSet("lock", flag.ExitOnError)
-	fs.StringVar(&configPath, "config", "", "Path to configuration")
-	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
-	fs.BoolVar(&verbose, "verbose", false, "Verbose output")
-	fs.BoolVar(&verboseShort, "v", false, "Verbose output")
-	fs.BoolVar(&dryRun, "dry-run", false, "Dry run")
-
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
-	}
-	isVerbose := verbose || verboseShort
-
-	if configPath != "" && configDir != "" {
-		fmt.Fprintf(os.Stderr, "Error: use only one of --config or --config-dir\n")
-		return 1
-	}
-
-	var targetDirs []string
-	if configDir != "" {
-		targetDirs = []string{configDir}
-	} else {
-		resolvedConfigPath := configPath
-		if resolvedConfigPath == "" {
-			discovered, err := config.DiscoverConfigDir()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
-				return 1
-			}
-			resolvedConfigPath = discovered
-		}
-
-		dirs, err := config.DiscoverScopeDirs(resolvedConfigPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to resolve scope directories: %v\n", err)
-			return 1
-		}
-		targetDirs = dirs
-	}
-
-	for _, dir := range targetDirs {
-		// Check if this is a CONFIG_SPEC directory
-		if config.IsConfigSpecDir(dir) {
-			files, err := config.DiscoverConfigFiles(dir)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to discover config files in %s: %v\n", dir, err)
-				return 1
-			}
-
-			if isVerbose {
-				fmt.Printf("Processing directory (v2 manifest): %s\n", dir)
-				for _, f := range files.AllFiles() {
-					tier := "operational"
-					if files.FileTier(f) == config.TierHighSecurity {
-						tier = "high-security"
-					}
-					fmt.Printf("  DISCOVER [%s] %s\n", tier, f)
-				}
-			}
-
-			if err := config.GenerateChecksumsFromDiscovery(files, dryRun); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-				return 1
-			}
-
-			if isVerbose {
-				if dryRun {
-					fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", filepath.Join(dir, ".checksums"))
-				} else {
-					fmt.Printf("  WROTE .checksums: %s\n", filepath.Join(dir, ".checksums"))
-				}
-			}
-		} else {
-			// Legacy include-based mode
-			scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
-			report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-				return 1
-			}
-			if isVerbose {
-				fmt.Printf("Processing directory (v1 manifest): %s\n", dir)
-				for _, file := range report.Files {
-					if file.Exists {
-						fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
-						continue
-					}
-					fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
-				}
-				if dryRun {
-					fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
-				} else {
-					fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
-				}
-			}
-		}
-	}
-
-	if dryRun {
-		fmt.Printf("Dry run completed for %d directory/ies (no files written):\n", len(targetDirs))
-	} else {
-		fmt.Printf("Successfully locked configuration in %d directory/ies:\n", len(targetDirs))
-	}
-	for _, dir := range targetDirs {
-		fmt.Printf("  - %s\n", dir)
-	}
-
-	return 0
-}
-func getPIDLockPath(cfg *config.Config) string {
-	dbPath := cfg.State.Path
-	dbDir := filepath.Dir(dbPath)
-	dbBase := filepath.Base(dbPath)
-	ext := filepath.Ext(dbBase)
-	nameWithoutExt := dbBase[:len(dbBase)-len(ext)]
-	return filepath.Join(dbDir, nameWithoutExt+".pid")
 }

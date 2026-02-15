@@ -379,6 +379,10 @@ Configurable consecutive failure threshold per `(plugin, command)` pair. Applies
 - Default threshold: 3 consecutive failures.
 - Default reset: 30 minutes.
 - Manual reset: `ductile reset <plugin>`.
+- States: `closed` -> `open` -> `half_open`.
+- When cooldown expires, scheduler allows a single half-open probe poll:
+  - Success closes the circuit and resets failure count.
+  - Failure reopens the circuit.
 
 ```yaml
 plugins:
@@ -923,6 +927,19 @@ job_log (
   stderr          TEXT,                -- capped at 64 KB
   parent_job_id   TEXT,
   source_event_id TEXT
+);
+
+-- Circuit breaker state for scheduler poll guard
+circuit_breakers (
+  plugin          TEXT NOT NULL,
+  command         TEXT NOT NULL,       -- poll
+  state           TEXT NOT NULL,       -- closed | open | half_open
+  failure_count   INTEGER NOT NULL DEFAULT 0,
+  opened_at       TEXT,                -- ISO8601
+  last_failure_at TEXT,                -- ISO8601
+  last_job_id     TEXT,                -- latest processed scheduler poll job id
+  updated_at      TEXT NOT NULL,       -- ISO8601
+  PRIMARY KEY(plugin, command)
 );
 ```
 

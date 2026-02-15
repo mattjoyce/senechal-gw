@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog" // Import slog
+	"log/slog"
 	"math/rand"
 	"sort"
 	"sync"
@@ -12,7 +12,7 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
-	"github.com/mattjoyce/ductile/internal/queue" // Keep for queue.EnqueueRequest and queue.Job types
+	"github.com/mattjoyce/ductile/internal/queue"
 )
 
 // Scheduler manages the scheduling and recovery of plugin jobs.
@@ -25,8 +25,13 @@ type Scheduler struct {
 	wg     sync.WaitGroup
 }
 
+const pollCommand = "poll"
+
 // New creates a new Scheduler instance.
 func New(cfg *config.Config, q QueueService, hub *events.Hub, logger *slog.Logger) *Scheduler { // Accept *slog.Logger here
+	if hub == nil {
+		hub = events.NewHub(128)
+	}
 	return &Scheduler{
 		cfg:    cfg,
 		queue:  q,
@@ -132,16 +137,28 @@ func (s *Scheduler) tick(ctx context.Context) {
 		// or will need a more complex time check for daily/weekly/monthly.
 
 		// For MVP, we'll just enqueue on each tick for simplicity,
-		// assuming a separate mechanism prevents duplicate poll execution
-		// (e.g., job deduplication in the queue based on plugin/command).
-		// A real scheduler would check if (now - last_scheduled_time) >= jitteredInterval
+		// but guard poll fanout and breaker state before enqueueing.
+		if err := s.reconcileCircuitBreaker(ctx, pluginName, pluginConf); err != nil {
+			s.logger.Error("Failed to reconcile circuit breaker state", "plugin", pluginName, "error", err)
+			continue
+		}
+
+		if allowed, reason, err := s.canSchedulePoll(ctx, pluginName, pluginConf); err != nil {
+			s.logger.Error("Failed poll scheduling checks", "plugin", pluginName, "error", err)
+			continue
+		} else if !allowed {
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":  pluginName,
+				"command": pollCommand,
+				"reason":  reason,
+			})
+			s.logger.Info("Skipped poll scheduling", "plugin", pluginName, "reason", reason)
+			continue
+		}
+
 		if err := s.enqueuePollJob(ctx, pluginName, pluginConf); err != nil {
 			s.logger.Error("Failed to enqueue poll job", "plugin", pluginName, "error", err)
 		}
-
-		// Poll Guard (max_outstanding_polls) and Circuit Breaker (consecutive failures)
-		// will require a stateful mechanism to track outstanding polls and failures per plugin.
-		// This is beyond the current MVP scope but marked for future implementation.
 	}
 
 	// Prune completed job logs
@@ -158,7 +175,7 @@ func (s *Scheduler) enqueuePollJob(ctx context.Context, pluginName string, plugi
 
 	req := queue.EnqueueRequest{
 		Plugin:      pluginName,
-		Command:     "poll",
+		Command:     pollCommand,
 		Payload:     []byte(`{}`), // Empty JSON payload for now
 		SubmittedBy: s.cfg.Service.Name,
 		DedupeKey:   &dedupeKey, // Apply dedupe key
@@ -190,10 +207,152 @@ func (s *Scheduler) enqueuePollJob(ctx context.Context, pluginName string, plugi
 	s.events.Publish("scheduler.scheduled", map[string]any{
 		"job_id":  jobID,
 		"plugin":  pluginName,
-		"command": "poll",
+		"command": pollCommand,
 	})
 	s.logger.Info("Enqueued poll job", "plugin", pluginName, "job_id", jobID, "dedupe_key", dedupeKey)
 	return nil
+}
+
+func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName string, pluginConf config.PluginConf) error {
+	cb, err := s.currentCircuitBreaker(ctx, pluginName)
+	if err != nil {
+		return err
+	}
+
+	latest, err := s.queue.LatestCompletedPollResult(ctx, pluginName, s.cfg.Service.Name)
+	if err != nil {
+		return err
+	}
+	if latest == nil {
+		return nil
+	}
+	if cb.LastJobID != nil && *cb.LastJobID == latest.JobID {
+		return nil
+	}
+
+	threshold := breakerThreshold(pluginConf)
+	previousState := cb.State
+
+	if latest.Status == queue.StatusSucceeded {
+		cb.State = queue.CircuitClosed
+		cb.FailureCount = 0
+		cb.OpenedAt = nil
+		cb.LastFailure = nil
+	} else {
+		cb.FailureCount++
+		completedAt := latest.CompletedAt.UTC()
+		cb.LastFailure = &completedAt
+		if cb.FailureCount >= threshold {
+			cb.State = queue.CircuitOpen
+			cb.OpenedAt = &completedAt
+		} else {
+			cb.State = queue.CircuitClosed
+			cb.OpenedAt = nil
+		}
+	}
+
+	cb.LastJobID = &latest.JobID
+	if err := s.queue.UpsertCircuitBreaker(ctx, cb); err != nil {
+		return err
+	}
+
+	if cb.State != previousState {
+		s.events.Publish("scheduler.circuit_state_changed", map[string]any{
+			"plugin":         pluginName,
+			"command":        pollCommand,
+			"previous_state": previousState,
+			"state":          cb.State,
+			"failure_count":  cb.FailureCount,
+		})
+		s.logger.Info(
+			"Circuit breaker state changed",
+			"plugin", pluginName,
+			"command", pollCommand,
+			"previous_state", previousState,
+			"state", cb.State,
+			"failure_count", cb.FailureCount,
+		)
+	}
+
+	return nil
+}
+
+func (s *Scheduler) canSchedulePoll(ctx context.Context, pluginName string, pluginConf config.PluginConf) (bool, string, error) {
+	cb, err := s.currentCircuitBreaker(ctx, pluginName)
+	if err != nil {
+		return false, "", err
+	}
+
+	if cb.State == queue.CircuitOpen {
+		if !cooldownElapsed(cb, breakerResetAfter(pluginConf), time.Now().UTC()) {
+			return false, "circuit_open", nil
+		}
+
+		cb.State = queue.CircuitHalfOpen
+		if err := s.queue.UpsertCircuitBreaker(ctx, cb); err != nil {
+			return false, "", err
+		}
+		s.events.Publish("scheduler.circuit_half_open", map[string]any{
+			"plugin":  pluginName,
+			"command": pollCommand,
+		})
+		s.logger.Info("Circuit breaker moved to half-open", "plugin", pluginName, "command", pollCommand)
+	}
+
+	maxOutstanding := pluginConf.MaxOutstandingPolls
+	if maxOutstanding <= 0 {
+		maxOutstanding = 1
+	}
+
+	outstanding, err := s.queue.CountOutstandingPollJobs(ctx, pluginName)
+	if err != nil {
+		return false, "", err
+	}
+	if outstanding >= maxOutstanding {
+		return false, "poll_guard_outstanding", nil
+	}
+
+	return true, "", nil
+}
+
+func (s *Scheduler) currentCircuitBreaker(ctx context.Context, pluginName string) (queue.CircuitBreaker, error) {
+	cb, err := s.queue.GetCircuitBreaker(ctx, pluginName, pollCommand)
+	if err != nil {
+		return queue.CircuitBreaker{}, err
+	}
+	if cb == nil {
+		return queue.CircuitBreaker{
+			Plugin:       pluginName,
+			Command:      pollCommand,
+			State:        queue.CircuitClosed,
+			FailureCount: 0,
+		}, nil
+	}
+	if cb.State == "" {
+		cb.State = queue.CircuitClosed
+	}
+	return *cb, nil
+}
+
+func breakerThreshold(pluginConf config.PluginConf) int {
+	if pluginConf.CircuitBreaker == nil || pluginConf.CircuitBreaker.Threshold <= 0 {
+		return config.DefaultPluginConf().CircuitBreaker.Threshold
+	}
+	return pluginConf.CircuitBreaker.Threshold
+}
+
+func breakerResetAfter(pluginConf config.PluginConf) time.Duration {
+	if pluginConf.CircuitBreaker == nil || pluginConf.CircuitBreaker.ResetAfter <= 0 {
+		return config.DefaultPluginConf().CircuitBreaker.ResetAfter
+	}
+	return pluginConf.CircuitBreaker.ResetAfter
+}
+
+func cooldownElapsed(cb queue.CircuitBreaker, resetAfter time.Duration, now time.Time) bool {
+	if cb.OpenedAt == nil {
+		return true
+	}
+	return !now.Before(cb.OpenedAt.Add(resetAfter))
 }
 
 // recoverOrphanedJobs scans for and recovers jobs marked as "running" at startup.
