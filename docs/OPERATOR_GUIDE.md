@@ -70,6 +70,20 @@ To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or 
     ductile config check
     ```
 
+### Strict Mode
+For hardened environments, enable `service.strict_mode: true` in your `config.yaml`.
+In strict mode:
+- The system **will not start** if any file fails integrity verification (no warnings).
+- The system **will not start** if any configuration check fails (e.g., missing dependencies).
+- The system **requires** at least one API token to be defined if the API is enabled.
+
+### Managing Scoped Tokens (TUI)
+You can interactively create scoped API tokens using the built-in wizard:
+```bash
+./ductile config token create --name "my-service" --tui
+```
+This TUI reads the manifests of all enabled plugins to present you with a checkbox list of available scopes (e.g., `jobs:ro`, `plugin:echo:rw`).
+
 ---
 
 ## 4. API Reference

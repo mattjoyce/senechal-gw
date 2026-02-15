@@ -37,7 +37,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 | Tier | Files | Missing/Mismatch Behavior |
 | :--- | :--- | :--- |
 | **High Security** | `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` | **Hard Fail**: System refuses to start (EX_CONFIG). |
-| **Operational** | `config.yaml`, `plugins/*.yaml`, `pipelines/*.yaml`, `routes.yaml` | **Warn & Continue**: Logs a warning but loads the file. |
+| **Operational** | `config.yaml`, `plugins/*.yaml`, `pipelines/*.yaml`, `routes.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
 
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
@@ -95,6 +95,7 @@ service:
   log_format: json
   dedupe_ttl: 24h
   job_log_retention: 30d
+  strict_mode: true  # Enforce integrity & configuration checks on startup
 
 api:
   enabled: true

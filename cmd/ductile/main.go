@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -75,6 +76,8 @@ func runCLI(cliArgs []string) int {
 	case "trigger":
 		printTriggerHelp()
 		return 0
+	case "skill":
+		return runSystemSkills(args)
 
 	// --- ROOT ALIASES (Backward Compatibility) ---
 	case "start":
@@ -218,10 +221,12 @@ System Commands:
   system status     Show global gateway health
   system reset      Reset a plugin poll circuit breaker
   system watch      Real-time diagnostic monitoring TUI
+  system skills     Export capability registry as LLM-readable Markdown
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
   config check      Validate syntax, policy, and integrity
+  config token create Interactively create a scoped API token
   config token      Manage scoped tokens
   config scope      Manage token scopes
   config plugin     Manage plugin configuration
@@ -240,6 +245,9 @@ Plugin Commands:
 
 Manual Triggering:
   trigger           Show instructions for triggering plugins via API
+
+Capability Export:
+  skill             Export live capability registry as LLM-readable Markdown
 
 General:
   --version         Show version information
@@ -320,6 +328,8 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemReset(actionArgs)
+	case "skills":
+		return runSystemSkills(actionArgs)
 	case "watch":
 		if hasHelpFlag(actionArgs) {
 			printSystemWatchHelp()
@@ -837,6 +847,114 @@ func runSystemReset(actionArgs []string) int {
 	return 0
 }
 
+func runSystemSkills(args []string) int {
+	fs := flag.NewFlagSet("skills", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	registry, err := plugin.Discover(cfg.PluginsDir, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("# Ductile Gateway: LLM Operator Skill Manifest")
+	fmt.Println()
+	fmt.Println("This manifest describes the capabilities of the current Ductile instance.")
+	fmt.Println()
+
+	fmt.Println("## 1. Core CLI Skills")
+	fmt.Println("Use these via direct CLI execution. Prefer `--json` for structured data.")
+	fmt.Println()
+	fmt.Println("### config")
+	fmt.Println("- `config check`: Validate syntax, policy, and integrity.")
+	fmt.Println("- `config lock`: Authorize current state (re-generate hashes).")
+	fmt.Println("- `config show [entity]`: View resolved configuration.")
+	fmt.Println("- `config get <path>`: Read specific config values.")
+	fmt.Println("- `config set <path>=<val>`: Update config (use `--dry-run` first).")
+	fmt.Println()
+	fmt.Println("### system")
+	fmt.Println("- `system status`: Check gateway health and PID lock.")
+	fmt.Println("- `system reset <plugin>`: Reset a tripped circuit breaker.")
+	fmt.Println("- `system watch`: Real-time diagnostic TUI.")
+	fmt.Println()
+	fmt.Println("### job")
+	fmt.Println("- `job inspect <job_id>`: Retrieve logs and lineage for a job.")
+	fmt.Println()
+
+	// Plugins
+	plugins := registry.All()
+	var pNames []string
+	for name := range plugins {
+		pNames = append(pNames, name)
+	}
+	sort.Strings(pNames)
+
+	fmt.Println("## 2. Atomic Plugin Skills")
+	fmt.Println("Invoke these via `POST /trigger/{plugin}/{command}`.")
+	fmt.Println()
+
+	for _, name := range pNames {
+		p := plugins[name]
+		fmt.Printf("### %s\n", p.Name)
+		if p.Description != "" {
+			fmt.Printf("**Description:** %s\n\n", p.Description)
+		}
+		fmt.Println("**Actions:**")
+		for _, cmd := range p.Commands {
+			tier := "WRITE"
+			if cmd.Type == plugin.CommandTypeRead {
+				tier = "READ"
+			}
+			fmt.Printf("- `%s`: [%s] %s\n", cmd.Name, tier, cmd.Description)
+		}
+		fmt.Println()
+	}
+
+	// Pipelines
+	routerEngine, err := router.LoadFromConfigDir(*configPath, registry, log.WithComponent("skills-export"))
+	if err == nil {
+		if r, ok := routerEngine.(*router.Router); ok {
+			pipelines := r.PipelineSummary()
+			if len(pipelines) > 0 {
+				fmt.Println("## 3. Orchestrated Pipeline Skills")
+				fmt.Println("High-level workflows triggered by events or direct API calls.")
+				fmt.Println()
+				for _, p := range pipelines {
+					mode := "ASYNC"
+					if p.ExecutionMode == "synchronous" {
+						mode = "SYNC (Blocks for result)"
+					}
+					fmt.Printf("### %s\n", p.Name)
+					fmt.Printf("- **Trigger:** `%s`\n", p.Trigger)
+					fmt.Printf("- **Mode:** %s\n", mode)
+					fmt.Println()
+				}
+			}
+		}
+	}
+
+	return 0
+}
+
 func runWatch(args []string) int {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
 	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
@@ -943,6 +1061,41 @@ func runStart(args []string) int {
 
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
+
+	// Strict mode enforcement
+	if cfg.Service.StrictMode {
+		logger.Info("strict mode enabled, performing pre-flight checks")
+
+		// 1. Check integrity (checksums)
+		files, err := config.DiscoverConfigFiles(*configPath)
+		if err == nil {
+			result, err := config.VerifyIntegrity(*configPath, files)
+			if err != nil || !result.Passed {
+				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
+				return 1
+			}
+		}
+
+		// 2. Perform "doctor" validation
+		// We need registry for full validation, discover it temporarily
+		tempRegistry, _ := plugin.Discover(cfg.PluginsDir, nil)
+		doc := doctor.New(cfg, tempRegistry)
+		report := doc.Validate()
+		if !report.Valid {
+			logger.Error("configuration validation failed (strict mode)")
+			for _, e := range report.Errors {
+				logger.Error("config error", "detail", e)
+			}
+			return 1
+		}
+
+		// 3. Ensure tokens are present if API is enabled
+		if cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
+			logger.Error("no API tokens configured (strict mode requires at least one token when API is enabled)")
+			return 1
+		}
+	}
+
 	logger.Info("ductile starting", "version", version, "config", *configPath)
 
 	pidLockPath := getPIDLockPath(cfg)

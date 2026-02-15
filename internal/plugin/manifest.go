@@ -23,8 +23,9 @@ func (t CommandType) valid() bool {
 
 // Command declares a supported plugin command and its type.
 type Command struct {
-	Name string      `yaml:"name"`
-	Type CommandType `yaml:"type"`
+	Name        string      `yaml:"name"`
+	Type        CommandType `yaml:"type"`
+	Description string      `yaml:"description,omitempty"`
 }
 
 // Commands is a list of supported commands.

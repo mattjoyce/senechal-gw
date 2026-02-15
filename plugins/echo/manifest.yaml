@@ -2,12 +2,14 @@ name: echo
 version: 0.1.0
 protocol: 2
 entrypoint: run.sh
-description: "Reads protocol v2 request on stdin; returns logs + state_updates with last_run timestamp"
+description: "A demonstration plugin that echoes input, emits events, and demonstrates protocol v2 state merging."
 commands:
   - name: poll
     type: write
+    description: "Emits echo.poll events and updates the internal last_run timestamp."
   - name: health
     type: read
+    description: "Returns the current health status and plugin version."
 config_keys:
   required: []
   optional: [message, mode]
