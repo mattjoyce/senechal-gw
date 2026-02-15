@@ -891,7 +891,11 @@ func runStart(args []string) int {
 	defer db.Close()
 	logger.Info("database opened", "path", cfg.State.Path)
 
-	q := queue.New(db)
+	q := queue.New(
+		db,
+		queue.WithLogger(logger),
+		queue.WithDedupeTTL(cfg.Service.DedupeTTL),
+	)
 	st := state.NewStore(db)
 	contextStore := state.NewContextStore(db)
 	hub := events.NewHub(256)
