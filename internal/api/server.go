@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/state"
 )
 
 // JobQueuer defines the interface for job queue operations
@@ -32,6 +34,11 @@ type TreeWaiter interface {
 // PipelineRouter defines the interface for looking up pipelines
 type PipelineRouter interface {
 	GetPipelineByTrigger(trigger string) *router.PipelineInfo
+}
+
+// EventContextStore defines the interface for creating event context lineage.
+type EventContextStore interface {
+	Create(ctx context.Context, parentID *string, pipelineName string, stepID string, updates json.RawMessage) (*state.EventContext, error)
 }
 
 // PluginRegistry defines the interface for plugin operations
@@ -58,6 +65,7 @@ type Server struct {
 	registry      PluginRegistry
 	router        PipelineRouter
 	waiter        TreeWaiter
+	contextStore  EventContextStore
 	logger        *slog.Logger
 	server        *http.Server
 	startedAt     time.Time
@@ -66,7 +74,7 @@ type Server struct {
 }
 
 // New creates a new API server instance
-func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, hub *events.Hub, logger *slog.Logger) *Server {
+func New(config Config, queue JobQueuer, registry PluginRegistry, router PipelineRouter, waiter TreeWaiter, contextStore EventContextStore, hub *events.Hub, logger *slog.Logger) *Server {
 	if config.MaxConcurrentSync <= 0 {
 		config.MaxConcurrentSync = 10
 	}
@@ -76,6 +84,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		registry:      registry,
 		router:        router,
 		waiter:        waiter,
+		contextStore:  contextStore,
 		logger:        logger,
 		startedAt:     time.Now(),
 		events:        hub,

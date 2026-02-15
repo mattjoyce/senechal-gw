@@ -11,6 +11,7 @@ import (
 type PipelineInfo struct {
 	Name          string
 	Trigger       string
+	EntryStepID   string
 	ExecutionMode string
 	Timeout       time.Duration
 }

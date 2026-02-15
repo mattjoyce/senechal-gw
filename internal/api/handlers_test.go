@@ -18,6 +18,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/state"
 )
 
 // mockQueue implements JobQueuer for testing
@@ -87,6 +88,17 @@ func (m *mockWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeo
 	return nil, nil
 }
 
+type mockContextStore struct {
+	createFunc func(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error)
+}
+
+func (m *mockContextStore) Create(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error) {
+	if m.createFunc != nil {
+		return m.createFunc(ctx, parentID, pipelineName, stepID, updates)
+	}
+	return &state.EventContext{ID: "ctx-default", PipelineName: pipelineName, StepID: stepID}, nil
+}
+
 func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 	logger := slog.Default()
 	config := Config{
@@ -94,7 +106,7 @@ func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 		APIKey: "test-key-123",
 	}
 	hub := events.NewHub(10)
-	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, hub, logger)
+	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
 }
 
 func TestHandleHealthz_NoAuth(t *testing.T) {
@@ -265,6 +277,140 @@ func TestHandleTrigger_Success(t *testing.T) {
 	}
 	if resp.Command != "poll" {
 		t.Errorf("expected command poll, got %s", resp.Command)
+	}
+}
+
+func TestHandleTrigger_PipelineTriggerCreatesEventContext(t *testing.T) {
+	var captured queue.EnqueueRequest
+
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			captured = req
+			return "job-ctx-123", nil
+		},
+	}
+
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "handle", Type: plugin.CommandTypeWrite},
+				},
+			},
+		},
+	}
+
+	rt := &mockRouter{
+		getPipelineByTriggerFunc: func(trigger string) *router.PipelineInfo {
+			if trigger != "echo.handle" {
+				t.Fatalf("unexpected trigger lookup: %s", trigger)
+			}
+			return &router.PipelineInfo{
+				Name:        "echo-pipeline",
+				Trigger:     "echo.handle",
+				EntryStepID: "step-1",
+			}
+		},
+	}
+
+	contextStore := &mockContextStore{
+		createFunc: func(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error) {
+			if parentID != nil {
+				t.Fatalf("expected nil parentID for root context, got %v", *parentID)
+			}
+			if pipelineName != "echo-pipeline" {
+				t.Fatalf("pipelineName = %q, want %q", pipelineName, "echo-pipeline")
+			}
+			if stepID != "step-1" {
+				t.Fatalf("stepID = %q, want %q", stepID, "step-1")
+			}
+			return &state.EventContext{
+				ID:           "ctx-123",
+				PipelineName: pipelineName,
+				StepID:       stepID,
+			}, nil
+		},
+	}
+
+	server := New(
+		Config{Listen: "localhost:8080", APIKey: "test-key-123"},
+		q,
+		reg,
+		rt,
+		&mockWaiter{},
+		contextStore,
+		events.NewHub(10),
+		slog.Default(),
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/handle", bytes.NewBufferString(`{"payload":{"k":"v"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d", rr.Code)
+	}
+	if captured.EventContextID == nil {
+		t.Fatal("expected enqueue EventContextID to be set")
+	}
+	if *captured.EventContextID != "ctx-123" {
+		t.Fatalf("EventContextID = %q, want %q", *captured.EventContextID, "ctx-123")
+	}
+}
+
+func TestHandleTrigger_PipelineContextCreateFailure(t *testing.T) {
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			t.Fatal("enqueue should not be called when context creation fails")
+			return "", nil
+		},
+	}
+
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "handle", Type: plugin.CommandTypeWrite},
+				},
+			},
+		},
+	}
+
+	rt := &mockRouter{
+		getPipelineByTriggerFunc: func(trigger string) *router.PipelineInfo {
+			return &router.PipelineInfo{Name: "echo-pipeline", Trigger: trigger, EntryStepID: "step-1"}
+		},
+	}
+
+	contextStore := &mockContextStore{
+		createFunc: func(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error) {
+			return nil, context.DeadlineExceeded
+		},
+	}
+
+	server := New(
+		Config{Listen: "localhost:8080", APIKey: "test-key-123"},
+		q,
+		reg,
+		rt,
+		&mockWaiter{},
+		contextStore,
+		events.NewHub(10),
+		slog.Default(),
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/handle", bytes.NewBufferString(`{"payload":{"k":"v"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", rr.Code)
 	}
 }
 

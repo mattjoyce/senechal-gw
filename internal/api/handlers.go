@@ -93,13 +93,33 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		enqueuePayload, _ = json.Marshal(event)
 	}
 
+	triggerEvent := fmt.Sprintf("%s.%s", pluginName, commandName)
+	pipeline := s.router.GetPipelineByTrigger(triggerEvent)
+
+	var eventContextID *string
+	if pipeline != nil && s.contextStore != nil {
+		root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, pipeline.EntryStepID, json.RawMessage(`{}`))
+		if err != nil {
+			s.logger.Error(
+				"failed to create event context for trigger",
+				"pipeline", pipeline.Name,
+				"step_id", pipeline.EntryStepID,
+				"error", err,
+			)
+			s.writeError(w, http.StatusInternalServerError, "failed to create event context")
+			return
+		}
+		eventContextID = &root.ID
+	}
+
 	// Enqueue job
 	startTime := time.Now()
 	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
-		Plugin:      pluginName,
-		Command:     commandName,
-		Payload:     enqueuePayload,
-		SubmittedBy: "api",
+		Plugin:         pluginName,
+		Command:        commandName,
+		Payload:        enqueuePayload,
+		SubmittedBy:    "api",
+		EventContextID: eventContextID,
 	})
 	if err != nil {
 		s.logger.Error("failed to enqueue job", "plugin", pluginName, "command", commandName, "error", err)
@@ -116,10 +136,6 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	})
 
 	s.logger.Info("job enqueued via API", "job_id", jobID, "plugin", pluginName, "command", commandName)
-
-	// Check if this trigger matches a synchronous pipeline
-	triggerEvent := fmt.Sprintf("%s.%s", pluginName, commandName)
-	pipeline := s.router.GetPipelineByTrigger(triggerEvent)
 
 	// Allow query param override for async mode
 	forceAsync := r.URL.Query().Get("async") == "true"
@@ -162,7 +178,7 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 
 		// Success: Return aggregated results
 		duration := time.Since(startTime)
-		
+
 		var tree []JobResultData
 		var rootResult json.RawMessage
 		finalStatus := string(queue.StatusSucceeded)

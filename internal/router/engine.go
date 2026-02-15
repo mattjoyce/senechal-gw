@@ -235,6 +235,7 @@ func (r *Router) GetPipelineByTrigger(trigger string) *PipelineInfo {
 	return &PipelineInfo{
 		Name:          pipeline.Name,
 		Trigger:       pipeline.Trigger,
+		EntryStepID:   firstEntryStepID(pipeline.EntryNodeIDs),
 		ExecutionMode: pipeline.ExecutionMode,
 		Timeout:       pipeline.Timeout,
 	}
@@ -247,12 +248,20 @@ func (r *Router) PipelineSummary() []PipelineInfo {
 		out = append(out, PipelineInfo{
 			Name:          name,
 			Trigger:       pipeline.Trigger,
+			EntryStepID:   firstEntryStepID(pipeline.EntryNodeIDs),
 			ExecutionMode: pipeline.ExecutionMode,
 			Timeout:       pipeline.Timeout,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func firstEntryStepID(entryNodeIDs []string) string {
+	if len(entryNodeIDs) == 0 {
+		return ""
+	}
+	return entryNodeIDs[0]
 }
 
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {

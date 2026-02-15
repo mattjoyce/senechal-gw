@@ -63,7 +63,7 @@ func TestHandleTrigger_SyncSuccess(t *testing.T) {
 	}
 
 	hub := events.NewHub(10)
-	server := New(Config{APIKey: "test"}, q, reg, rt, wt, hub, slog.Default())
+	server := New(Config{APIKey: "test"}, q, reg, rt, wt, nil, hub, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/poll", nil)
 	req.Header.Set("Authorization", "Bearer test")
@@ -127,7 +127,7 @@ func TestHandleTrigger_SyncTimeout(t *testing.T) {
 	}
 
 	hub := events.NewHub(10)
-	server := New(Config{APIKey: "test"}, q, reg, rt, wt, hub, slog.Default())
+	server := New(Config{APIKey: "test"}, q, reg, rt, wt, nil, hub, slog.Default())
 
 	req := httptest.NewRequest(http.MethodPost, "/trigger/echo/poll", nil)
 	req.Header.Set("Authorization", "Bearer test")
@@ -185,7 +185,7 @@ func TestHandleTrigger_SyncLimitReached(t *testing.T) {
 
 	// Create server with limit of 1
 	hub := events.NewHub(10)
-	server := New(Config{APIKey: "test", MaxConcurrentSync: 1}, q, reg, rt, wt, hub, slog.Default())
+	server := New(Config{APIKey: "test", MaxConcurrentSync: 1}, q, reg, rt, wt, nil, hub, slog.Default())
 
 	// Occupy the semaphore
 	server.syncSemaphore <- struct{}{}

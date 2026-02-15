@@ -1053,7 +1053,7 @@ func runStart(args []string) int {
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
 		}
-		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, hub, log.WithComponent("api"))
+		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
 		go func() {
 			if err := apiServer.Start(ctx); err != nil && err != context.Canceled {
 				errCh <- fmt.Errorf("api: %w", err)

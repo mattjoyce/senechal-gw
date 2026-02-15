@@ -1,6 +1,6 @@
 # Bug 101 — API trigger handler does not create EventContext for pipeline jobs
 
-**Status:** backlog
+**Status:** done
 **Priority:** high
 **Created:** 2026-02-15
 
@@ -71,3 +71,8 @@ curl -X POST http://localhost:8080/trigger/jina-reader/handle \
 - `internal/router/engine.go:96-113` — Next() skips successors when SourcePipeline empty
 - `internal/state/context_store.go` — ContextStore.Create() method
 - `internal/queue/types.go` — EnqueueRequest already has EventContextID field
+
+## Narrative
+
+- 2026-02-15: Rebased `main` onto latest upstream and confirmed bug card existed without an implementation commit (card-only change). (by @codex)
+- 2026-02-15: Fixed API trigger flow to create root EventContext when trigger maps to a pipeline, wiring `EventContextID` into enqueued jobs so intra-pipeline successor routing works. Added regression tests for context creation success/failure and updated API server wiring to receive `ContextStore`. Verified with `go test ./... -count=1`. (by @codex)

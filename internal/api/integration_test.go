@@ -57,7 +57,7 @@ func TestAPIIntegration(t *testing.T) {
 		APIKey: "test-key-123",
 	}
 	hub := events.NewHub(10)
-	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, hub, slog.Default())
+	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, nil, hub, slog.Default())
 
 	// Start server in background
 	serverCtx, cancel := context.WithCancel(ctx)
