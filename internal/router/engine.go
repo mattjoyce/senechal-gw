@@ -260,6 +260,30 @@ func (r *Router) GetPipelineByName(name string) *PipelineInfo {
 	}
 }
 
+// GetEntryDispatches returns the initial jobs to enqueue when a pipeline is explicitly triggered.
+func (r *Router) GetEntryDispatches(pipelineName string, event protocol.Event) ([]Dispatch, error) {
+	pipeline, ok := r.set.Pipelines[pipelineName]
+	if !ok {
+		return nil, fmt.Errorf("pipeline %q not found", pipelineName)
+	}
+
+	var out []Dispatch
+	// Create a dummy request for resolution context
+	req := Request{
+		Event: event,
+	}
+
+	for _, nodeID := range pipeline.EntryNodeIDs {
+		dispatches, err := r.resolveNodeDispatches(pipelineName, nodeID, req)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dispatches...)
+	}
+
+	return out, nil
+}
+
 // PipelineSummary returns info about all loaded pipelines.
 func (r *Router) PipelineSummary() []PipelineInfo {
 	var out []PipelineInfo

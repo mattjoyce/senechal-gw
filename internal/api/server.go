@@ -13,6 +13,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/state"
@@ -35,6 +36,7 @@ type TreeWaiter interface {
 type PipelineRouter interface {
 	GetPipelineByTrigger(trigger string) *router.PipelineInfo
 	GetPipelineByName(name string) *router.PipelineInfo
+	GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error)
 }
 
 // EventContextStore defines the interface for creating event context lineage.

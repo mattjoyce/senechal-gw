@@ -84,6 +84,16 @@ func (m *mockRouter) GetPipelineByName(name string) *router.PipelineInfo {
 	return nil
 }
 
+func (m *mockRouter) GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+	return []router.Dispatch{
+		{
+			Plugin:  "echo",
+			Command: "handle",
+			Event:   event,
+		},
+	}, nil
+}
+
 // mockWaiter implements TreeWaiter for testing
 type mockWaiter struct {
 	waitForJobTreeFunc func(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error)
@@ -783,5 +793,84 @@ func TestHandleGetJob_NotFound(t *testing.T) {
 
 	if resp.Error != "job not found" {
 		t.Errorf("expected error 'job not found', got %s", resp.Error)
+	}
+}
+
+func TestHandlePluginTrigger_DirectExecution(t *testing.T) {
+	var capturedReq queue.EnqueueRequest
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			capturedReq = req
+			return "direct-job-123", nil
+		},
+	}
+
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name: "echo",
+				Commands: plugin.Commands{
+					{Name: "health", Type: plugin.CommandTypeRead},
+				},
+			},
+		},
+	}
+
+	server := newTestServer(q, reg)
+
+	req := httptest.NewRequest(http.MethodPost, "/plugin/echo/health", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d", rr.Code)
+	}
+
+	if capturedReq.Plugin != "echo" || capturedReq.Command != "health" {
+		t.Errorf("unexpected enqueue request: %+v", capturedReq)
+	}
+}
+
+func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
+	q := &mockQueue{
+		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
+			return "pipeline-root-job", nil
+		},
+	}
+
+	reg := &mockRegistry{}
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			if name == "test-pipe" {
+				return &router.PipelineInfo{
+					Name:    "test-pipe",
+					Trigger: "some.event",
+				}
+			}
+			return nil
+		},
+	}
+
+	server := newTestServer(q, reg)
+	server.router = rt
+
+	body := bytes.NewBufferString(`{"payload": {"input": "val"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", body)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d", rr.Code)
+	}
+
+	var resp TriggerResponse
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp.JobID != "pipeline-root-job" {
+		t.Errorf("expected job_id pipeline-root-job, got %s", resp.JobID)
 	}
 }

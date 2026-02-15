@@ -12,6 +12,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/api"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/storage"
@@ -21,6 +22,9 @@ type mockRouter struct{}
 
 func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo { return nil }
 func (m *mockRouter) GetPipelineByName(name string) *router.PipelineInfo       { return nil }
+func (m *mockRouter) GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+	return nil, nil
+}
 func (m *mockRouter) Next(ctx context.Context, req router.Request) ([]router.Dispatch, error) {
 	return nil, nil
 }

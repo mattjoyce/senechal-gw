@@ -42,11 +42,6 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	pipelineName := chi.URLParam(r, "pipeline")
 
-	// Find the pipeline by name
-	// Need a new method on router or check PipelineSummary
-	// For now, I'll use a hack if router doesn't support by-name lookup yet
-	// actually most router implementations should support this.
-	// I'll check interface.go
 	pipeline := s.router.GetPipelineByName(pipelineName)
 	if pipeline == nil {
 		s.writeError(w, http.StatusNotFound, "pipeline not found")
@@ -67,6 +62,29 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Prepare event for pipeline entry
+	event := protocol.Event{
+		Type:    "api.pipeline.trigger",
+		Payload: make(map[string]any),
+	}
+	if len(req.Payload) > 0 {
+		if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
+			s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
+			return
+		}
+	}
+
+	// Resolve entry dispatches
+	dispatches, err := s.router.GetEntryDispatches(pipelineName, event)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "failed to resolve pipeline entry: "+err.Error())
+		return
+	}
+	if len(dispatches) == 0 {
+		s.writeError(w, http.StatusInternalServerError, "pipeline has no entry points")
+		return
+	}
+
 	// Create event context for the pipeline
 	var eventContextID *string
 	if s.contextStore != nil {
@@ -80,39 +98,49 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
-	// Split trigger: first step plugin/command
-	parts := strings.SplitN(pipeline.Trigger, ".", 2)
-	if len(parts) != 2 {
-		s.writeError(w, http.StatusInternalServerError, "invalid pipeline trigger configuration")
-		return
-	}
+	var firstJobID string
 
-	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
-		Plugin:         parts[0],
-		Command:        parts[1],
-		Payload:        req.Payload,
-		SubmittedBy:    "api",
-		EventContextID: eventContextID,
-	})
-	if err != nil {
-		s.logger.Error("failed to enqueue pipeline job", "pipeline", pipelineName, "error", err)
-		s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
-		return
+	// For simplicity in this implementation, if there are multiple entry points, 
+	// we enqueue all but return the ID of the first one for tracking.
+	// In practice, explicit pipeline triggers usually have a single entry.
+	for i, d := range dispatches {
+		// Wrap payload for handle command
+		enqueuePayload := req.Payload
+		if d.Command == "handle" {
+			enqueuePayload, _ = json.Marshal(event)
+		}
+
+		jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
+			Plugin:         d.Plugin,
+			Command:        d.Command,
+			Payload:        enqueuePayload,
+			SubmittedBy:    "api",
+			EventContextID: eventContextID,
+		})
+		if err != nil {
+			s.logger.Error("failed to enqueue pipeline job", "pipeline", pipelineName, "plugin", d.Plugin, "error", err)
+			if i == 0 {
+				s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
+				return
+			}
+			continue
+		}
+		if i == 0 {
+			firstJobID = jobID
+		}
 	}
 
 	s.events.Publish("pipeline.enqueued", map[string]any{
 		"at":           time.Now().UTC().Format(time.RFC3339Nano),
-		"job_id":       jobID,
+		"job_id":       firstJobID,
 		"pipeline":     pipelineName,
 		"submitted_by": "api",
 	})
 
-	s.logger.Info("pipeline enqueued via API", "job_id", jobID, "pipeline", pipelineName)
+	s.logger.Info("pipeline enqueued via API", "job_id", firstJobID, "pipeline", pipelineName)
 
 	forceAsync := r.URL.Query().Get("async") == "true"
 	if pipeline.ExecutionMode == "synchronous" && !forceAsync {
-		// (Logic identical to handleTrigger sync part - should be refactored)
-		// I will copy it for now to ensure Option A works.
 		select {
 		case s.syncSemaphore <- struct{}{}:
 			defer func() { <-s.syncSemaphore }()
@@ -126,11 +154,11 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			waitTimeout = s.config.MaxSyncTimeout
 		}
 
-		results, err := s.waiter.WaitForJobTree(r.Context(), jobID, waitTimeout)
+		results, err := s.waiter.WaitForJobTree(r.Context(), firstJobID, waitTimeout)
 		if err != nil {
 			if err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "timeout") {
 				respondJSON(w, http.StatusAccepted, TimeoutResponse{
-					JobID:           jobID,
+					JobID:           firstJobID,
 					Status:          "running",
 					TimeoutExceeded: true,
 					Message:         "Pipeline still running after timeout.",
@@ -141,30 +169,35 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Process results (similar to handleTrigger)
+		// Process results (Fixed consistency with handleTrigger)
 		var tree []JobResultData
 		var rootResult json.RawMessage
 		finalStatus := string(queue.StatusSucceeded)
 		var terminalResult json.RawMessage
 
 		for _, res := range results {
-			if res.JobID == jobID {
+			if res.JobID == firstJobID {
 				rootResult = res.Result
 			}
-			if res.Status != queue.StatusSucceeded {
+			// If any job failed, the overall tree status is failed (for the purpose of the response)
+			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
 				finalStatus = string(res.Status)
 			}
+			
 			for _, termStepID := range pipeline.TerminalStepIDs {
 				if res.StepID == termStepID {
 					terminalResult = res.Result
 				}
 			}
 			tree = append(tree, JobResultData{
-				JobID:   res.JobID,
-				Plugin:  res.Plugin,
-				Command: res.Command,
-				Status:  string(res.Status),
-				Result:  res.Result,
+				JobID:       res.JobID,
+				Plugin:      res.Plugin,
+				Command:     res.Command,
+				Status:      string(res.Status),
+				Result:      res.Result,
+				LastError:   res.LastError,
+				StartedAt:   res.StartedAt,
+				CompletedAt: res.CompletedAt,
 			})
 		}
 
@@ -174,7 +207,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 
 		respondJSON(w, http.StatusOK, SyncResponse{
-			JobID:      jobID,
+			JobID:      firstJobID,
 			Status:     finalStatus,
 			DurationMs: time.Since(startTime).Milliseconds(),
 			Result:     finalResult,
@@ -184,10 +217,10 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusAccepted, TriggerResponse{
-		JobID:   jobID,
+		JobID:   firstJobID,
 		Status:  "queued",
-		Plugin:  parts[0],
-		Command: parts[1],
+		Plugin:  "pipeline",
+		Command: pipelineName,
 	})
 }
 

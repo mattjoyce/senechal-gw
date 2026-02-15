@@ -51,4 +51,6 @@ type Engine interface {
 	GetPipelineByTrigger(trigger string) *PipelineInfo
 	// GetPipelineByName returns a pipeline by its unique name.
 	GetPipelineByName(name string) *PipelineInfo
+	// GetEntryDispatches returns the initial jobs to enqueue for a named pipeline.
+	GetEntryDispatches(pipelineName string, event protocol.Event) ([]Dispatch, error)
 }
