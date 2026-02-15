@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -218,6 +219,7 @@ System Commands:
   system status     Show global gateway health
   system reset      Reset a plugin poll circuit breaker
   system watch      Real-time diagnostic monitoring TUI
+  system skills     Export capability registry as LLM-readable Markdown
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
@@ -321,6 +323,8 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemReset(actionArgs)
+	case "skills":
+		return runSystemSkills(actionArgs)
 	case "watch":
 		if hasHelpFlag(actionArgs) {
 			printSystemWatchHelp()
@@ -835,6 +839,75 @@ func runSystemReset(actionArgs []string) int {
 	}
 
 	fmt.Printf("Reset circuit breaker for %s (poll)\n", pluginName)
+	return 0
+}
+
+func runSystemSkills(args []string) int {
+	fs := flag.NewFlagSet("skills", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	registry, err := plugin.Discover(cfg.PluginsDir, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
+		return 1
+	}
+
+	plugins := registry.All()
+	var names []string
+	for name := range plugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	fmt.Println("## Plugin Skills (Auto-generated)")
+	fmt.Println()
+	fmt.Println("The following skills are available based on currently registered plugins. Use `trigger` via API to invoke them.")
+	fmt.Println()
+
+	for _, name := range names {
+		p := plugins[name]
+		fmt.Printf("### %s\n", p.Name)
+		if p.Description != "" {
+			fmt.Printf("**Description:** %s\n\n", p.Description)
+		} else {
+			fmt.Println("**Description:** (No description provided)")
+			fmt.Println()
+		}
+
+		fmt.Println("**Actions:**")
+		for _, cmd := range p.Commands {
+			tier := "WRITE"
+			if cmd.Type == plugin.CommandTypeRead {
+				tier = "READ"
+			}
+			desc := cmd.Description
+			if desc == "" {
+				desc = "(No action description)"
+			}
+			fmt.Printf("- `%s`: [%s] %s\n", cmd.Name, tier, desc)
+		}
+		fmt.Println()
+	}
+
 	return 0
 }
 
