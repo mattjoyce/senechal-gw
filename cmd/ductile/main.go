@@ -33,6 +33,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 	"github.com/mattjoyce/ductile/internal/tui"
+	"github.com/mattjoyce/ductile/internal/tui/watch"
 	"github.com/mattjoyce/ductile/internal/webhook"
 	"github.com/mattjoyce/ductile/internal/workspace"
 	"gopkg.in/yaml.v3"
@@ -209,6 +210,7 @@ Core Resources (Nouns):
 System Commands:
   system start      Start the gateway service in foreground
   system status     Show global gateway health
+  system watch      Real-time diagnostic monitoring TUI
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
@@ -305,6 +307,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runMonitor(actionArgs)
+	case "watch":
+		if hasHelpFlag(actionArgs) {
+			printSystemWatchHelp()
+			return 0
+		}
+		return runWatch(actionArgs)
 	case "help":
 		printSystemNounHelp(os.Stdout)
 		return 0
@@ -697,7 +705,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status, monitor")
+	fmt.Fprintln(w, "Actions: start, status, monitor, watch")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -755,6 +763,44 @@ func runMonitor(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func runWatch(args []string) int {
+	fs := flag.NewFlagSet("watch", flag.ExitOnError)
+	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
+	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if *apiKey == "" {
+		fmt.Fprintln(os.Stderr, "Error: API key required. Use --api-key or DUCTILE_API_KEY env var.")
+		return 1
+	}
+
+	m := watch.New(*apiURL, *apiKey)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func printSystemWatchHelp() {
+	fmt.Println("Usage: ductile system watch [flags]")
+	fmt.Println()
+	fmt.Println("Real-time diagnostic monitoring TUI (Overwatch).")
+	fmt.Println("Shows gateway health, active pipelines, and event stream.")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  --api-url URL    Gateway API URL (default: http://localhost:8080)")
+	fmt.Println("  --api-key KEY    API Bearer Token (or DUCTILE_API_KEY env var)")
+	fmt.Println()
+	fmt.Println("Keybindings:")
+	fmt.Println("  q, Ctrl+C        Quit")
+	fmt.Println("  ↑/↓, k/j         Navigate pipelines")
 }
 
 func printConfigLockHelp() {
