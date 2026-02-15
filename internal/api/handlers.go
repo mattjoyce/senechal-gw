@@ -62,9 +62,9 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Prepare event for pipeline entry
+	// Prepare event for pipeline entry using the actual pipeline trigger type
 	event := protocol.Event{
-		Type:    "api.pipeline.trigger",
+		Type:    pipeline.Trigger,
 		Payload: make(map[string]any),
 	}
 	if len(req.Payload) > 0 {
@@ -85,25 +85,26 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create event context for the pipeline
-	var eventContextID *string
-	if s.contextStore != nil {
-		root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, pipeline.EntryStepID, json.RawMessage(`{}`))
-		if err != nil {
-			s.logger.Error("failed to create event context for pipeline", "pipeline", pipeline.Name, "error", err)
-			s.writeError(w, http.StatusInternalServerError, "failed to create event context")
-			return
-		}
-		eventContextID = &root.ID
-	}
-
 	startTime := time.Now()
 	var firstJobID string
+	var enqueuedIDs []string
 
-	// For simplicity in this implementation, if there are multiple entry points, 
-	// we enqueue all but return the ID of the first one for tracking.
-	// In practice, explicit pipeline triggers usually have a single entry.
-	for i, d := range dispatches {
+	// Enqueue each entry point
+	for _, d := range dispatches {
+		// Create a unique event context for each entry step to preserve lineage/step identity
+		var eventContextID *string
+		if s.contextStore != nil {
+			// Each entry step might be different in a split-root pipeline
+			ctxRec, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, d.StepID, json.RawMessage(`{}`))
+			if err != nil {
+				s.logger.Error("failed to create event context for pipeline step", "pipeline", pipeline.Name, "step_id", d.StepID, "error", err)
+				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
+				// Atomicity: would be better to "undo" previous enqueues, but for now we hard-fail
+				return
+			}
+			eventContextID = &ctxRec.ID
+		}
+
 		// Wrap payload for handle command
 		enqueuePayload := req.Payload
 		if d.Command == "handle" {
@@ -119,20 +120,19 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.logger.Error("failed to enqueue pipeline job", "pipeline", pipelineName, "plugin", d.Plugin, "error", err)
-			if i == 0 {
-				s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
-				return
-			}
-			continue
+			s.writeError(w, http.StatusInternalServerError, "failed to enqueue job (partial start prevented)")
+			return
 		}
-		if i == 0 {
+		if firstJobID == "" {
 			firstJobID = jobID
 		}
+		enqueuedIDs = append(enqueuedIDs, jobID)
 	}
 
 	s.events.Publish("pipeline.enqueued", map[string]any{
 		"at":           time.Now().UTC().Format(time.RFC3339Nano),
 		"job_id":       firstJobID,
+		"job_ids":      enqueuedIDs,
 		"pipeline":     pipelineName,
 		"submitted_by": "api",
 	})

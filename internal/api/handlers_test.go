@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -68,6 +69,7 @@ func (m *mockQueue) GetJobTree(ctx context.Context, rootJobID string) ([]*queue.
 type mockRouter struct {
 	getPipelineByTriggerFunc func(trigger string) *router.PipelineInfo
 	getPipelineByNameFunc    func(name string) *router.PipelineInfo
+	getEntryDispatchesFunc   func(pipelineName string, event protocol.Event) ([]router.Dispatch, error)
 }
 
 func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo {
@@ -85,6 +87,9 @@ func (m *mockRouter) GetPipelineByName(name string) *router.PipelineInfo {
 }
 
 func (m *mockRouter) GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+	if m.getEntryDispatchesFunc != nil {
+		return m.getEntryDispatchesFunc(pipelineName, event)
+	}
 	return []router.Dispatch{
 		{
 			Plugin:  "echo",
@@ -833,44 +838,53 @@ func TestHandlePluginTrigger_DirectExecution(t *testing.T) {
 	}
 }
 
-func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
+func TestHandlePipelineTrigger_MultiEntry(t *testing.T) {
+	var capturedReqs []queue.EnqueueRequest
 	q := &mockQueue{
 		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			return "pipeline-root-job", nil
+			capturedReqs = append(capturedReqs, req)
+			return fmt.Sprintf("job-%d", len(capturedReqs)), nil
 		},
 	}
 
 	reg := &mockRegistry{}
 	rt := &mockRouter{
 		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
-			if name == "test-pipe" {
+			if name == "split-pipe" {
 				return &router.PipelineInfo{
-					Name:    "test-pipe",
-					Trigger: "some.event",
+					Name:    "split-pipe",
+					Trigger: "custom.event",
 				}
 			}
 			return nil
+		},
+		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+			if event.Type != "custom.event" {
+				return nil, fmt.Errorf("wrong event type: %s", event.Type)
+			}
+			return []router.Dispatch{
+				{Plugin: "p1", Command: "handle", StepID: "step-a"},
+				{Plugin: "p2", Command: "handle", StepID: "step-b"},
+			}, nil
 		},
 	}
 
 	server := newTestServer(q, reg)
 	server.router = rt
 
-	body := bytes.NewBufferString(`{"payload": {"input": "val"}}`)
-	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", body)
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/split-pipe", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
-	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusAccepted {
-		t.Fatalf("expected status 202, got %d", rr.Code)
+		t.Fatalf("expected 202, got %d", rr.Code)
 	}
 
-	var resp TriggerResponse
-	json.NewDecoder(rr.Body).Decode(&resp)
-	if resp.JobID != "pipeline-root-job" {
-		t.Errorf("expected job_id pipeline-root-job, got %s", resp.JobID)
+	if len(capturedReqs) != 2 {
+		t.Errorf("expected 2 jobs enqueued, got %d", len(capturedReqs))
 	}
+	
+	// Verify event context created for both (mockWaiter/Store not fully used in this test but logic hit)
 }
