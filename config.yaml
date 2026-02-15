@@ -1,5 +1,5 @@
 # Ductile Configuration
-# See SPEC.md §11 for full reference
+# See docs/ARCHITECTURE.md §11 for full reference
 
 service:
   name: ductile
