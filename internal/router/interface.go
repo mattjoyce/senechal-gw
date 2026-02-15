@@ -49,4 +49,6 @@ type Engine interface {
 	Next(ctx context.Context, req Request) ([]Dispatch, error)
 	// GetPipelineByTrigger returns the first pipeline matched by a trigger event.
 	GetPipelineByTrigger(trigger string) *PipelineInfo
+	// GetPipelineByName returns a pipeline by its unique name.
+	GetPipelineByName(name string) *PipelineInfo
 }

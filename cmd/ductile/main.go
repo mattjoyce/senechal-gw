@@ -909,7 +909,8 @@ func runSystemSkills(args []string) int {
 	sort.Strings(pNames)
 
 	fmt.Println("## 2. Atomic Plugin Skills")
-	fmt.Println("Invoke these via `POST /trigger/{plugin}/{command}`.")
+	fmt.Println("Invoke these directly via `POST /plugin/{plugin}/{command}`.")
+	fmt.Println("Bypasses automated pipeline routing.")
 	fmt.Println()
 
 	for _, name := range pNames {
@@ -936,7 +937,8 @@ func runSystemSkills(args []string) int {
 			pipelines := r.PipelineSummary()
 			if len(pipelines) > 0 {
 				fmt.Println("## 3. Orchestrated Pipeline Skills")
-				fmt.Println("High-level workflows triggered by events or direct API calls.")
+				fmt.Println("High-level workflows triggered by direct API calls.")
+				fmt.Println("Invoke these via `POST /pipeline/{name}`.")
 				fmt.Println()
 				for _, p := range pipelines {
 					mode := "ASYNC"
@@ -944,7 +946,8 @@ func runSystemSkills(args []string) int {
 						mode = "SYNC (Blocks for result)"
 					}
 					fmt.Printf("### %s\n", p.Name)
-					fmt.Printf("- **Trigger:** `%s`\n", p.Trigger)
+					fmt.Printf("- **Endpoint:** `/pipeline/%s`\n", p.Name)
+					fmt.Printf("- **Trigger Event:** `%s`\n", p.Trigger)
 					fmt.Printf("- **Mode:** %s\n", mode)
 					fmt.Println()
 				}

@@ -1,55 +1,57 @@
-# Ductile Operator Skill Manifest
+# Ductile Gateway: LLM Operator Skill Manifest
 
-This document defines the capabilities ("Skills") of the Ductile Gateway for LLM-based operators. All interactions with the gateway should follow the **NOUN ACTION** pattern.
+This manifest describes the capabilities of the current Ductile instance.
 
-## Core Gateway Utilities
+## 1. Core CLI Skills
+Use these via direct CLI execution. Prefer `--json` for structured data.
 
-These skills are used to manage the gateway's state, integrity, and observability.
+### config
+- `config check`: Validate syntax, policy, and integrity.
+- `config lock`: Authorize current state (re-generate hashes).
+- `config show [entity]`: View resolved configuration.
+- `config get <path>`: Read specific config values.
+- `config set <path>=<val>`: Update config (use `--dry-run` first).
 
-### Skill: system
-**Purpose:** Manage gateway lifecycle and health.
+### system
+- `system status`: Check gateway health and PID lock.
+- `system reset <plugin>`: Reset a tripped circuit breaker.
+- `system watch`: Real-time diagnostic TUI.
 
-- `system start [--config PATH]`: Start the gateway service.
-- `system status [--json]`: Check global health (config, DB, PID lock).
-- `system monitor`: Launch the real-time TUI dashboard (Human only).
-- `system watch`: Alias for monitor.
-- `system reset <plugin>`: Manually reset a plugin's circuit breaker.
+### job
+- `job inspect <job_id>`: Retrieve logs and lineage for a job.
 
-### Skill: config
-**Purpose:** Manage system configuration and integrity.
-
-- `config check [--json]`: Validate syntax, policy, and integrity hashes.
-- `config lock`: Authorize current state (re-generate BLAKE3 hashes).
-- `config show [entity] [--json]`: View the fully resolved configuration.
-- `config get <path> [--json]`: Read a specific configuration value (e.g., `service.name`).
-- `config set <path>=<value> [--dry-run | --apply]`: Safely update configuration.
-- `config token create --name <name> [--tui]`: Create a new scoped API token.
-
-### Skill: job
-**Purpose:** Inspect execution history and lineage.
-
-- `job inspect <job_id> [--json]`: Retrieve logs, baggage, and workspace artifacts for a specific job.
-
----
-
-## Plugin Skills (Auto-generated)
-
-> **Note:** To re-generate this section with the latest plugin registry, run:  
-> `ductile system skills >> SKILL.md` (and remove the old section).
-
-The following skills are available based on currently registered plugins. Use `trigger` via API to invoke them.
+## 2. Atomic Plugin Skills
+Invoke these directly via `POST /plugin/{plugin}/{command}`.
+Bypasses automated pipeline routing.
 
 ### echo
-**Description:** A demonstration plugin that echoes input and provides health status.
+**Description:** A demonstration plugin that echoes input, emits events, and demonstrates protocol v2 state merging.
 
 **Actions:**
-- `poll`: [WRITE] Emits echo.poll events and updates last_run.
-- `health`: [READ] Returns current health status and version.
+- `poll`: [WRITE] Emits echo.poll events and updates the internal last_run timestamp.
+- `health`: [READ] Returns the current health status and plugin version.
 
----
+### fabric
+**Description:** Wrapper for fabric AI pattern tool - processes text through predefined patterns
 
-## Operator Rules
-1. **Prefer JSON:** Always use `--json` for inspection actions to ensure structured reasoning.
-2. **Integrity First:** If configuration is modified, you MUST run `config lock` before restarting the service.
-3. **Dry-run Mutations:** Use `--dry-run` with `config set` to validate changes before application.
-4. **Lineage Tracking:** Use `job inspect` to understand why a downstream pipeline was triggered.
+**Actions:**
+- `poll`: [WRITE] 
+- `handle`: [WRITE] 
+- `health`: [READ] 
+
+### file_handler
+**Description:** Read and write local files with path restrictions
+
+**Actions:**
+- `poll`: [WRITE] 
+- `handle`: [WRITE] 
+- `health`: [READ] 
+
+### youtube_transcript
+**Description:** Fetch YouTube video transcripts from URL or video ID
+
+**Actions:**
+- `poll`: [WRITE] 
+- `handle`: [WRITE] 
+- `health`: [READ] 
+

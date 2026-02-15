@@ -67,11 +67,19 @@ func (m *mockQueue) GetJobTree(ctx context.Context, rootJobID string) ([]*queue.
 // mockRouter implements PipelineRouter for testing
 type mockRouter struct {
 	getPipelineByTriggerFunc func(trigger string) *router.PipelineInfo
+	getPipelineByNameFunc    func(name string) *router.PipelineInfo
 }
 
 func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo {
 	if m.getPipelineByTriggerFunc != nil {
 		return m.getPipelineByTriggerFunc(trigger)
+	}
+	return nil
+}
+
+func (m *mockRouter) GetPipelineByName(name string) *router.PipelineInfo {
+	if m.getPipelineByNameFunc != nil {
+		return m.getPipelineByNameFunc(name)
 	}
 	return nil
 }

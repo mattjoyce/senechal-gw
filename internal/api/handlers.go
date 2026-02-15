@@ -37,8 +37,244 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// handlePipelineTrigger handles POST /pipeline/{pipeline}
+// Explicitly triggers a named pipeline.
+func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
+	pipelineName := chi.URLParam(r, "pipeline")
+
+	// Find the pipeline by name
+	// Need a new method on router or check PipelineSummary
+	// For now, I'll use a hack if router doesn't support by-name lookup yet
+	// actually most router implementations should support this.
+	// I'll check interface.go
+	pipeline := s.router.GetPipelineByName(pipelineName)
+	if pipeline == nil {
+		s.writeError(w, http.StatusNotFound, "pipeline not found")
+		return
+	}
+
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	if !auth.HasAnyScope(principal, "plugin:rw", "*") {
+		s.writeError(w, http.StatusForbidden, "insufficient scope to trigger pipeline")
+		return
+	}
+
+	var req TriggerRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+	}
+
+	// Create event context for the pipeline
+	var eventContextID *string
+	if s.contextStore != nil {
+		root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, pipeline.EntryStepID, json.RawMessage(`{}`))
+		if err != nil {
+			s.logger.Error("failed to create event context for pipeline", "pipeline", pipeline.Name, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "failed to create event context")
+			return
+		}
+		eventContextID = &root.ID
+	}
+
+	startTime := time.Now()
+	// Split trigger: first step plugin/command
+	parts := strings.SplitN(pipeline.Trigger, ".", 2)
+	if len(parts) != 2 {
+		s.writeError(w, http.StatusInternalServerError, "invalid pipeline trigger configuration")
+		return
+	}
+
+	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
+		Plugin:         parts[0],
+		Command:        parts[1],
+		Payload:        req.Payload,
+		SubmittedBy:    "api",
+		EventContextID: eventContextID,
+	})
+	if err != nil {
+		s.logger.Error("failed to enqueue pipeline job", "pipeline", pipelineName, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
+		return
+	}
+
+	s.events.Publish("pipeline.enqueued", map[string]any{
+		"at":           time.Now().UTC().Format(time.RFC3339Nano),
+		"job_id":       jobID,
+		"pipeline":     pipelineName,
+		"submitted_by": "api",
+	})
+
+	s.logger.Info("pipeline enqueued via API", "job_id", jobID, "pipeline", pipelineName)
+
+	forceAsync := r.URL.Query().Get("async") == "true"
+	if pipeline.ExecutionMode == "synchronous" && !forceAsync {
+		// (Logic identical to handleTrigger sync part - should be refactored)
+		// I will copy it for now to ensure Option A works.
+		select {
+		case s.syncSemaphore <- struct{}{}:
+			defer func() { <-s.syncSemaphore }()
+		default:
+			s.writeError(w, http.StatusServiceUnavailable, "too many concurrent synchronous requests")
+			return
+		}
+
+		waitTimeout := pipeline.Timeout
+		if s.config.MaxSyncTimeout > 0 && waitTimeout > s.config.MaxSyncTimeout {
+			waitTimeout = s.config.MaxSyncTimeout
+		}
+
+		results, err := s.waiter.WaitForJobTree(r.Context(), jobID, waitTimeout)
+		if err != nil {
+			if err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+				respondJSON(w, http.StatusAccepted, TimeoutResponse{
+					JobID:           jobID,
+					Status:          "running",
+					TimeoutExceeded: true,
+					Message:         "Pipeline still running after timeout.",
+				})
+				return
+			}
+			s.writeError(w, http.StatusInternalServerError, "wait failed: "+err.Error())
+			return
+		}
+
+		// Process results (similar to handleTrigger)
+		var tree []JobResultData
+		var rootResult json.RawMessage
+		finalStatus := string(queue.StatusSucceeded)
+		var terminalResult json.RawMessage
+
+		for _, res := range results {
+			if res.JobID == jobID {
+				rootResult = res.Result
+			}
+			if res.Status != queue.StatusSucceeded {
+				finalStatus = string(res.Status)
+			}
+			for _, termStepID := range pipeline.TerminalStepIDs {
+				if res.StepID == termStepID {
+					terminalResult = res.Result
+				}
+			}
+			tree = append(tree, JobResultData{
+				JobID:   res.JobID,
+				Plugin:  res.Plugin,
+				Command: res.Command,
+				Status:  string(res.Status),
+				Result:  res.Result,
+			})
+		}
+
+		finalResult := terminalResult
+		if finalResult == nil {
+			finalResult = rootResult
+		}
+
+		respondJSON(w, http.StatusOK, SyncResponse{
+			JobID:      jobID,
+			Status:     finalStatus,
+			DurationMs: time.Since(startTime).Milliseconds(),
+			Result:     finalResult,
+			Tree:       tree,
+		})
+		return
+	}
+
+	respondJSON(w, http.StatusAccepted, TriggerResponse{
+		JobID:   jobID,
+		Status:  "queued",
+		Plugin:  parts[0],
+		Command: parts[1],
+	})
+}
+
+// handlePluginTrigger handles POST /plugin/{plugin}/{command}
+// Bypasses router and executes the plugin directly.
+func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
+	pluginName := chi.URLParam(r, "plugin")
+	commandName := chi.URLParam(r, "command")
+
+	plug, ok := s.registry.Get(pluginName)
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "plugin not found")
+		return
+	}
+
+	if !plug.SupportsCommand(commandName) {
+		s.writeError(w, http.StatusBadRequest, "command not supported by plugin")
+		return
+	}
+
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	cmdType, _ := plug.CommandTypeFor(commandName)
+	if cmdType != plugin.CommandTypeRead {
+		if !auth.HasAnyScope(principal, "plugin:rw", "*") {
+			s.writeError(w, http.StatusForbidden, "insufficient scope")
+			return
+		}
+	}
+
+	var req TriggerRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+	}
+
+	enqueuePayload := req.Payload
+	if commandName == "handle" {
+		event := protocol.Event{
+			Type:    "api.trigger",
+			Payload: make(map[string]any),
+		}
+		if len(req.Payload) > 0 {
+			if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
+				s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
+				return
+			}
+		}
+		enqueuePayload, _ = json.Marshal(event)
+	}
+
+	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
+		Plugin:      pluginName,
+		Command:     commandName,
+		Payload:     enqueuePayload,
+		SubmittedBy: "api",
+	})
+	if err != nil {
+		s.logger.Error("failed to enqueue job", "plugin", pluginName, "command", commandName, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
+		return
+	}
+
+	s.events.Publish("job.enqueued", map[string]any{
+		"at":           time.Now().UTC().Format(time.RFC3339Nano),
+		"job_id":       jobID,
+		"plugin":       pluginName,
+		"command":      commandName,
+		"submitted_by": "api",
+		"direct":       true,
+	})
+
+	s.logger.Info("plugin job enqueued directly via API", "job_id", jobID, "plugin", pluginName, "command", commandName)
+
+	respondJSON(w, http.StatusAccepted, TriggerResponse{
+		JobID:   jobID,
+		Status:  "queued",
+		Plugin:  pluginName,
+		Command: commandName,
+	})
+}
+
 // handleTrigger handles POST /trigger/{plugin}/{command}
+// DEPRECATED: Use /plugin/{plugin}/{command} for direct execution or /pipeline/{name} for pipelines.
 func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Ductile-Deprecation", "The /trigger endpoint is ambiguous and will be removed in a future version. Use /plugin or /pipeline instead.")
 	pluginName := chi.URLParam(r, "plugin")
 	commandName := chi.URLParam(r, "command")
 

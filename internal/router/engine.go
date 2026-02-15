@@ -242,6 +242,24 @@ func (r *Router) GetPipelineByTrigger(trigger string) *PipelineInfo {
 	}
 }
 
+// GetPipelineByName returns info about a pipeline by its name.
+func (r *Router) GetPipelineByName(name string) *PipelineInfo {
+	r.logger.Debug("looking up pipeline by name", "name", name)
+	pipeline, ok := r.set.Pipelines[name]
+	if !ok {
+		return nil
+	}
+
+	return &PipelineInfo{
+		Name:            pipeline.Name,
+		Trigger:         pipeline.Trigger,
+		EntryStepID:     firstEntryStepID(pipeline.EntryNodeIDs),
+		TerminalStepIDs: append([]string(nil), pipeline.TerminalNodeIDs...),
+		ExecutionMode:   pipeline.ExecutionMode,
+		Timeout:         pipeline.Timeout,
+	}
+}
+
 // PipelineSummary returns info about all loaded pipelines.
 func (r *Router) PipelineSummary() []PipelineInfo {
 	var out []PipelineInfo

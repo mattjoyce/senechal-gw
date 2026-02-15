@@ -34,6 +34,7 @@ type TreeWaiter interface {
 // PipelineRouter defines the interface for looking up pipelines
 type PipelineRouter interface {
 	GetPipelineByTrigger(trigger string) *router.PipelineInfo
+	GetPipelineByName(name string) *router.PipelineInfo
 }
 
 // EventContextStore defines the interface for creating event context lineage.
@@ -147,6 +148,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/trigger/{plugin}/{command}", s.handleTrigger)
+		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
+		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
 	})

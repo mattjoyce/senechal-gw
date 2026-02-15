@@ -20,6 +20,10 @@ import (
 type mockRouter struct{}
 
 func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo { return nil }
+func (m *mockRouter) GetPipelineByName(name string) *router.PipelineInfo       { return nil }
+func (m *mockRouter) Next(ctx context.Context, req router.Request) ([]router.Dispatch, error) {
+	return nil, nil
+}
 
 type mockWaiter struct{}
 
