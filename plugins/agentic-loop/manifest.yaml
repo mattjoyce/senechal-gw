@@ -1,0 +1,24 @@
+name: agentic-loop
+version: 0.1.0
+protocol: 2
+entrypoint: run.sh
+description: "Resumable multi-turn agent loop plugin implemented in Go"
+commands:
+  - name: poll
+    type: read
+    description: "No-op poll status update"
+  - name: handle
+    type: write
+    description: "Handle start and resume events for agentic runs"
+  - name: health
+    type: read
+    description: "Validate runtime configuration"
+config_keys:
+  required: []
+  optional:
+    - max_loops
+    - max_reframes
+    - allowed_plugins
+    - default_tool
+    - default_tool_command
+    - skills_command

@@ -1,8 +1,8 @@
 ---
 id: 104
-status: todo
+status: doing
 priority: High
-blocked_by: [103]
+blocked_by: []
 assignee: "@gemini"
 tags: [plugin, agent, llm, eino, golang]
 ---
@@ -57,15 +57,34 @@ Each "Turn" (triggered by an event) follows this sequence:
 1. **Load:** Read current state from the database and `.md` files in the workspace.
 2. **Phase: Frame:** (Turn 1 only) Analyze `context.md` and write the "Definition of Done" to `memory.md`.
 3. **Phase: Plan:** Look at `memory.md` and `skills.md`. Update `plan.md` with the "Next Action."
-4. **Phase: Act:** Emit the `agentic.tool_request` event and save `pending_tool` to the database.
+4. **Phase: Act:** Emit the `agentic.tool_request.<tool>` event and save `pending_tool` to the database.
 5. **Phase: Reflect:** (Resume turns only) Update `memory.md` with the tool result, check if the goal is met, and decide to `continue` or `finish`.
 
 ## Acceptance Criteria
-- [ ] Go-based plugin using Eino for LLM orchestration.
-- [ ] Automatically creates and maintains all 5 Markdown files.
-- [ ] Correctly resumes execution using `run_id` and `step` correlation.
-- [ ] Enforces `max_loops` safety limit.
+- [ ] Go-based plugin using Eino for LLM orchestration. (MVP Go plugin implemented; Eino wiring pending)
+- [x] Automatically creates and maintains all 5 Markdown files.
+- [x] Correctly resumes execution using `run_id` and `step` correlation.
+- [x] Enforces `max_loops` safety limit.
 - [ ] Emits `agent.completed` only when all "Definition of Done" items are checked.
+
+## Review Notes (Codex)
+
+1. Tool dispatch must be explicit in current DSL. Implemented as tool-specific event triggers:
+   - `agentic.tool_request.jina-reader`
+   - `agentic.tool_request.fabric`
+2. Resume events may not come back as `agentic.tool_result`; pipeline steps preserve correlation in protocol `context`. Plugin now synthesizes resume from `context.run_id`, `context.step`, and `context.tool`.
+3. `tool_payload` flattening can overwrite correlation keys unless protected. Implementation now keeps `run_id`, `step`, `tool`, and `tool_command` immutable in emitted request payloads.
+4. Step mismatch must terminate run state, not return transient error. Implementation escalates (`agent.escalated`) and persists run as terminal.
+
+## Testing Notes
+
+- `go test ./...` passes with new plugin package tests.
+- Added tests for:
+  - start -> tool request event type and workspace file creation
+  - context-based resume -> next-step tool request
+  - step mismatch -> persisted escalation state
+- Manual runtime checks still needed against live plugin chain (`jina-reader`/`fabric`) in containerized environment.
 
 ## Narrative
 - 2026-02-16: Created card #104 with detailed workspace spec and safety limits. (by @gemini)
+- 2026-02-16: Reviewed card and removed ambiguity around routing/resume contracts; started implementation on `feature/104-go-agentic-loop` with Go-based `agentic-loop` plugin, executable entrypoint, pipeline triggers, workspace file generation, correlation validation, and tests. (by Codex)
