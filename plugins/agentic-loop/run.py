@@ -121,11 +121,15 @@ def make_tool_request_event(
         "tool_command": tool_command,
         "requested_at": now_iso(),
     }
-    # Flatten tool_payload into payload so downstream plugins
-    # receive fields (e.g. url, prompt) at the level they expect.
-    payload.update(tool_payload)
+    # Flatten tool_payload into payload so downstream plugins receive fields
+    # (e.g. url, prompt) at the level they expect. Reserved correlation keys
+    # must not be overridden by caller-provided payload.
+    for key, value in tool_payload.items():
+        if key in payload:
+            continue
+        payload[key] = value
     return {
-        "type": "agentic.tool_request",
+        "type": f"agentic.tool_request.{tool}",
         "payload": payload,
         "dedupe_key": f"agentic:run:{run_id}:step:{step}:request",
     }
@@ -240,9 +244,32 @@ def run_tool_result(
         )
 
     if step_num != pending_step:
-        return error_response(
-            f"protocol violation: step mismatch run_id={run_id} pending_step={pending_step} got={step_num}",
-            retry=False,
+        run["status"] = "escalated"
+        run["updated_at"] = now_iso()
+        runs[run_id] = run
+        return ok_response(
+            events=[
+                {
+                    "type": "agent.escalated",
+                    "payload": {
+                        "run_id": run_id,
+                        "reason": "step_mismatch",
+                        "expected_step": pending_step,
+                        "actual_step": step_num,
+                    },
+                }
+            ],
+            state_updates={"runs": runs},
+            logs=[
+                log(
+                    "error",
+                    (
+                        "run %s escalated: protocol violation step mismatch "
+                        "(expected=%s got=%s)"
+                    )
+                    % (run_id, pending_step, step_num),
+                )
+            ],
         )
 
     if tool != pending_tool:

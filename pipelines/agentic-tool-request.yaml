@@ -1,8 +1,16 @@
 pipelines:
   - name: agentic-tool-fetch
-    on: agentic.tool_request
+    on: agentic.tool_request.jina-reader
     steps:
       - id: fetch
         uses: jina-reader
+      - id: resume
+        uses: agentic-loop
+
+  - name: agentic-tool-fabric
+    on: agentic.tool_request.fabric
+    steps:
+      - id: fabric
+        uses: fabric
       - id: resume
         uses: agentic-loop

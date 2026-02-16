@@ -76,13 +76,13 @@ Each `agentic-loop` `handle` invocation performs exactly one turn:
 }
 ```
 
-### 2) Tool Request Event (agent -> tool plugin route target)
+### 2) Tool Request Event (agent -> tool-specific pipeline trigger)
 
-`type: agentic.tool_request`
+`type: agentic.tool_request.<tool>`
 
 ```json
 {
-  "type": "agentic.tool_request",
+  "type": "agentic.tool_request.jina-reader",
   "payload": {
     "run_id": "01JABC...",
     "step": 1,
@@ -143,18 +143,25 @@ Each `agentic-loop` `handle` invocation performs exactly one turn:
 This RFC requires explicit routes; no hidden orchestration.
 
 ```yaml
-routes:
-  - from: agentic-loop
-    event_type: agentic.tool_request
-    to: tool-router
+pipelines:
+  - name: agentic-tool-fetch
+    on: agentic.tool_request.jina-reader
+    steps:
+      - id: fetch
+        uses: jina-reader
+      - id: resume
+        uses: agentic-loop
 
-  - from: tool-router
-    event_type: agentic.tool_result
-    to: agentic-loop
+  - name: agentic-tool-fabric
+    on: agentic.tool_request.fabric
+    steps:
+      - id: fabric
+        uses: fabric
+      - id: resume
+        uses: agentic-loop
 ```
 
-`tool-router` is a simple plugin that reads `payload.tool` and emits a trigger event to the named tool plugin/command.  
-Alternative: replace `tool-router` with static routes if tool set is fixed.
+Use one pipeline per supported tool trigger. For MVP, static per-tool pipelines are explicit and easy to audit.
 
 ## Agent Plugin State Schema
 
@@ -210,7 +217,7 @@ Rules:
 - Agent process must return exit code `0` for successful turn completion.
 - Agent process must return protocol response with:
   - `status: ok` when turn succeeded (even if run is still in progress).
-  - `events` containing either `agentic.tool_request` or `agent.completed`.
+  - `events` containing either `agentic.tool_request.<tool>` or `agent.completed`.
   - `state_updates` with persisted run state changes.
 - Non-zero process exit is treated as failure by existing retry logic; do not use for control flow.
 
@@ -236,7 +243,7 @@ User asks: "fetch web http://mattjoyce.ai and produce a 2 para critique."
 4. Agent saves pending:
 - `pending_step=1`
 - `pending_tool=fetch`
-5. Agent emits `agentic.tool_request` and exits `status: ok`.
+5. Agent emits `agentic.tool_request.<tool>` and exits `status: ok`.
 6. Router sends request to fetch tool path.
 7. Fetch plugin writes HTML artifact and emits `agentic.tool_result` with `run_id=R1, step=1, tool=fetch`.
 8. Router sends `agentic.tool_result` to `agentic-loop`.
@@ -288,10 +295,19 @@ plugins:
 2. Implement run state load/save (`run_id`, step, pending fields).
 3. Implement `agentic.start` path (init workspace files + first plan).
 4. Implement `agentic.tool_result` path (validate -> reflect -> next decision).
-5. Emit `agentic.tool_request` event for Act.
+5. Emit `agentic.tool_request.<tool>` event for Act.
 6. Emit `agent.completed` on done; `agent.escalated` on terminal error.
-7. Add/update router path to feed `agentic.tool_result` back to `agentic-loop`.
+7. Add/update pipeline triggers so each tool request type (`agentic.tool_request.<tool>`) runs the tool then resumes `agentic-loop`.
 8. Add table-driven tests for correlation, dedupe, stale events, and budget limits.
+
+## Testing Notes
+
+- `go test ./...` passes on branch `feature/103-resumable-agentic-loop`.
+- `python3 -m py_compile plugins/agentic-loop/run.py plugins/jina-reader/run.py` passes.
+- Manual protocol checks:
+  - `agentic.start` emits `agentic.tool_request.jina-reader`.
+  - step mismatch (`actual_step > pending_step`) now emits `agent.escalated` and persists terminal run state.
+  - reserved correlation keys (`run_id`, `step`, `tool`, `tool_command`) cannot be overridden by tool payload flattening.
 
 ## Test Cases (Must Pass)
 
@@ -325,3 +341,4 @@ plugins:
 - 2026-02-16: Replaced long-running sync design with explicit resumable multi-job state machine (`run_id`, `pending_step`, `pending_tool`) and concrete event/routing contracts so implementation is unambiguous. (by Codex)
 - 2026-02-16: Started implementation on branch `feature/103-resumable-agentic-loop` by adding `plugins/agentic-loop` manifest and runnable protocol-v2 scaffold with start/resume correlation validation. (by Codex)
 - 2026-02-17: Integration testing through ductile dispatch. Found: (1) config.yaml `routes:` are legacy dead code — routing uses pipeline DSL files only; (2) `/trigger` endpoint hardcodes event type as `api.trigger` — plugin updated to accept it; (3) `tool_payload` nesting broke downstream plugin contracts — flattened into event payload; (4) pipeline resume receives downstream event type (e.g. `content_ready`) not `agentic.tool_result` — added context-based synthesis using protocol `context` field for correlation. Created `pipelines/agentic-tool-request.yaml`. Fixed jina-reader chmod. End-to-end: API trigger → agentic-loop → router → jina-reader (fetches live site) → resume agentic-loop validated up to context synthesis (untested with fix). (by @claude)
+- 2026-02-16: Fixed three review blockers in implementation: (1) hardcoded tool routing replaced with tool-specific trigger types + per-tool pipelines (`agentic.tool_request.jina-reader`, `agentic.tool_request.fabric`), (2) protected reserved correlation keys from payload overwrite, (3) step mismatch now escalates run and persists terminal state. Added verification notes in card. (by Codex)
