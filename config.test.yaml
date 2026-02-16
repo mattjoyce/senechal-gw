@@ -21,7 +21,7 @@ api:
       - token: ${DUCTILE_TOKEN_ADMIN}
         scopes: ["*"]
       - token: ${DUCTILE_TOKEN_READONLY}
-        scopes: ["plugin:ro", "job:ro", "state:ro"]
+        scopes: ["echo:ro", "fabric:ro", "file_handler:ro", "agentic-loop:ro"]
 
 plugins_dir: ./plugins
 
@@ -63,17 +63,39 @@ plugins:
     config:
       FABRIC_DEFAULT_MODEL: "gpt-4"
 
+  # Jina reader for web scraping (event-driven via agentic-loop routing)
+  jina-reader:
+    enabled: true
+    schedule:
+      every: daily
+      jitter: 1h
+    timeout: 30s
+    max_attempts: 1
+    config: {}
+
+  # Agentic loop plugin for resumable multi-step agent runs
+  agentic-loop:
+    enabled: true
+    schedule:
+      every: daily          # Event-driven via API, not scheduled
+      jitter: 1h
+    timeout: 60s
+    max_attempts: 1
+    config:
+      max_steps: 5
+      max_reframes: 2
+
 # Routes: event-driven plugin chaining for multi-plugin pipeline
 routes:
-  # Step 1: file.read → fabric (analyze text)
+  # file.read → fabric (analyze text) — removed reverse route to break circular dep
   - from: file_handler
     event_type: file.read
     to: fabric
 
-  # Step 2: fabric.completed → file_handler (write report)
-  - from: fabric
-    event_type: fabric.completed
-    to: file_handler
+  # Agentic loop routing: tool requests go to jina-reader
+  - from: agentic-loop
+    event_type: agentic.tool_request
+    to: jina-reader
 
 # Webhooks: HTTP listener endpoints (for testing webhooks)
 # webhooks:

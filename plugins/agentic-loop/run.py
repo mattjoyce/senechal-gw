@@ -425,12 +425,12 @@ def health_command(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, A
 
 def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
     event_type = event.get("type", "")
-    if event_type == "agentic.start":
+    if event_type in ("agentic.start", "api.trigger"):
         return run_start(config, state, event)
     if event_type == "agentic.tool_result":
         return run_tool_result(config, state, event)
     return error_response(
-        f"unsupported event type '{event_type}'; expected agentic.start or agentic.tool_result",
+        f"unsupported event type '{event_type}'; expected agentic.start, api.trigger, or agentic.tool_result",
         retry=False,
     )
 
