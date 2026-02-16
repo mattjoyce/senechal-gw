@@ -323,6 +323,7 @@ plugins:
 - 2026-02-16: Initial RFC created. AgenticLoop as a long-running plugin using existing sync API infrastructure to invoke other plugins as tools. (by @claude)
 - 2026-02-16: Review comments appended. (by Codex)
 - 2026-02-16: Replaced long-running sync design with explicit resumable multi-job state machine (`run_id`, `pending_step`, `pending_tool`) and concrete event/routing contracts so implementation is unambiguous. (by Codex)
+- 2026-02-16: Disposition update: keep this card as `backlog` for future internal/resumable-plugin work. Useful artifacts to retain: correlation invariants (`run_id+step+tool`), stale/duplicate handling, escalation semantics, and workspace traceability. Do not merge branch `feature/103-resumable-agentic-loop` into main for now. (by Codex)
 - 2026-02-16: Review comments added. (by @gemini)
 
 ### Gemini's Review Comments

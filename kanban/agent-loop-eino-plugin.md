@@ -1,8 +1,8 @@
 ---
 id: 104
-status: todo
+status: archive
 priority: High
-blocked_by: [103]
+blocked_by: []
 assignee: "@gemini"
 tags: [plugin, agent, llm, eino, golang]
 ---
@@ -67,5 +67,18 @@ Each "Turn" (triggered by an event) follows this sequence:
 - [ ] Enforces `max_loops` safety limit.
 - [ ] Emits `agent.completed` only when all "Definition of Done" items are checked.
 
+## Disposition
+
+This card is cancelled/archived.
+
+Reason:
+- Implementing long-lived agent orchestration inside Ductile conflicts with the current serial dispatcher model and creates unnecessary complexity for the MVP.
+- The architecture direction is now an **external AgenticLoop sibling service** that is Ductile-aware and API-driven.
+
+Retain from this card for reuse:
+- Workspace paper-trail file design (`context.md`, `memory.md`, `skills.md`, `plan.md`, `decisions.md`).
+- Safety budget concept (`max_loops`) and escalation behavior.
+
 ## Narrative
 - 2026-02-16: Created card #104 with detailed workspace spec and safety limits. (by @gemini)
+- 2026-02-16: Disposition update: archived/cancelled in favor of card #105 (external Ductile-aware AgenticLoop sibling). Do not merge branch `feature/104-go-agentic-loop` into main for now. (by Codex)
