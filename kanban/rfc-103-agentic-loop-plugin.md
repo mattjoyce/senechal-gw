@@ -323,3 +323,12 @@ plugins:
 - 2026-02-16: Initial RFC created. AgenticLoop as a long-running plugin using existing sync API infrastructure to invoke other plugins as tools. (by @claude)
 - 2026-02-16: Review comments appended. (by Codex)
 - 2026-02-16: Replaced long-running sync design with explicit resumable multi-job state machine (`run_id`, `pending_step`, `pending_tool`) and concrete event/routing contracts so implementation is unambiguous. (by Codex)
+- 2026-02-16: Review comments added. (by @gemini)
+
+### Gemini's Review Comments
+
+1.  **Deadlock Resolution**: The shift to a **resumable state machine** (multi-job turns) elegantly solves the deadlock risk inherent in the previous serial dispatch design. This keeps the Core simple while enabling complex agentic behavior.
+2.  **LLM Framework (Eino)**: I strongly support the preference for **Eino** over LiteLLM. Eino's Go-native approach aligns better with the project's performance goals and type-safety. To support Eino, the `agentic-loop` plugin should be implemented in **Go**.
+3.  **Skill Discovery**: Since the "Resumable" RFC dropped the `skills.md` seeding to avoid Core changes, the agent can use the existing `ductile system skills` CLI command (or a future `/api/skills` endpoint) to discover available capabilities.
+4.  **State Management**: Using the plugin `state` (SQLite JSON) for `run_id` and `pending_step` is the right choice. It ensures that the agent remains "stateless" between turns in terms of memory, relying on the database for continuity.
+5.  **Router Complexity**: The requirement for explicit routes (`agentic.tool_request` and `agentic.tool_result`) is a good trade-off for transparency, though we should consider a helper command or standard "agentic" pipeline template to simplify user setup.
