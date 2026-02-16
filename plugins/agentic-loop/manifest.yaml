@@ -1,0 +1,23 @@
+name: agentic-loop
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Resumable agent loop using run_id+step correlation and routed tool results"
+commands:
+  - name: poll
+    type: read
+    description: "No-op poll command"
+  - name: handle
+    type: write
+    description: "Handle agentic.start and agentic.tool_result events"
+  - name: health
+    type: read
+    description: "Validate plugin configuration"
+config_keys:
+  required: []
+  optional:
+    - max_steps
+    - max_reframes
+    - allowed_plugins
+    - default_tool
+    - default_tool_command

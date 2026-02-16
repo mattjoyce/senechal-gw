@@ -1,6 +1,6 @@
 ---
 id: 103
-status: backlog
+status: doing
 priority: High
 blocked_by: []
 tags: [architecture, rfc, plugin, agentic, llm, skills]
@@ -323,3 +323,4 @@ plugins:
 - 2026-02-16: Initial RFC created. AgenticLoop as a long-running plugin using existing sync API infrastructure to invoke other plugins as tools. (by @claude)
 - 2026-02-16: Review comments appended. (by Codex)
 - 2026-02-16: Replaced long-running sync design with explicit resumable multi-job state machine (`run_id`, `pending_step`, `pending_tool`) and concrete event/routing contracts so implementation is unambiguous. (by Codex)
+- 2026-02-16: Started implementation on branch `feature/103-resumable-agentic-loop` by adding `plugins/agentic-loop` manifest and runnable protocol-v2 scaffold with start/resume correlation validation. (by Codex)
