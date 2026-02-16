@@ -114,16 +114,19 @@ def make_tool_request_event(
     tool_command: str,
     tool_payload: Dict[str, Any],
 ) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "run_id": run_id,
+        "step": step,
+        "tool": tool,
+        "tool_command": tool_command,
+        "requested_at": now_iso(),
+    }
+    # Flatten tool_payload into payload so downstream plugins
+    # receive fields (e.g. url, prompt) at the level they expect.
+    payload.update(tool_payload)
     return {
         "type": "agentic.tool_request",
-        "payload": {
-            "run_id": run_id,
-            "step": step,
-            "tool": tool,
-            "tool_command": tool_command,
-            "tool_payload": tool_payload,
-            "requested_at": now_iso(),
-        },
+        "payload": payload,
         "dedupe_key": f"agentic:run:{run_id}:step:{step}:request",
     }
 
@@ -423,12 +426,46 @@ def health_command(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, A
     )
 
 
-def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
+def synthesize_tool_result(
+    event: Dict[str, Any], context: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Wrap a downstream plugin event as an agentic.tool_result using pipeline context.
+
+    When the agentic-loop receives a non-agentic event (e.g. content_ready from
+    jina-reader) via a pipeline step, the correlation fields (run_id, step, tool)
+    are in the protocol context rather than the event payload.  Synthesize a
+    tool_result envelope so run_tool_result can process it normally.
+    """
+    payload = event.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "type": "agentic.tool_result",
+        "payload": {
+            "run_id": context.get("run_id", ""),
+            "step": context.get("step"),
+            "tool": context.get("tool", ""),
+            "status": "ok",
+            "result": payload,
+        },
+    }
+
+
+def handle_command(
+    config: Dict[str, Any],
+    state: Dict[str, Any],
+    event: Dict[str, Any],
+    context: Dict[str, Any],
+) -> Dict[str, Any]:
     event_type = event.get("type", "")
     if event_type in ("agentic.start", "api.trigger"):
         return run_start(config, state, event)
     if event_type == "agentic.tool_result":
         return run_tool_result(config, state, event)
+    # Pipeline resume: downstream plugin event with correlation in context
+    if context.get("run_id") and context.get("step") is not None:
+        synthetic = synthesize_tool_result(event, context)
+        return run_tool_result(config, state, synthetic)
     return error_response(
         f"unsupported event type '{event_type}'; expected agentic.start, api.trigger, or agentic.tool_result",
         retry=False,
@@ -446,6 +483,7 @@ def main() -> None:
     config = request.get("config", {})
     state = request.get("state", {})
     event = request.get("event", {})
+    context = request.get("context", {})
 
     if not isinstance(config, dict):
         config = {}
@@ -453,11 +491,13 @@ def main() -> None:
         state = {}
     if not isinstance(event, dict):
         event = {}
+    if not isinstance(context, dict):
+        context = {}
 
     if command == "poll":
         response = poll_command(state)
     elif command == "handle":
-        response = handle_command(config, state, event)
+        response = handle_command(config, state, event, context)
     elif command == "health":
         response = health_command(config, state)
     else:

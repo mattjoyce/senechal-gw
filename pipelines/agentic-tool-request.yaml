@@ -1,0 +1,8 @@
+pipelines:
+  - name: agentic-tool-fetch
+    on: agentic.tool_request
+    steps:
+      - id: fetch
+        uses: jina-reader
+      - id: resume
+        uses: agentic-loop
