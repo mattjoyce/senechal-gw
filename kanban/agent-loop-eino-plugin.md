@@ -72,6 +72,7 @@ Each "Turn" (triggered by an event) follows this sequence:
 1. Tool dispatch must be explicit in current DSL. Implemented as tool-specific event triggers:
    - `agentic.tool_request.jina-reader`
    - `agentic.tool_request.fabric`
+   - Updated: core now auto-generates these pipelines from plugin registry at load time, so they are no longer hardcoded in repo pipeline files.
 2. Resume events may not come back as `agentic.tool_result`; pipeline steps preserve correlation in protocol `context`. Plugin now synthesizes resume from `context.run_id`, `context.step`, and `context.tool`.
 3. `tool_payload` flattening can overwrite correlation keys unless protected. Implementation now keeps `run_id`, `step`, `tool`, and `tool_command` immutable in emitted request payloads.
 4. Step mismatch must terminate run state, not return transient error. Implementation escalates (`agent.escalated`) and persists run as terminal.
@@ -83,8 +84,10 @@ Each "Turn" (triggered by an event) follows this sequence:
   - start -> tool request event type and workspace file creation
   - context-based resume -> next-step tool request
   - step mismatch -> persisted escalation state
+  - router auto-generation of agentic tool pipelines from discovered plugins
 - Manual runtime checks still needed against live plugin chain (`jina-reader`/`fabric`) in containerized environment.
 
 ## Narrative
 - 2026-02-16: Created card #104 with detailed workspace spec and safety limits. (by @gemini)
 - 2026-02-16: Reviewed card and removed ambiguity around routing/resume contracts; started implementation on `feature/104-go-agentic-loop` with Go-based `agentic-loop` plugin, executable entrypoint, pipeline triggers, workspace file generation, correlation validation, and tests. (by Codex)
+- 2026-02-16: Removed hardcoded tool-routing pipeline file and implemented router-level auto-generation for `agentic.tool_request.<plugin>` triggers using plugin discovery, so tools can be added/removed without hand-editing pipelines. (by Codex)

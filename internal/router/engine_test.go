@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
@@ -77,5 +78,79 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	}
 	if out[0].Plugin != "plugin-c" || out[0].StepID != "step_c" {
 		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+}
+
+func TestAddAgenticAutoToolPipelines_GeneratesFromRegistry(t *testing.T) {
+	reg := plugin.NewRegistry()
+	_ = reg.Add(&plugin.Plugin{Name: "agentic-loop"})
+	_ = reg.Add(&plugin.Plugin{Name: "jina-reader"})
+	_ = reg.Add(&plugin.Plugin{Name: "fabric"})
+
+	set := &dsl.Set{Pipelines: map[string]*dsl.Pipeline{}}
+	if err := addAgenticAutoToolPipelines(set, reg, nil); err != nil {
+		t.Fatalf("addAgenticAutoToolPipelines: %v", err)
+	}
+
+	if len(set.Pipelines) != 2 {
+		t.Fatalf("pipeline count = %d, want 2", len(set.Pipelines))
+	}
+
+	foundFetch := false
+	foundFabric := false
+	for _, p := range set.Pipelines {
+		switch p.Trigger {
+		case "agentic.tool_request.jina-reader":
+			foundFetch = true
+		case "agentic.tool_request.fabric":
+			foundFabric = true
+		}
+	}
+	if !foundFetch || !foundFabric {
+		t.Fatalf("missing expected triggers (fetch=%v fabric=%v)", foundFetch, foundFabric)
+	}
+}
+
+func TestAddAgenticAutoToolPipelines_RespectsExistingTrigger(t *testing.T) {
+	reg := plugin.NewRegistry()
+	_ = reg.Add(&plugin.Plugin{Name: "agentic-loop"})
+	_ = reg.Add(&plugin.Plugin{Name: "jina-reader"})
+	_ = reg.Add(&plugin.Plugin{Name: "fabric"})
+
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "custom-fabric-route",
+			On:   "agentic.tool_request.fabric",
+			Steps: []dsl.StepSpec{
+				{ID: "tool", Uses: "fabric"},
+				{ID: "resume", Uses: "agentic-loop"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	if err := addAgenticAutoToolPipelines(set, reg, nil); err != nil {
+		t.Fatalf("addAgenticAutoToolPipelines: %v", err)
+	}
+
+	// One existing + one generated (jina-reader)
+	if len(set.Pipelines) != 2 {
+		t.Fatalf("pipeline count = %d, want 2", len(set.Pipelines))
+	}
+}
+
+func TestAddAgenticAutoToolPipelines_NoAgenticLoopNoop(t *testing.T) {
+	reg := plugin.NewRegistry()
+	_ = reg.Add(&plugin.Plugin{Name: "jina-reader"})
+	_ = reg.Add(&plugin.Plugin{Name: "fabric"})
+
+	set := &dsl.Set{Pipelines: map[string]*dsl.Pipeline{}}
+	if err := addAgenticAutoToolPipelines(set, reg, nil); err != nil {
+		t.Fatalf("addAgenticAutoToolPipelines: %v", err)
+	}
+	if len(set.Pipelines) != 0 {
+		t.Fatalf("pipeline count = %d, want 0", len(set.Pipelines))
 	}
 }
