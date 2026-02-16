@@ -6,271 +6,320 @@ blocked_by: []
 tags: [architecture, rfc, plugin, agentic, llm, skills]
 ---
 
-# RFC-95: AgenticLoop Plugin
+# RFC-103: Resumable AgenticLoop Plugin (No Dispatcher Changes)
 
-## Problem Statement
+## Goal
 
-Ductile can orchestrate linear and branching pipelines, but has no way to express **goal-directed, iterative work** — tasks where the path to completion isn't known upfront. Examples: "summarise this paper and find three related works", "research X and write a report", "monitor this feed and alert me when Y happens". These require a cognitive loop: assess the goal, plan a step, execute it, evaluate progress, repeat.
+Implement an `agentic-loop` plugin that can complete multi-step, goal-directed tasks (Frame -> Plan -> Act -> Reflect) **without** requiring concurrent dispatch, nested dispatch, or special exit codes.
 
-## Proposal
+This RFC is written as implementation instructions for a developer with no prior project context.
 
-A new plugin called `agentic-loop` that implements a Frame→Plan→Act→Reflect loop as a **single long-running plugin process**. It uses workspace files as its working memory and invokes other Ductile plugins as tools via the existing synchronous API.
+## Why This Design
 
-No core changes required. The AgenticLoop is just a plugin that happens to be an API client of its own gateway.
+Current core behavior is serial FIFO dispatch (one running job at a time).  
+A long-running agent that synchronously calls tools can deadlock because child jobs cannot run while the parent agent job is still running.
 
-## Triggering
+This RFC avoids that by making the agent **resumable**:
+- One agent turn per job.
+- Agent exits normally.
+- Tool result returns as a routed event.
+- A new agent job resumes using persisted state.
 
-All normal trigger methods work:
+## Non-Goals
 
-- **Webhook** — external system posts a goal
-- **API** — `POST /api/trigger/agentic-loop` with goal in payload
-- **Schedule** — periodic goal execution (e.g., daily digest)
-- **Route** — another plugin emits an event that triggers the loop
+- No special process exit codes (for example `98`/`99`) to control orchestration.
+- No nested synchronous dispatch.
+- No multi-queue or worker-pool redesign in this RFC.
+- No recursive agent spawning in MVP.
 
-The inbound event payload must include a `goal` field and may include optional `context` (background info, constraints, preferences).
+## Core Invariants
 
-## Workspace Layout
+1. Every run has a unique `run_id`.
+2. Every tool action has a monotonically increasing `step` integer (starting at 1).
+3. Agent must persist `pending_step` and `pending_tool` before dispatching a tool.
+4. Tool result events must include `run_id`, `step`, and `tool`.
+5. Agent resumes only when `(run_id, step, tool)` matches current pending state.
+6. Duplicate/stale events are ignored safely.
+7. All plugin processes exit with normal protocol v2 success/error semantics.
 
-The core spawns the plugin with a `workspace_dir` as usual. AgenticLoop initialises it on startup:
+## Runtime Model (Single Turn)
 
-```
-workspace/<job-id>/
-├── context.md       # Seeded from inbound event payload (goal + background)
-├── memory.md        # Working memory — written by Frame, updated every phase
-├── skills.md        # Auto-generated from plugin manifests (read-only)
-├── plan.md          # Current todo list — written by Plan, updated by Reflect
-├── artifacts/       # Files produced during Act phases
-└── trace.jsonl      # Append-only structured execution log
-```
+Each `agentic-loop` `handle` invocation performs exactly one turn:
 
-### skills.md Generation
+1. Load run state from plugin `state` and workspace files.
+2. If inbound event is `agentic.start`: initialize new run.
+3. If inbound event is `agentic.tool_result`: validate correlation against pending state.
+4. Run LLM logic for needed phases in this invocation:
+- First turn: Frame + Plan + Act(dispatch only).
+- Resume turn: Reflect + Plan + Act(dispatch only) OR Reflect + Done.
+5. Persist state updates.
+6. Emit events (tool request or final completion).
+7. Return protocol v2 response and exit.
 
-`skills.md` must be seeded into the workspace before the loop starts. Two options:
+## Event Contract
 
-**A. Core seeds it (preferred):** The dispatcher generates `skills.md` from the plugin registry and writes it to `workspace_dir` before spawning AgenticLoop. This keeps the plugin simple and the skill catalog always current.
+### 1) Start Event (external -> agent)
 
-**B. Plugin generates it:** AgenticLoop calls a hypothetical `/api/plugins` endpoint to discover available skills. More self-contained but adds an API dependency at startup.
+`type: agentic.start`
 
-Content of `skills.md` — for each available plugin:
-- Plugin name and description
-- Available commands (poll, handle, health)
-- Config keys and descriptions
-- Example input/output (if declared in manifest)
-
-## The Loop
-
-### 1. Start
-
-- Receive `handle` command via protocol v2
-- Read `event.payload.goal` and `event.payload.context`
-- Write `context.md` from the inbound payload
-- Initialise empty `memory.md`, `plan.md`, `trace.jsonl`
-- Confirm `skills.md` is present (seeded by core or self-generated)
-- Enter Frame
-
-### 2. Frame
-
-**Reads:** `context.md`, `memory.md`
-**Purpose:** Turn the inbound task into a bounded objective.
-
-**Writes to `memory.md`:**
-- Goal statement (one sentence)
-- Definition of done (3–7 checkboxes)
-- Constraints (time/step budget, forbidden tools, privacy/security)
-- Assumptions / unknowns (what's missing; whether we can proceed)
-- Initial hypothesis (optional: what we think will work)
-
-**Design note:** Frame can be re-entered from Reflect ("Reframe") if the original goal was misframed. Reframe appends a reframe record to `trace.jsonl` explaining why.
-
-### 3. Plan
-
-**Reads:** `skills.md`, `memory.md`, `plan.md`
-**Purpose:** Decide the next step and tool usage.
-
-**Writes to `plan.md`:**
-- Step list / outline (kept short; refined each iteration)
-- Next action (exactly one tool call or dispatch request)
-- Expected outcome (what success looks like for that step)
-- Risk note (permissions, side-effects, irreversibility)
-
-**Key constraint:** The plan is incremental. Only the **next action** is binding. The rest of the outline is advisory. This prevents long speculative plans from poisoning the run.
-
-### 4. Act
-
-**Reads:** `plan.md` (specifically the "next action" block)
-**Purpose:** Execute the next step.
-
-Act calls the Ductile API to trigger another plugin:
-```
-POST /api/trigger/<pipeline-or-plugin>
-Authorization: Bearer <token-from-config>
-Content-Type: application/json
-
-{
-  "event_type": "<appropriate-type>",
-  "payload": { ... },
-  "execution_mode": "synchronous"
-}
-```
-
-The called plugin fires, does its work, returns a result, and terminates normally. AgenticLoop receives the synchronous HTTP response.
-
-**Appends to `trace.jsonl`:**
 ```json
 {
-  "phase": "act",
-  "step": 3,
-  "timestamp": "ISO8601",
-  "tool": "jina-reader",
-  "args": {"url": "..."},
-  "result_status": "ok",
-  "result_summary": "...",
-  "error": null,
-  "retryable": null
+  "type": "agentic.start",
+  "payload": {
+    "goal": "fetch web http://mattjoyce.ai and produce a 2 para critique",
+    "context": {
+      "tone": "constructive",
+      "max_steps": 6
+    }
+  },
+  "dedupe_key": "agentic:start:<external-request-id>"
 }
 ```
 
-**Design note:** Act is pure execution. No reasoning, no re-planning. Do the thing, record the evidence.
+### 2) Tool Request Event (agent -> tool plugin route target)
 
-### 5. Reflect
+`type: agentic.tool_request`
 
-**Reads:** `memory.md`, `plan.md`, `trace.jsonl` (latest entry)
-**Purpose:** Decide whether we're done, continue, or reframe.
+```json
+{
+  "type": "agentic.tool_request",
+  "payload": {
+    "run_id": "01JABC...",
+    "step": 1,
+    "tool": "fetch",
+    "tool_command": "handle",
+    "tool_payload": {
+      "url": "http://mattjoyce.ai"
+    },
+    "requested_at": "2026-02-16T12:00:00Z"
+  },
+  "dedupe_key": "agentic:run:01JABC:step:1:request"
+}
+```
 
-**Updates `memory.md`:**
-- Progress update vs definition-of-done (checkboxes ticked)
-- New facts learned (short bullets)
-- Decision: `continue` | `done` | `reframe` | `escalate`
-- If continue: what changed in priorities
-- If done: final summary / output payload
+### 3) Tool Result Event (tool -> agent)
 
-**Updates `plan.md`:**
-- Mark completed step
-- Adjust remaining steps based on what was learned
+`type: agentic.tool_result`
 
-**Decision routing:**
-- `continue` → goto Plan
-- `done` → exit loop, return final response via protocol v2
-- `reframe` → goto Frame (goal was wrong or needs revision)
-- `escalate` → exit loop with error/escalation status
+```json
+{
+  "type": "agentic.tool_result",
+  "payload": {
+    "run_id": "01JABC...",
+    "step": 1,
+    "tool": "fetch",
+    "status": "ok",
+    "result": {
+      "artifact_path": "artifacts/fetch-01.html",
+      "content_type": "text/html",
+      "excerpt": "..."
+    },
+    "error": null,
+    "completed_at": "2026-02-16T12:00:05Z"
+  },
+  "dedupe_key": "agentic:run:01JABC:step:1:result"
+}
+```
 
-**Stop conditions live here, not in the model's tool-calling behaviour.** Don't stop because the model "didn't call a tool." Stop because done-criteria are satisfied, or the budget is exhausted.
+### 4) Completion Event (agent -> downstream)
 
-## Plugin Configuration
+`type: agent.completed`
+
+```json
+{
+  "type": "agent.completed",
+  "payload": {
+    "run_id": "01JABC...",
+    "goal": "fetch web http://mattjoyce.ai and produce a 2 para critique",
+    "outcome": "Two paragraph critique generated in artifacts/critique.md",
+    "steps_taken": 2,
+    "artifacts": ["artifacts/critique.md"]
+  }
+}
+```
+
+## Required Router Configuration
+
+This RFC requires explicit routes; no hidden orchestration.
+
+```yaml
+routes:
+  - from: agentic-loop
+    event_type: agentic.tool_request
+    to: tool-router
+
+  - from: tool-router
+    event_type: agentic.tool_result
+    to: agentic-loop
+```
+
+`tool-router` is a simple plugin that reads `payload.tool` and emits a trigger event to the named tool plugin/command.  
+Alternative: replace `tool-router` with static routes if tool set is fixed.
+
+## Agent Plugin State Schema
+
+Persist in plugin `state` (SQLite JSON blob):
+
+```json
+{
+  "runs": {
+    "01JABC...": {
+      "status": "running",
+      "goal": "...",
+      "created_at": "ISO8601",
+      "updated_at": "ISO8601",
+      "step": 1,
+      "max_steps": 6,
+      "reframes": 0,
+      "max_reframes": 2,
+      "pending_step": 1,
+      "pending_tool": "fetch",
+      "pending_since": "ISO8601",
+      "workspace_ref": "job:<root_job_id>"
+    }
+  },
+  "last_run_id": "01JABC..."
+}
+```
+
+State rules:
+- `pending_step`/`pending_tool` are required before emitting `agentic.tool_request`.
+- When matching `agentic.tool_result` arrives, clear pending fields.
+- On completion or escalation, set run status terminal (`done` or `escalated`).
+
+## Workspace Contract
+
+Within each run workspace:
+
+```text
+workspace/<job-id>/
+  context.md
+  memory.md
+  plan.md
+  trace.jsonl
+  artifacts/
+```
+
+Rules:
+- Agent writes only append/update-safe files.
+- Tool outputs should be artifact files when payload is large.
+- Tool result event should carry artifact path, not full large content.
+
+## Protocol Behavior (No Ambiguity)
+
+- Agent process must return exit code `0` for successful turn completion.
+- Agent process must return protocol response with:
+  - `status: ok` when turn succeeded (even if run is still in progress).
+  - `events` containing either `agentic.tool_request` or `agent.completed`.
+  - `state_updates` with persisted run state changes.
+- Non-zero process exit is treated as failure by existing retry logic; do not use for control flow.
+
+## Resume Validation Logic
+
+When processing `agentic.tool_result`, agent must validate in this order:
+
+1. `run_id` exists in state. If not, ignore and log warn.
+2. Run status is `running`. If terminal, ignore and log info.
+3. `step == pending_step`. If lower, ignore as stale/duplicate.
+4. `tool == pending_tool`. If mismatch, escalate run as protocol violation.
+5. `status`:
+- `ok`: proceed to Reflect.
+- `error`: decide retry/escalate based on policy and step budget.
+
+## Worked Example (Requested Scenario)
+
+User asks: "fetch web http://mattjoyce.ai and produce a 2 para critique."
+
+1. External caller emits `agentic.start` with goal text.
+2. Agent starts run `run_id=R1`, writes context/memory/plan.
+3. Agent decides step 1: call `fetch.handle(url=http://mattjoyce.ai)`.
+4. Agent saves pending:
+- `pending_step=1`
+- `pending_tool=fetch`
+5. Agent emits `agentic.tool_request` and exits `status: ok`.
+6. Router sends request to fetch tool path.
+7. Fetch plugin writes HTML artifact and emits `agentic.tool_result` with `run_id=R1, step=1, tool=fetch`.
+8. Router sends `agentic.tool_result` to `agentic-loop`.
+9. Agent resumes R1, validates correlation, reflects, plans step 2: generate critique.
+10. Agent dispatches step 2 tool request (for example `fabric.handle` with prompt + artifact path), exits `status: ok`.
+11. Result returns as `agentic.tool_result` step 2.
+12. Agent resumes, Reflect decides `done`, emits `agent.completed` with artifact `artifacts/critique.md`, exits `status: ok`.
+
+At no point is there a special exit code.
+
+## Idempotency and Dedupe
+
+- Agent tool-request events use dedupe key:
+  - `agentic:run:<run_id>:step:<step>:request`
+- Tool-result events use dedupe key:
+  - `agentic:run:<run_id>:step:<step>:result`
+- Agent should additionally maintain `completed_steps` set per run in state to safely ignore duplicates after retries.
+
+## Error Handling
+
+- Unknown `run_id`: ignore + log warn.
+- Mismatched `pending_tool`: mark run `escalated` and emit `agent.escalated`.
+- Tool error with retries remaining: re-issue same step request with same `step` and increment `attempt` counter in state.
+- Tool error with no retries remaining: `agent.escalated`.
+- Budget exceeded (`step >= max_steps`): `agent.escalated`.
+- Reframe count exceeded: `agent.escalated`.
+
+## Security and Scope
+
+- Agent API token must not include `admin:*`.
+- Agent must not be allowed to trigger `agentic-loop` directly.
+- Tool allowlist enforced in agent config:
 
 ```yaml
 plugins:
   agentic-loop:
-    schedule: null                    # typically trigger-only, not scheduled
-    timeout: 10m                      # generous timeout for multi-step work
+    schedule: null
+    timeouts:
+      handle: 120s
     config:
-      api_url: "http://localhost:${PORT}"
-      api_token: "${DUCTILE_AGENT_TOKEN}"
-      max_steps: 20                   # hard budget — Reflect enforces
-      max_reframes: 2                 # prevent infinite reframing
-      llm_provider: "anthropic"       # or ollama, openai, etc.
-      llm_model: "claude-sonnet-4-5-20250929"
-      allowed_plugins:                # skill whitelist (optional)
-        - jina-reader
-        - fabric
-        - file_handler
-        - youtube_transcript
+      max_steps: 20
+      max_reframes: 2
+      allowed_plugins: [fetch, fabric, jina-reader]
 ```
 
-### Token Scope
+## Implementation Plan (Developer Checklist)
 
-The AgenticLoop's API token should have a **bounded scope** — only the plugins listed in `allowed_plugins`. It must NOT have `admin:*` or be able to trigger itself (no recursive agent spawning without explicit configuration).
+1. Create plugin `plugins/agentic-loop/` with protocol v2 `handle`.
+2. Implement run state load/save (`run_id`, step, pending fields).
+3. Implement `agentic.start` path (init workspace files + first plan).
+4. Implement `agentic.tool_result` path (validate -> reflect -> next decision).
+5. Emit `agentic.tool_request` event for Act.
+6. Emit `agent.completed` on done; `agent.escalated` on terminal error.
+7. Add/update router path to feed `agentic.tool_result` back to `agentic-loop`.
+8. Add table-driven tests for correlation, dedupe, stale events, and budget limits.
 
-## Protocol v2 Response (on exit)
+## Test Cases (Must Pass)
 
-When the loop terminates (`done` or `escalate`), the plugin returns a standard protocol v2 response:
-
-```json
-{
-  "status": "ok",
-  "events": [
-    {
-      "type": "agent.completed",
-      "payload": {
-        "goal": "original goal statement",
-        "outcome": "summary of what was achieved",
-        "steps_taken": 7,
-        "artifacts": ["report.md", "sources.json"]
-      }
-    }
-  ],
-  "state_updates": {
-    "last_run": "ISO8601",
-    "last_goal": "...",
-    "total_steps": 7
-  },
-  "logs": [...]
-}
-```
-
-This event can be routed to notification plugins (Discord, email, etc.) via normal pipeline routing.
-
-## Budget & Safety
-
-| Control | Enforced by | Mechanism |
-|---------|-------------|-----------|
-| Max wall-clock time | Core (timeout) | SIGTERM → grace → SIGKILL |
-| Max loop iterations | Plugin (Reflect) | `max_steps` config, counter in memory |
-| Max reframes | Plugin (Reflect) | `max_reframes` config, counter in memory |
-| Allowed tools | Plugin (Act) | `allowed_plugins` whitelist in config |
-| No self-invocation | Token scope | Token cannot trigger `agentic-loop` |
-| Spend/cost tracking | Plugin (trace) | Logged per-step in `trace.jsonl` |
-
-## What This Requires from Core
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Workspace directory | Exists | Standard workspace manager |
-| Sync API endpoint | Exists | RFC-92 `execution_mode: synchronous` |
-| API token auth | Exists | Token scopes already implemented |
-| Plugin timeout config | Exists | Per-plugin timeout in config |
-| `skills.md` generation | **New** | Core writes skill catalog to workspace before spawn |
-| Longer timeout allowance | Config only | Set `timeout: 10m` in plugin config |
-
-The only new core work is **skills.md generation** — iterating the plugin registry, formatting manifests into a markdown skill catalog, and writing it to the workspace before spawning the plugin.
-
-## Implementation Language
-
-Python is the natural choice (consistent with most existing plugins). The LLM interaction (Frame, Plan, Reflect are all LLM calls) can use any provider SDK. The Act phase is just HTTP calls to the Ductile API.
-
-## Open Questions for Review
-
-1. **skills.md generation** — should core do this (Option A), or should the plugin discover skills via API (Option B)? Option A is simpler but couples core to a markdown format. Option B is more self-contained but needs a new API endpoint.
-
-2. **LLM provider abstraction** — should AgenticLoop hardcode one LLM provider, or support multiple via config? Suggest starting with one (Anthropic) and abstracting later if needed.
-
-3. **Workspace persistence** — normal workspaces are cleaned up after retention period. Should agentic workspaces be retained longer for audit/replay? Or is `trace.jsonl` sufficient?
-
-4. **Recursive agents** — should one AgenticLoop be able to spawn another? If so, how do we prevent infinite recursion? Suggest: forbid by default via token scope, allow with explicit `max_depth` config.
-
-5. **Streaming progress** — the loop runs for minutes. Should it emit progress events mid-run (via the API), or is the final result sufficient? If progress is needed, the plugin could POST status updates to a webhook endpoint.
-
-6. **Credential forwarding** — when AgenticLoop triggers another plugin, does it pass its own config (e.g., API keys for the target plugin)? No — the target plugin has its own config. AgenticLoop only sends the event payload.
+- Start event creates run and first tool request.
+- Matching tool result resumes and advances to next step.
+- Duplicate tool result does not double-advance step.
+- Stale step result is ignored.
+- Wrong tool for pending step escalates.
+- `max_steps` cutoff escalates deterministically.
+- Completion emits exactly one `agent.completed`.
 
 ## Success Criteria
 
-- [ ] AgenticLoop plugin runs as a single process through multiple loop iterations
-- [ ] Frame produces a bounded goal with definition of done
-- [ ] Plan selects appropriate tools from skills.md
-- [ ] Act successfully invokes other plugins via sync API and receives results
-- [ ] Reflect correctly determines done/continue/reframe
-- [ ] Budget controls (max_steps, timeout) prevent runaway execution
-- [ ] trace.jsonl provides full audit trail of all actions and decisions
-- [ ] Final result routes to downstream plugins via standard event routing
+- [ ] Agent loop works end-to-end with serial dispatcher unchanged.
+- [ ] No synchronous nested dispatch used.
+- [ ] No special exit code used for control flow.
+- [ ] Tool-to-agent resume is deterministic via `run_id + step + tool`.
+- [ ] Duplicate/stale events are handled safely.
+- [ ] Final artifacts are available in workspace and referenced in completion event.
 
 ## References
 
-- RFC-92: Pipeline Execution Modes (sync API infrastructure)
-- RFC-004: LLM as Operator/Admin (skills concept, manifest extensions)
-- SPEC.md §6: Protocol v2
-- SPEC.md §8: Webhook / API endpoints
-- Workspace Manager: `internal/workspace/interface.go`
+- `docs/ARCHITECTURE.md` (Queue semantics, protocol v2, routes, API)
+- RFC-92: Pipeline Execution Modes
+- RFC-004: LLM as Operator/Admin
 
 ## Narrative
 
 - 2026-02-16: Initial RFC created. AgenticLoop as a long-running plugin using existing sync API infrastructure to invoke other plugins as tools. (by @claude)
+- 2026-02-16: Review comments appended. (by Codex)
+- 2026-02-16: Replaced long-running sync design with explicit resumable multi-job state machine (`run_id`, `pending_step`, `pending_tool`) and concrete event/routing contracts so implementation is unambiguous. (by Codex)
