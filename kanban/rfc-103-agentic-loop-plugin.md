@@ -342,3 +342,18 @@ plugins:
 - 2026-02-16: Started implementation on branch `feature/103-resumable-agentic-loop` by adding `plugins/agentic-loop` manifest and runnable protocol-v2 scaffold with start/resume correlation validation. (by Codex)
 - 2026-02-17: Integration testing through ductile dispatch. Found: (1) config.yaml `routes:` are legacy dead code — routing uses pipeline DSL files only; (2) `/trigger` endpoint hardcodes event type as `api.trigger` — plugin updated to accept it; (3) `tool_payload` nesting broke downstream plugin contracts — flattened into event payload; (4) pipeline resume receives downstream event type (e.g. `content_ready`) not `agentic.tool_result` — added context-based synthesis using protocol `context` field for correlation. Created `pipelines/agentic-tool-request.yaml`. Fixed jina-reader chmod. End-to-end: API trigger → agentic-loop → router → jina-reader (fetches live site) → resume agentic-loop validated up to context synthesis (untested with fix). (by @claude)
 - 2026-02-16: Fixed three review blockers in implementation: (1) hardcoded tool routing replaced with tool-specific trigger types + per-tool pipelines (`agentic.tool_request.jina-reader`, `agentic.tool_request.fabric`), (2) protected reserved correlation keys from payload overwrite, (3) step mismatch now escalates run and persists terminal state. Added verification notes in card. (by Codex)
+- 2026-02-17: Full end-to-end loop validated through ductile dispatch: API trigger → agentic-loop (start) → jina-reader (live fetch of mattjoyce.ai) → agentic-loop (resume via context synthesis) → fabric (critique generation) → agentic-loop (complete). All 5 jobs succeeded. Context propagation and correlation working correctly across pipeline steps. (by @claude)
+
+## Open Design Question: Per-Tool Pipeline Scalability
+
+**Problem:** The current design requires a separate pipeline definition for every tool the agent can use (`agentic.tool_request.jina-reader` → pipeline, `agentic.tool_request.fabric` → pipeline, etc.). Adding a new plugin as an agent tool requires manually creating a new pipeline YAML entry. This is brittle — forgetting to add a pipeline for a new plugin silently breaks the agent's ability to use it, with no error at config time.
+
+**Options considered:**
+
+1. **Wildcard/prefix trigger matching (preferred)** — Router matches `agentic.tool_request.*` and extracts the tool name from the event type suffix. One pipeline definition covers all tools. Requires a core change to the router's `triggerIndex` to support prefix/glob matching. Keeps routing explicit and observable while eliminating per-tool boilerplate.
+
+2. **Single event type + dynamic dispatcher** — Revert to one `agentic.tool_request` trigger with a thin dispatcher plugin (or core router enhancement) that reads `payload.tool` and forwards to the named plugin. This is the original RFC's `tool-router` concept. More flexible but adds a dispatch hop.
+
+3. **Direct API call from plugin** — The agentic-loop plugin calls `POST /trigger/{tool}/handle` directly during execution, bypassing routing entirely. Breaks spawn-per-command and serial dispatch guarantees. Not recommended.
+
+**Recommendation:** Option 1 (wildcard triggers) is the cleanest path. It's a small, contained core change that preserves ductile's routing philosophy while making the agent's tool set automatically match the discovered plugin set. (by @mattjoyce, @claude)
