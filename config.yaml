@@ -14,7 +14,7 @@ state:
 
 # API Server: HTTP endpoints for external triggers (Sprint 2)
 api:
-  enabled: false               # Enable/disable API server
+  enabled: true                # Enable/disable API server
   listen: "localhost:8080"     # Listen address
   auth:
     # Legacy single token (admin/full access):
@@ -42,6 +42,15 @@ plugins:
     config:
       # Plugin-specific config goes here
       # Example: message: "Hello from echo plugin"
+
+  jina-reader:
+    enabled: true
+    timeout: 30s
+    max_attempts: 3
+    circuit_breaker:
+      threshold: 3
+      reset_after: 5m
+    config: {}
 
 # Routes: event-driven plugin chaining (not in MVP)
 # routes:

@@ -168,7 +168,7 @@ plugins_dir: ./plugins
 			wantErr: true,
 		},
 		{
-			name: "enabled plugin without schedule is valid",
+			name: "enabled plugin without schedule is valid (API-triggered only)",
 			yaml: `
 service:
   tick_interval: 30s

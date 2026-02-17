@@ -546,7 +546,7 @@ func validate(cfg *Config) error {
 			continue // Skip disabled plugins
 		}
 
-		// Schedule is optional. If present, validate schedule.every.
+		// Validate schedule if present (plugins without a schedule are API-triggered only)
 		if plugin.Schedule != nil {
 			if plugin.Schedule.Every == "" {
 				return fmt.Errorf("plugin %q: schedule.every is required", name)
