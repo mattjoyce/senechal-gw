@@ -138,7 +138,7 @@ commands: [poll]
 		t.Run(tt.name, func(t *testing.T) {
 			pluginsDir := tt.setupFn(t)
 
-			logger := func(level, msg string, args ...interface{}) {
+			logger := func(level, msg string, args ...any) {
 				// Silent logger for tests
 			}
 
@@ -374,7 +374,7 @@ commands:
 	os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
 	os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0755)
 
-	logger := func(level, msg string, args ...interface{}) {}
+	logger := func(level, msg string, args ...any) {}
 	reg, err := Discover(dir, logger)
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)

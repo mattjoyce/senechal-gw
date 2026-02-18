@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -64,13 +65,13 @@ type APIToken struct {
 
 // PluginConf defines configuration for a single plugin.
 type PluginConf struct {
-	Enabled             bool                   `yaml:"enabled"`
-	Schedule            *ScheduleConfig        `yaml:"schedule,omitempty"`
-	Config              map[string]interface{} `yaml:"config,omitempty"`
-	Retry               *RetryConfig           `yaml:"retry,omitempty"`
-	Timeouts            *TimeoutsConfig        `yaml:"timeouts,omitempty"`
-	CircuitBreaker      *CircuitBreakerConfig  `yaml:"circuit_breaker,omitempty"`
-	MaxOutstandingPolls int                    `yaml:"max_outstanding_polls,omitempty"`
+	Enabled             bool                  `yaml:"enabled"`
+	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"`
+	Config              map[string]any        `yaml:"config,omitempty"`
+	Retry               *RetryConfig          `yaml:"retry,omitempty"`
+	Timeouts            *TimeoutsConfig       `yaml:"timeouts,omitempty"`
+	CircuitBreaker      *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty"`
+	MaxOutstandingPolls int                   `yaml:"max_outstanding_polls,omitempty"`
 }
 
 // ScheduleConfig defines when a plugin should be polled.
@@ -239,10 +240,8 @@ func (cf *ConfigFiles) FileTier(path string) IntegrityTier {
 	if path == cf.Tokens || path == cf.Webhooks {
 		return TierHighSecurity
 	}
-	for _, s := range cf.Scopes {
-		if path == s {
-			return TierHighSecurity
-		}
+	if slices.Contains(cf.Scopes, path) {
+		return TierHighSecurity
 	}
 	return TierOperational
 }

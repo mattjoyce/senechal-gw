@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -474,11 +475,8 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		if pipeline != nil && len(pipeline.TerminalStepIDs) > 0 {
 			// Look for a job matching one of the terminal step IDs
 			for _, res := range results {
-				for _, termStepID := range pipeline.TerminalStepIDs {
-					if res.StepID == termStepID {
-						terminalResult = res.Result
-						break
-					}
+				if slices.Contains(pipeline.TerminalStepIDs, res.StepID) {
+					terminalResult = res.Result
 				}
 				if terminalResult != nil {
 					break

@@ -33,7 +33,7 @@ type Event struct {
 
 	// Injected by core (not set by plugins)
 	Source    string    `json:"source,omitempty"`
-	Timestamp time.Time `json:"timestamp,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 	EventID   string    `json:"event_id,omitempty"`
 }
 

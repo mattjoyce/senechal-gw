@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 )
 
@@ -75,9 +76,7 @@ func (s *Store) ShallowMerge(ctx context.Context, plugin string, updates json.Ra
 		return nil, fmt.Errorf("decode stored state: %w", err)
 	}
 
-	for k, v := range upd {
-		cur[k] = v
-	}
+	maps.Copy(cur, upd)
 
 	merged, err := json.Marshal(cur)
 	if err != nil {

@@ -94,7 +94,7 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 
 		fmt.Fprintf(&out, "    baggage    :\n")
 		baggage := prettyJSON(step.Baggage)
-		for _, line := range strings.Split(strings.TrimSpace(baggage), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(baggage), "\n") {
 			fmt.Fprintf(&out, "      %s\n", line)
 		}
 		fmt.Fprintf(&out, "\n")

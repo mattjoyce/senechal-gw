@@ -200,7 +200,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // respondJSON sends a JSON response.
-func (s *Server) respondJSON(w http.ResponseWriter, status int, data interface{}) {
+func (s *Server) respondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)

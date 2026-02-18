@@ -92,7 +92,7 @@ commands: [poll, handle, health]
 	}
 
 	// Load and validate plugin
-	reg, err := plugin.Discover(pluginsDir, func(level, msg string, args ...interface{}) {})
+	reg, err := plugin.Discover(pluginsDir, func(level, msg string, args ...any) {})
 	if err != nil {
 		t.Fatalf("failed to discover plugins: %v", err)
 	}
@@ -120,7 +120,7 @@ echo '{"status": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
 	// Configure plugin
 	disp.cfg.Plugins["echo"] = config.PluginConf{
 		Enabled: true,
-		Config:  map[string]interface{}{"test": "value"},
+		Config:  map[string]any{"test": "value"},
 		Timeouts: &config.TimeoutsConfig{
 			Poll: 5 * time.Second,
 		},
@@ -166,7 +166,7 @@ echo '{"status": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
 		t.Fatalf("failed to get plugin state: %v", err)
 	}
 
-	var stateMap map[string]interface{}
+	var stateMap map[string]any
 	if err := json.Unmarshal(pluginState, &stateMap); err != nil {
 		t.Fatalf("failed to unmarshal state: %v", err)
 	}

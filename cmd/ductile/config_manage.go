@@ -27,7 +27,7 @@ import (
 
 type scopeDoc struct {
 	Scopes   []string       `json:"scopes"`
-	Metadata scopeDocFields `json:"metadata,omitempty"`
+	Metadata scopeDocFields `json:"metadata"`
 }
 
 type scopeDocFields struct {
@@ -896,7 +896,7 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 		}
 		pluginsDir = filepath.Join(baseDir, pluginsDir)
 	}
-	return plugin.Discover(pluginsDir, func(level, msg string, args ...interface{}) {})
+	return plugin.Discover(pluginsDir, func(level, msg string, args ...any) {})
 }
 
 func printValidationSummary(result *doctor.Result) {

@@ -1,5 +1,7 @@
 package watch
 
+import "strings"
+
 import "time"
 
 // Ticker rotates through frames to show the system is alive.
@@ -63,15 +65,15 @@ func (s *Spinner) Decay() {
 }
 
 func (s Spinner) Render(theme Theme) string {
-	result := ""
-	for i := 0; i < 5; i++ {
+	var result strings.Builder
+	for i := range 5 {
 		if i < s.dots {
-			result += theme.TickerActive.Render("●")
+			result.WriteString(theme.TickerActive.Render("●"))
 		} else {
-			result += theme.TickerInactive.Render("○")
+			result.WriteString(theme.TickerInactive.Render("○"))
 		}
 	}
-	return result
+	return result.String()
 }
 
 func (s Spinner) LastEvent() time.Time {

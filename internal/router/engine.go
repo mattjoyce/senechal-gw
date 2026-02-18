@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sort"
 	"strings"
 
@@ -196,9 +197,7 @@ func cloneEvent(ev protocol.Event) protocol.Event {
 	}
 	if ev.Payload != nil {
 		cloned.Payload = make(map[string]any, len(ev.Payload))
-		for k, v := range ev.Payload {
-			cloned.Payload[k] = v
-		}
+		maps.Copy(cloned.Payload, ev.Payload)
 	}
 	return cloned
 }

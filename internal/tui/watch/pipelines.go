@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
@@ -181,12 +182,13 @@ func renderPipelineRow(num int, p *PipelineState, isSelected bool, theme Theme) 
 			Background(lipgloss.Color("57"))
 	}
 
-	line := fmt.Sprintf(" %d. %s  %s  %s",
+	var line strings.Builder
+	line.WriteString(fmt.Sprintf(" %d. %s  %s  %s",
 		num,
 		nameStyle.Render(fmt.Sprintf("%-24s", p.Name)),
 		statusStr,
 		lastRunStr,
-	)
+	))
 
 	// Show active jobs underneath
 	if activeCount > 0 {
@@ -211,11 +213,11 @@ func renderPipelineRow(num int, p *PipelineState, isSelected bool, theme Theme) 
 				step,
 				theme.Dim.Render(duration),
 			)
-			line += "\n" + jobLine
+			line.WriteString("\n" + jobLine)
 		}
 	}
 
-	return line
+	return line.String()
 }
 
 func statusIcon(status string, theme Theme) string {

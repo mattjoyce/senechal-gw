@@ -42,7 +42,7 @@ func TestCalculateJitteredInterval(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				jittered := calculateJitteredInterval(tt.baseInterval, tt.jitter)
 				if tt.jitter == 0 {
 					assert.Equal(t, tt.baseInterval, jittered)

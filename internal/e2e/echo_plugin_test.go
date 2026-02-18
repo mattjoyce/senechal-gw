@@ -17,7 +17,7 @@ func TestEchoPlugin_DiscoveryAndProtocolOK(t *testing.T) {
 	root := repoRoot(t)
 
 	// Validate plugin discovery against the repo's ./plugins directory.
-	logger := func(level, msg string, args ...interface{}) {}
+	logger := func(level, msg string, args ...any) {}
 	reg, err := plugin.Discover(filepath.Join(root, "plugins"), logger)
 	if err != nil {
 		t.Fatalf("Discover failed: %v", err)

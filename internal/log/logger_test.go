@@ -43,7 +43,7 @@ func TestContextHelpers(t *testing.T) {
 	l2 := WithComponent("test-comp")
 	l2.Info("hello")
 
-	var out map[string]interface{}
+	var out map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("Failed to decode JSON: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestWithPlugin(t *testing.T) {
 	l2 := WithPlugin("my-plugin")
 	l2.Info("plugin msg")
 
-	var out map[string]interface{}
+	var out map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("Failed to decode JSON: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestWithJob(t *testing.T) {
 	l2 := WithJob("job-123")
 	l2.Info("job msg")
 
-	var out map[string]interface{}
+	var out map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("Failed to decode JSON: %v", err)
 	}

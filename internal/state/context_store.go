@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"time"
@@ -89,9 +90,7 @@ func (s *ContextStore) Create(
 		}
 	}
 
-	for k, v := range updateMap {
-		accumulated[k] = v
-	}
+	maps.Copy(accumulated, updateMap)
 
 	accumulatedJSON, err := json.Marshal(accumulated)
 	if err != nil {
@@ -238,9 +237,7 @@ func scanEventContext(row rowScanner) (*EventContext, error) {
 
 func cloneRawMap(in map[string]json.RawMessage) map[string]json.RawMessage {
 	out := make(map[string]json.RawMessage, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

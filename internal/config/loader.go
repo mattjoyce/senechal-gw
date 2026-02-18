@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -341,9 +342,7 @@ func deepMergeConfig(dst, src *Config) error {
 		if dst.Plugins == nil {
 			dst.Plugins = make(map[string]PluginConf)
 		}
-		for name, plugin := range src.Plugins {
-			dst.Plugins[name] = plugin
-		}
+		maps.Copy(dst.Plugins, src.Plugins)
 	}
 
 	// Merge routes (append)
@@ -568,7 +567,7 @@ func validate(cfg *Config) error {
 }
 
 // checkUnresolvedEnvVars recursively checks for ${VAR} placeholders in config values.
-func checkUnresolvedEnvVars(data map[string]interface{}, pluginName string) error {
+func checkUnresolvedEnvVars(data map[string]any, pluginName string) error {
 	for key, value := range data {
 		switch v := value.(type) {
 		case string:
@@ -580,7 +579,7 @@ func checkUnresolvedEnvVars(data map[string]interface{}, pluginName string) erro
 				}
 				return fmt.Errorf("plugin %q: unresolved environment variable in config.%s", pluginName, key)
 			}
-		case map[string]interface{}:
+		case map[string]any:
 			if err := checkUnresolvedEnvVars(v, pluginName); err != nil {
 				return err
 			}

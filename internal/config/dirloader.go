@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -110,9 +112,7 @@ func graftPlugins(cfg *Config, files *ConfigFiles) error {
 		if err := yaml.Unmarshal([]byte(interpolated), &pf); err != nil {
 			return fmt.Errorf("failed to parse %s: %w", path, err)
 		}
-		for name, plugin := range pf.Plugins {
-			cfg.Plugins[name] = plugin
-		}
+		maps.Copy(cfg.Plugins, pf.Plugins)
 	}
 	return nil
 }
@@ -188,12 +188,12 @@ func graftTokens(cfg *Config, path string) error {
 }
 
 func joinLines(lines []string) string {
-	result := ""
+	var result strings.Builder
 	for i, line := range lines {
 		if i > 0 {
-			result += "\n  "
+			result.WriteString("\n  ")
 		}
-		result += line
+		result.WriteString(line)
 	}
-	return result
+	return result.String()
 }

@@ -112,7 +112,7 @@ except Exception as e:
 	}
 
 	// 4. Discover and Load
-	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...interface{}) {})
+	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...any) {})
 	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
 	if err != nil {
 		t.Fatalf("failed to load router: %v", err)
@@ -135,7 +135,7 @@ except Exception as e:
 
 	var rootJob *queue.Job
 	// Run until queue is empty (max 3 jobs expected)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		job, _ := q.Dequeue(ctx)
 		if job == nil {
 			time.Sleep(100 * time.Millisecond)

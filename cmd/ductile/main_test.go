@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -515,12 +516,7 @@ func TestRunConfigScopeAddWithPositionalBeforeFlags(t *testing.T) {
 }
 
 func containsString(list []string, value string) bool {
-	for _, item := range list {
-		if item == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, value)
 }
 
 func writeRouteFixture(t *testing.T, dir string) {

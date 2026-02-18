@@ -51,10 +51,7 @@ func renderHeader(health HealthState, ticker Ticker, spinner Spinner, theme Them
 	// Calculate padding between title and clock
 	titleWidth := lipgloss.Width(titleText)
 	clockWidth := lipgloss.Width(clock)
-	pad := innerWidth - titleWidth - clockWidth - 4
-	if pad < 1 {
-		pad = 1
-	}
+	pad := max(innerWidth-titleWidth-clockWidth-4, 1)
 	titleLine := titleText + strings.Repeat(" ", pad) + clock + " "
 
 	// Stats line

@@ -156,7 +156,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	// Get plugin configuration
 	pluginCfg := d.cfg.Plugins[job.Plugin]
 	if pluginCfg.Config == nil {
-		pluginCfg.Config = make(map[string]interface{})
+		pluginCfg.Config = make(map[string]any)
 	}
 
 	// Get plugin state
@@ -169,7 +169,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Unmarshal state into map
-	var stateMap map[string]interface{}
+	var stateMap map[string]any
 	if err := json.Unmarshal(pluginState, &stateMap); err != nil {
 		errMsg := fmt.Sprintf("failed to unmarshal plugin state: %v", err)
 		jobLogger.Error(errMsg)
@@ -541,10 +541,7 @@ func calculateBackoffDelay(base time.Duration, attempt int, jitter time.Duration
 		attempt = 1
 	}
 
-	factor := int64(math.Pow(2, float64(attempt-1)))
-	if factor < 1 {
-		factor = 1
-	}
+	factor := max(int64(math.Pow(2, float64(attempt-1))), 1)
 
 	delay := time.Duration(factor) * base
 	if delay < 0 {

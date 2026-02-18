@@ -1128,7 +1128,7 @@ func runStart(args []string) int {
 	contextStore := state.NewContextStore(db)
 	hub := events.NewHub(256)
 
-	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...interface{}) {
+	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...any) {
 		switch level {
 		case "debug":
 			logger.Debug(msg, args...)

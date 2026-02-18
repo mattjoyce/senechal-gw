@@ -58,8 +58,8 @@ func verifyHMACSignature(body []byte, signature, secret string) error {
 // Returns the raw bytes of the signature.
 func parseSignature(signature string) ([]byte, error) {
 	// Handle GitHub-style "sha256=<hex>" format
-	if strings.HasPrefix(signature, "sha256=") {
-		hexSig := strings.TrimPrefix(signature, "sha256=")
+	if after, ok := strings.CutPrefix(signature, "sha256="); ok {
+		hexSig := after
 		return hex.DecodeString(hexSig)
 	}
 
