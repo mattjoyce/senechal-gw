@@ -620,8 +620,8 @@ func (s *Server) handleGetPlugin(w http.ResponseWriter, r *http.Request) {
 			Name:         cmd.Name,
 			Type:         string(cmd.Type),
 			Description:  cmd.Description,
-			InputSchema:  cmd.InputSchema,
-			OutputSchema: cmd.OutputSchema,
+			InputSchema:  cmd.GetFullInputSchema(),
+			OutputSchema: cmd.GetFullOutputSchema(),
 		})
 	}
 

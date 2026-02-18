@@ -134,6 +134,51 @@ func TestHandleGetPlugin(t *testing.T) {
 		}
 	})
 
+	t.Run("compact schema expansion", func(t *testing.T) {
+		reg := &mockRegistry{
+			plugins: map[string]*plugin.Plugin{
+				"compact": {
+					Name: "compact",
+					Commands: plugin.Commands{
+						{
+							Name: "test",
+							InputSchema: map[string]any{
+								"msg": "string",
+								"val": "integer",
+							},
+						},
+					},
+				},
+			},
+		}
+		server := newTestServer(&mockQueue{}, reg)
+
+		req := httptest.NewRequest(http.MethodGet, "/plugin/compact", nil)
+		req.Header.Set("Authorization", "Bearer test-key-123")
+		rr := httptest.NewRecorder()
+
+		server.setupRoutes().ServeHTTP(rr, req)
+
+		var resp PluginDetailResponse
+		json.NewDecoder(rr.Body).Decode(&resp)
+
+		cmd := resp.Commands[0]
+		schema, ok := cmd.InputSchema.(map[string]any)
+		if !ok {
+			t.Fatalf("expected map schema, got %T", cmd.InputSchema)
+		}
+		if schema["type"] != "object" {
+			t.Errorf("expected type object, got %v", schema["type"])
+		}
+		props := schema["properties"].(map[string]any)
+		if props["msg"].(map[string]any)["type"] != "string" {
+			t.Errorf("expected msg type string, got %v", props["msg"])
+		}
+		if props["val"].(map[string]any)["type"] != "integer" {
+			t.Errorf("expected val type integer, got %v", props["val"])
+		}
+	})
+
 	t.Run("not found", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/plugin/unknown", nil)
 		req.Header.Set("Authorization", "Bearer test-key-123")

@@ -30,6 +30,48 @@ type Command struct {
 	OutputSchema any         `yaml:"output_schema,omitempty"`
 }
 
+// GetFullInputSchema returns the expanded JSON Schema for the input.
+func (c Command) GetFullInputSchema() any {
+	return expandSchema(c.InputSchema)
+}
+
+// GetFullOutputSchema returns the expanded JSON Schema for the output.
+func (c Command) GetFullOutputSchema() any {
+	return expandSchema(c.OutputSchema)
+}
+
+func expandSchema(schema any) any {
+	if schema == nil {
+		return nil
+	}
+
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return schema
+	}
+
+	// If it already looks like a JSON schema (has "type"), return as-is
+	if _, hasType := m["type"]; hasType {
+		return schema
+	}
+
+	// Otherwise, treat as a compact map of property:type
+	properties := make(map[string]any)
+	for k, v := range m {
+		propType, isString := v.(string)
+		if isString {
+			properties[k] = map[string]string{"type": propType}
+		} else {
+			properties[k] = v
+		}
+	}
+
+	return map[string]any{
+		"type":       "object",
+		"properties": properties,
+	}
+}
+
 // Commands is a list of supported commands.
 //
 // Backward-compatible formats:
