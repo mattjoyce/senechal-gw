@@ -1,0 +1,11 @@
+log_level: debug
+
+database:
+  path: ./data/ductile.db
+
+plugins_dir: ./plugins
+
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml

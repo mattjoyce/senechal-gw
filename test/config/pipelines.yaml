@@ -1,0 +1,35 @@
+pipelines:
+  - name: file-to-report
+    on: file.read
+    steps:
+      - id: analyze
+        uses: fabric
+      - id: save
+        uses: file_handler
+
+  - name: discord-fabric
+    on: fabric.handle
+    execution_mode: synchronous
+    timeout: 60s
+    steps:
+      - uses: fabric
+
+  - name: url-to-fabric
+    on: jina-reader.handle
+    execution_mode: synchronous
+    timeout: 120s
+    steps:
+      - id: scrape
+        uses: jina-reader
+      - id: process
+        uses: fabric
+
+  - name: youtube-to-fabric
+    on: youtube_transcript.handle
+    execution_mode: synchronous
+    timeout: 120s
+    steps:
+      - id: transcript
+        uses: youtube_transcript
+      - id: process
+        uses: fabric

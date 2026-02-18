@@ -1,0 +1,60 @@
+name: agenticloop
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Wake an AgenticLoop agent run via the AgenticLoop HTTP API"
+commands:
+  - name: poll
+    type: read
+    description: "No-op poll. agenticloop is event-driven."
+  - name: handle
+    type: write
+    description: "Enqueue an agent run in AgenticLoop. Returns run_id for status polling."
+    input_schema:
+      type: object
+      properties:
+        goal:
+          type: string
+          description: "The agent's goal — what it should accomplish."
+        wake_id:
+          type: string
+          description: "Optional idempotency key. If provided, duplicate calls return the existing run."
+        context:
+          type: object
+          description: "Optional static context passed to the agent (arbitrary key/value)."
+        constraints:
+          type: object
+          description: "Optional run constraints."
+          properties:
+            max_loops:
+              type: integer
+              description: "Maximum agent loop iterations."
+            deadline:
+              type: string
+              description: "Maximum total run time (e.g. '5m', '2m30s')."
+      required: [goal]
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                description: "agenticloop.woke"
+              payload:
+                type: object
+                properties:
+                  run_id:     { type: string }
+                  run_status: { type: string }
+                  existing:   { type: boolean }
+  - name: health
+    type: read
+    description: "Checks AgenticLoop service health."
+config_keys:
+  required: [base_url, token]
+  optional: []

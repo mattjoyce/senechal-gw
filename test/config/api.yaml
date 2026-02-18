@@ -1,0 +1,9 @@
+api:
+  enabled: true
+  listen: "localhost:8080"
+  auth:
+    api_key: test_admin_token_local
+    tokens:
+      - token: test_admin_token_local
+        scopes: ["*"]
+    webhooks: []

@@ -1,0 +1,53 @@
+plugins:
+  file_handler:
+    enabled: true
+    timeout: 30s
+    max_attempts: 1
+    schedule:
+      every: daily
+      jitter: 1h
+    config:
+      allowed_read_paths: "./test-files"
+      allowed_write_paths: "./reports"
+
+  fabric:
+    enabled: true
+    timeout: 120s
+    max_attempts: 1
+    schedule:
+      every: daily
+      jitter: 1h
+    config:
+      FABRIC_DEFAULT_PATTERN: "summarize"
+
+  echo:
+    enabled: true
+    timeout: 30s
+    max_attempts: 1
+    schedule:
+      every: 5m
+      jitter: 30s
+    config:
+      message: "Test echo - 5m schedule"
+
+  youtube_transcript:
+    enabled: true
+    timeout: 120s
+    max_attempts: 2
+    schedule:
+      every: daily
+      jitter: 1h
+    config:
+      default_language: "en"
+      request_timeout_seconds: 35
+
+  agenticloop:
+    enabled: true
+    timeout: 30s
+    max_attempts: 1
+    schedule:
+      every: daily
+      jitter: 1h
+    config:
+      base_url: "http://127.0.0.1:8090"
+      token: "${AGENTICLOOP_API_TOKEN}"
