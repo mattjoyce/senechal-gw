@@ -195,6 +195,10 @@ commands:
   - name: poll
     type: write
     description: "Emits echo.poll events." # Critical for TUI/LLM clarity
+    input_schema:
+      message: string
+    output_schema:
+      status: string
   - name: health
     type: read
     description: "Returns plugin version."
@@ -203,6 +207,30 @@ commands:
 ### Manifest Fields
 - `description`: A human-readable (and LLM-readable) summary of what the plugin or command does.
 - `type`: `read` (no side effects) or `write` (mutates state or external systems). This determines the token scope required to invoke it.
+- `input_schema` / `output_schema`: (Optional) JSON Schema describing the command's expected payload and result.
+
+#### Compact Schema Format
+To keep manifests concise, you can use a compact map of `field: type` instead of a full JSON Schema object. Ductile will automatically expand this into a complete JSON Schema for API consumers.
+
+Example compact input:
+```yaml
+input_schema:
+  url: string
+  depth: integer
+```
+
+Expands to:
+```json
+{
+  "type": "object",
+  "properties": {
+    "url": { "type": "string" },
+    "depth": { "type": "integer" }
+  }
+}
+```
+
+If you need more control (descriptions, constraints), you can provide a full JSON Schema object instead.
 
 ---
 
