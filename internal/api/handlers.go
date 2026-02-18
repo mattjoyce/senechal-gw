@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -567,12 +568,73 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// handleListPlugins handles GET /plugins and GET /skills.
+func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
+	plugins := s.registry.All()
+	var pNames []string
+	for name := range plugins {
+		pNames = append(pNames, name)
+	}
+	sort.Strings(pNames)
+
+	resp := PluginListResponse{
+		Plugins: make([]PluginSummary, 0, len(pNames)),
+	}
+
+	for _, name := range pNames {
+		p := plugins[name]
+		summary := PluginSummary{
+			Name:        p.Name,
+			Version:     p.Version,
+			Description: p.Description,
+			Commands:    make([]string, 0, len(p.Commands)),
+		}
+		for _, cmd := range p.Commands {
+			summary.Commands = append(summary.Commands, cmd.Name)
+		}
+		resp.Plugins = append(resp.Plugins, summary)
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
+// handleGetPlugin handles GET /plugin/{plugin}.
+func (s *Server) handleGetPlugin(w http.ResponseWriter, r *http.Request) {
+	pluginName := chi.URLParam(r, "plugin")
+	p, ok := s.registry.Get(pluginName)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "plugin not found")
+		return
+	}
+
+	resp := PluginDetailResponse{
+		Name:        p.Name,
+		Version:     p.Version,
+		Description: p.Description,
+		Protocol:    p.Protocol,
+		Commands:    make([]PluginCommand, 0, len(p.Commands)),
+	}
+
+	for _, cmd := range p.Commands {
+		resp.Commands = append(resp.Commands, PluginCommand{
+			Name:         cmd.Name,
+			Type:         string(cmd.Type),
+			Description:  cmd.Description,
+			InputSchema:  cmd.InputSchema,
+			OutputSchema: cmd.OutputSchema,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
 // respondJSON is a helper to write JSON responses
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(data)
 }
+
 
 // writeError writes a JSON error response
 func (s *Server) writeError(w http.ResponseWriter, statusCode int, message string) {

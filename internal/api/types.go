@@ -73,3 +73,35 @@ type HealthzResponse struct {
 	// MVP: always 0 until circuit breaker state is plumbed into the API server.
 	PluginsCircuitOpen int `json:"plugins_circuit_open"`
 }
+
+// PluginListResponse is returned by GET /plugins or GET /skills.
+type PluginListResponse struct {
+	Plugins []PluginSummary `json:"plugins"`
+}
+
+// PluginSummary provides a high-level overview of a plugin.
+type PluginSummary struct {
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description,omitempty"`
+	Commands    []string `json:"commands"`
+}
+
+// PluginDetailResponse is returned by GET /plugin/{name}.
+type PluginDetailResponse struct {
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Description string          `json:"description,omitempty"`
+	Protocol    int             `json:"protocol"`
+	Commands    []PluginCommand `json:"commands"`
+}
+
+// PluginCommand describes a single command supported by a plugin.
+type PluginCommand struct {
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	Description  string      `json:"description,omitempty"`
+	InputSchema  any         `json:"input_schema,omitempty"`
+	OutputSchema any         `json:"output_schema,omitempty"`
+}
+

@@ -7,6 +7,19 @@ commands:
   - name: poll
     type: write
     description: "Emits echo.poll events and updates the internal last_run timestamp."
+    input_schema:
+      type: object
+      properties:
+        message:
+          type: string
+          description: "Optional message to include in the poll event."
+    output_schema:
+      type: object
+      properties:
+        status:
+          type: string
+        last_run:
+          type: string
   - name: health
     type: read
     description: "Returns the current health status and plugin version."

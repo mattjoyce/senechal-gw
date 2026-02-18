@@ -157,6 +157,55 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
 
 ---
 
+### 4. Plugin Discovery
+
+List available plugins and retrieve their metadata/schemas.
+
+#### List Plugins
+**Endpoint**: `GET /plugins` (alias: `GET /skills`)
+
+**Response (200 OK)**:
+```json
+{
+  "plugins": [
+    {
+      "name": "echo",
+      "version": "0.1.0",
+      "description": "A demonstration plugin",
+      "commands": ["poll", "health"]
+    }
+  ]
+}
+```
+
+#### Get Plugin Details
+**Endpoint**: `GET /plugin/{name}`
+
+**Response (200 OK)**:
+```json
+{
+  "name": "echo",
+  "version": "0.1.0",
+  "description": "A demonstration plugin",
+  "protocol": 2,
+  "commands": [
+    {
+      "name": "poll",
+      "type": "write",
+      "description": "Emits echo.poll events",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" }
+        }
+      }
+    }
+  ]
+}
+```
+
+---
+
 ## Error Codes
 
 - `401 Unauthorized`: Missing or invalid Bearer token.
