@@ -1,6 +1,6 @@
 ---
 id: improvement-117
-status: doing
+status: done
 priority: medium
 tags: [api, openapi, discovery, agents]
 ---
@@ -33,3 +33,16 @@ Each plugin command → one `POST /plugin/{name}/{command}` path with:
 - `internal/api/server.go` — route registration (outside auth group)
 - `internal/api/openapi_test.go` (new) — unit + handler tests
 - `docs/API_REFERENCE.md` — document new endpoints
+
+## Acceptance Criteria
+
+- [x] `GET /openapi.json` returns OpenAPI 3.1 for all plugins without authentication.
+- [x] `GET /plugin/{name}/openapi.json` returns OpenAPI 3.1 for a single plugin without authentication.
+- [x] Generated operations include `operationId`, summary fallback, optional `requestBody`, and bearer security metadata.
+- [x] Discovery routes are registered outside the auth middleware group.
+- [x] Endpoint behavior is covered by API tests and documented.
+
+## Narrative
+
+- 2026-02-21: Reviewed implementation and closed card. Global and per-plugin OpenAPI discovery endpoints are live, unauthenticated, and covered by handler/unit tests.
+- 2026-02-21: Follow-on discovery work (`/.well-known/ai-plugin.json`) and manifest compaction was completed in card #119; this card remains the foundational OpenAPI discovery slice.

@@ -28,7 +28,7 @@ List jobs, optionally filtered.
 **Query params:**
 - `plugin` — filter by plugin name (e.g. `?plugin=withings`)
 - `command` — filter by command (e.g. `?command=poll`)
-- `status` — filter by status (`pending`, `running`, `ok`, `error`)
+- `status` — filter by status (`queued`, `running`, `succeeded`, `failed`, `timed_out`, `dead`) with aliases (`pending`, `ok`, `error`)
 - `limit` — max results (default: 50)
 
 **Response:**
@@ -39,7 +39,7 @@ List jobs, optionally filtered.
       "job_id": "uuid",
       "plugin": "withings",
       "command": "poll",
-      "status": "ok",
+      "status": "succeeded",
       "created_at": "ISO8601",
       "started_at": "ISO8601",
       "completed_at": "ISO8601",
@@ -65,3 +65,4 @@ List jobs, optionally filtered.
 - 2026-02-22: Card created. Gap discovered during withings plugin deployment planning — no API way to verify scheduled job execution without TUI or direct DB access.
 - 2026-02-21: Moved to doing and implementation started for `GET /jobs` endpoint, including query filtering, ordering, tests, and API docs update. (by @assistant)
 - 2026-02-21: Completed end-to-end. Added queue-backed `ListJobs` filtering with total count + created_at-desc ordering, wired authenticated `GET /jobs` route/handler (including status aliases `pending|ok|error`), added API and queue tests, and documented endpoint behavior in API reference. Full `go test ./...` passes. (by @assistant)
+- 2026-02-21: Re-reviewed after merging related discovery/manifest changes; behavior remains stable and tests still pass on `main`. (by @assistant)

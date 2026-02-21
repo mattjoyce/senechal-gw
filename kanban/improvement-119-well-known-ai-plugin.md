@@ -106,11 +106,11 @@ commands:
 
 ### Plugins to update
 
-- [ ] `plugins/fabric/manifest.yaml` — add descriptions + input_schema per command
-- [ ] `plugins/file_handler/manifest.yaml` — add descriptions + input_schema per command
-- [ ] `plugins/youtube_transcript/manifest.yaml` — add descriptions + input_schema per command
-- [ ] `plugins/jina-reader/manifest.yaml` — add descriptions (type already present)
-- [ ] `plugins/echo/manifest.yaml` — already full; remove `output_schema` if desired (not used by OpenAPI generator)
+- [x] `plugins/fabric/manifest.yaml` — added descriptions + input_schema
+- [x] `plugins/file_handler/manifest.yaml` — added descriptions + input_schema
+- [x] `plugins/youtube_transcript/manifest.yaml` — added descriptions + input_schema
+- [x] `plugins/jina-reader/manifest.yaml` — added descriptions + input_schema for `handle`
+- [x] `plugins/echo/manifest.yaml` — retained full object form (including optional `output_schema`)
 
 ## Acceptance Criteria
 
@@ -128,3 +128,4 @@ commands:
 - 2026-02-21: Moved to doing and queued behind #118 implementation so job listing API can land first, then discovery/manifest compaction follow-up. (by @assistant)
 - 2026-02-21: Completed discovery endpoints by adding unauthenticated `GET /openapi.json` and `GET /.well-known/ai-plugin.json`, with route registration outside auth and focused API tests for both handlers. (by @assistant)
 - 2026-02-21: Merged latest `main` manifest uplift commit (`25d2225`) during implementation to align compaction work with upstream changes for `fabric`, `file_handler`, `youtube_transcript`, and `jina-reader`, then revalidated full test suite. (by @assistant)
+- 2026-02-21: Follow-on hardening added explicit manifest schema metadata (`manifest_spec`, `manifest_version`) across all first-party manifests to keep discovery inputs versioned and consistent as plugin contracts evolve. (by @assistant)
