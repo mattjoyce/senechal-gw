@@ -43,9 +43,6 @@ plugins:
   # File handler for pipeline testing (event-driven, not scheduled)
   file_handler:
     enabled: true
-    schedule:
-      every: daily          # Minimal schedule (event-driven via API)
-      jitter: 1h
     timeout: 30s
     max_attempts: 1
     config:
@@ -55,9 +52,6 @@ plugins:
   # Fabric plugin for text analysis (event-driven via routing)
   fabric:
     enabled: true
-    schedule:
-      every: daily          # Minimal schedule (event-driven via routing)
-      jitter: 1h
     timeout: 120s
     max_attempts: 1
     config:

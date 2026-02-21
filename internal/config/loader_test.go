@@ -126,7 +126,7 @@ plugins_dir: ./plugins
 			wantErr: true,
 		},
 		{
-			name: "missing required schedule",
+			name: "enabled plugin without schedule is valid",
 			yaml: `
 service:
   tick_interval: 30s
@@ -136,6 +136,30 @@ plugins_dir: ./plugins
 plugins:
   test:
     enabled: true
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				test := cfg.Plugins["test"]
+				if !test.Enabled {
+					t.Error("plugin should be enabled")
+				}
+				if test.Schedule != nil {
+					t.Error("plugin schedule should be nil when omitted")
+				}
+			},
+		},
+		{
+			name: "schedule block requires every",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  test:
+    enabled: true
+    schedule: {}
 `,
 			wantErr: true,
 		},

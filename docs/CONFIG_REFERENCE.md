@@ -110,7 +110,7 @@ state:
 plugins:
   echo:
     enabled: true
-    schedule:
+    schedule:   # Optional; omit for event-driven plugins
       every: 5m
     config:
       message: "Hello"

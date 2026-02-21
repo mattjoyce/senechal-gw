@@ -164,7 +164,7 @@ When a producer enqueues a job with a `dedupe_key`:
 
 ## 4. Scheduler
 
-A single internal tick loop. Each tick, the scheduler checks which plugins are due based on their configured interval and enqueues `poll` jobs.
+A single internal tick loop. Each tick, the scheduler checks which plugins are due based on their configured interval and enqueues `poll` jobs. Plugins without a `schedule` are ignored by the scheduler and can still be triggered via webhook, router, CLI, or API.
 
 ### 4.1 Fuzzy Intervals
 

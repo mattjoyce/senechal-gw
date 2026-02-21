@@ -288,14 +288,16 @@ service:
   name: test-gw
 plugins:
   echo:
-    enabled: false
+    enabled: true
+    schedule:
+      every: 5m
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	code, _, stderr := captureOutputWithExitCode(t, func() int {
-		return runConfigSet([]string{"--config", configPath, "--apply", "plugin:echo.enabled=true"})
+		return runConfigSet([]string{"--config", configPath, "--apply", "plugins.echo.schedule.every="})
 	})
 	if code == 0 {
 		t.Fatalf("runConfigSet() should fail for invalid apply, stderr: %s", stderr)
@@ -308,8 +310,8 @@ plugins:
 	if err != nil {
 		t.Fatalf("config should still be valid after failed apply: %v", err)
 	}
-	if reloaded.Plugins["echo"].Enabled {
-		t.Fatal("plugin:echo.enabled should remain false after failed apply")
+	if got := reloaded.Plugins["echo"].Schedule.Every; got != "5m" {
+		t.Fatalf("plugins.echo.schedule.every should remain %q after failed apply, got %q", "5m", got)
 	}
 }
 

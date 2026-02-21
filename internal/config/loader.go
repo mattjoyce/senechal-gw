@@ -544,18 +544,16 @@ func validate(cfg *Config) error {
 			continue // Skip disabled plugins
 		}
 
-		// Schedule required for enabled plugins
-		if plugin.Schedule == nil {
-			return fmt.Errorf("plugin %q: schedule is required for enabled plugins", name)
-		}
+		// Schedule is optional. If present, validate schedule.every.
+		if plugin.Schedule != nil {
+			if plugin.Schedule.Every == "" {
+				return fmt.Errorf("plugin %q: schedule.every is required", name)
+			}
 
-		if plugin.Schedule.Every == "" {
-			return fmt.Errorf("plugin %q: schedule.every is required", name)
-		}
-
-		// Validate schedule.every with flexible parser.
-		if _, err := ParseInterval(plugin.Schedule.Every); err != nil {
-			return fmt.Errorf("plugin %q: %w", name, err)
+			// Validate schedule.every with flexible parser.
+			if _, err := ParseInterval(plugin.Schedule.Every); err != nil {
+				return fmt.Errorf("plugin %q: %w", name, err)
+			}
 		}
 
 		// Check for unresolved env vars in config (security: no secrets leaked in logs)

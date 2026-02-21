@@ -149,7 +149,9 @@ service:
   name: test-gw
 plugins:
   echo:
-    enabled: false
+    enabled: true
+    schedule:
+      every: 5m
 `
 	err := os.WriteFile(configPath, []byte(initialYAML), 0644)
 	assert.NoError(t, err)
@@ -159,7 +161,7 @@ plugins:
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	err = cfg.SetPath("plugin:echo.enabled", "true", true)
+	err = cfg.SetPath("plugins.echo.schedule.every", "", true)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "validation failed")
 
@@ -168,5 +170,5 @@ plugins:
 	if err != nil {
 		t.Fatalf("Load reloaded failed: %v", err)
 	}
-	assert.False(t, reloaded.Plugins["echo"].Enabled)
+	assert.Equal(t, "5m", reloaded.Plugins["echo"].Schedule.Every)
 }
