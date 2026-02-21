@@ -1,9 +1,13 @@
+---
+id: 102
+status: done
+priority: high
+tags: [api, pipelines, triggers, design]
+---
+
 # Improvement 102: Separate Plugin and Pipeline Trigger Endpoints
 
 **Type:** improvement
-**Status:** doing
-**Priority:** high
-**Created:** 2026-02-15
 
 ## Problem
 
@@ -98,7 +102,7 @@ Support all execution contexts:
 1. Add `/plugin/{plugin}/{command}` endpoint (bypasses router)
 2. Add `/pipeline/{pipeline}` endpoint
 3. Update router to distinguish plugin vs pipeline triggers
-4. Add deprecation headers to `/trigger` endpoint
+4. Add deprecation headers to `/trigger" endpoint
 5. Update documentation with examples
 6. Migrate example pipelines to use domain events
 7. Update tests
@@ -111,13 +115,13 @@ Support all execution contexts:
 
 ## Acceptance Criteria
 
-- [ ] Can execute plugin directly without triggering pipelines
-- [ ] Can execute pipeline explicitly by name
-- [ ] Scheduler works with both endpoints
-- [ ] Event routing still works for pipeline composition
-- [ ] Backward compatibility maintained
-- [ ] Clear error messages when wrong endpoint used
-- [ ] Documentation updated with examples
+- [x] Can execute plugin directly without triggering pipelines
+- [x] Can execute pipeline explicitly by name
+- [x] Scheduler works with both endpoints
+- [x] Event routing still works for pipeline composition
+- [x] Backward compatibility maintained
+- [x] Clear error messages when wrong endpoint used
+- [x] Documentation updated with examples
 
 ## Notes
 
@@ -149,3 +153,4 @@ This is a fundamental UX improvement. The current design treats everything as ev
     - **Backward compatibility note**: Existing `/trigger` endpoint behavior preserved means pipelines using `on: {plugin}.{command}` continue working, but documentation should migrate to domain events.
     - **Skill manifest impact**: `ductile skill` output should list both atomic plugin skills (via `/plugin`) and orchestrated pipeline skills (via `/pipeline`) separately for clarity.
     - **Move to doing supported**: This addresses a fundamental usability gap discovered through live testing.
+- 2026-02-22: Verified implementation in `internal/api/server.go` and `internal/api/handlers.go`. `/plugin` and `/pipeline` endpoints functional, `/trigger` deprecated. (by @assistant)
