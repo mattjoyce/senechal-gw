@@ -20,8 +20,8 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags="-w -s" -o ductile ./cmd/ducti
 FROM alpine:latest
 
 # Install runtime dependencies (bash for plugins, jq for JSON parsing, python3 for python plugins)
-RUN apk add --no-cache ca-certificates tzdata bash jq python3 py3-pip sqlite-libs && \
-    pip3 install --no-cache-dir uv
+RUN apk add --no-cache ca-certificates tzdata bash jq curl python3 py3-pip sqlite-libs && \
+    curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
 # Create app user
 RUN addgroup -S ductile && adduser -S ductile -G ductile
