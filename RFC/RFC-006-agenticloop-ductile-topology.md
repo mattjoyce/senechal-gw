@@ -1,4 +1,4 @@
-# RFC-003: AgenticLoop + Ductile Federated Topology
+# RFC-006: AgenticLoop + Ductile Federated Topology
 
 **Status:** Draft
 **Date:** 2026-02-21
