@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25.4-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata gcc musl-dev sqlite-dev
@@ -20,7 +20,8 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags="-w -s" -o ductile ./cmd/ducti
 FROM alpine:latest
 
 # Install runtime dependencies (bash for plugins, jq for JSON parsing, python3 for python plugins)
-RUN apk add --no-cache ca-certificates tzdata bash jq python3 py3-pip sqlite-libs
+RUN apk add --no-cache ca-certificates tzdata bash jq python3 py3-pip sqlite-libs && \
+    pip3 install --no-cache-dir uv
 
 # Create app user
 RUN addgroup -S ductile && adduser -S ductile -G ductile
