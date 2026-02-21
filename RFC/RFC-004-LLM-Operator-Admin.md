@@ -1,9 +1,9 @@
 # RFC-004: LLM as Operator/Admin Model for Seneschal Gateway
 
-Status: Draft\
-Author: Matt Joyce\
-Project: ductile\
-Date: 2026
+**Status:** Active Draft (guiding direction)
+**Author:** Matt Joyce
+**Project:** ductile
+**Date:** 2026
 
 ------------------------------------------------------------------------
 

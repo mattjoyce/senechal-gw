@@ -1,5 +1,6 @@
 # RFC-001 Critique: Ductile
 
+**Status:** Historical Critique
 **Reviewer:** Claude (team review)
 **Date:** 2026-02-08
 

@@ -1,6 +1,6 @@
 # RFC-001: Ductile
 
-**Status:** Draft — requesting critique
+**Status:** Historical Draft (superseded by RFC-002-Decisions)
 **Date:** 2026-02-08
 **Author:** Matt Joyce
 

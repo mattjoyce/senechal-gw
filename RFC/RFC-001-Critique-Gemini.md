@@ -1,8 +1,8 @@
 # RFC-001-Critique-Gemini: Ductile Review
 
+**Status:** Historical Critique
 **Reviewer:** Gemini CLI
 **Date:** 2026-02-08
-**RFC Status:** Draft
 **Author:** Matt Joyce
 
 ---

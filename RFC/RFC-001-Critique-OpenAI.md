@@ -1,5 +1,6 @@
 # RFC-001 Critique: Ductile (Constructive Review)
 
+**Status:** Historical Critique
 Target: `RFC-001-ductile-gateway.md` (Draft, dated 2026-02-08)
 
 ## High-Level Take
@@ -206,4 +207,3 @@ Define:
 - A plugin/core protocol mismatch fails fast with a clear error (versioning).
 - A transient network failure causes a retry with backoff (and visible in `job_log`).
 - Webhook verification rejects invalid signatures and oversized requests.
-

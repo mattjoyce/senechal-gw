@@ -82,7 +82,7 @@ Based on Sprint 1 & 2 execution:
 Card #27 - Assess evolution toward "Agentic Loop Runtime" or mature as automation tool.
 Decision deferred until real usage data available.
 
-See `kanban/rfc-003-evaluation.md` and `RFC-003-Agentic-Loop-Runtime.md` for details.
+See `kanban/rfc-003-evaluation.md` and `RFC/RFC-003-Agentic-Loop-Runtime.md` for details.
 
 ---
 

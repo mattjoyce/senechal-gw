@@ -1,9 +1,9 @@
 # RFC-003: Agentic Loop Runtime
 
-Status: Draft\
-Author: Matt Joyce\
-Project: ductile\
-Date: 2026
+**Status:** Draft (partially superseded by RFC-004 and RFC-006)
+**Author:** Matt Joyce
+**Project:** ductile
+**Date:** 2026
 
 ------------------------------------------------------------------------
 

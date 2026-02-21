@@ -1,6 +1,6 @@
 # RFC-006: AgenticLoop + Ductile Federated Topology
 
-**Status:** Draft
+**Status:** Active Draft
 **Date:** 2026-02-21
 **Author:** Matt Joyce
 **Depends on:** RFC-001, RFC-002-Decisions

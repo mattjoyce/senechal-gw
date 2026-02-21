@@ -1,6 +1,6 @@
 # RFC-002: Operational Semantics — Consensus Review
 
-**Status:** Consensus
+**Status:** Historical Review (consensus record for RFC-002)
 **Date:** 2026-02-08
 **Sources:** Claude (Opus 4.6), OpenAI, Gemini
 **Covers:** RFC-002-operational-semantics.md

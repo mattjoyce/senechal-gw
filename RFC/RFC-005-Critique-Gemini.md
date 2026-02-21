@@ -1,6 +1,6 @@
 # RFC-005-Critique-Gemini: Routing Payload & Context Management
 
-**Status:** Review  
+**Status:** Historical Critique  
 **Date:** 2026-02-11  
 **Author:** Gemini (Interactive CLI Agent)  
 **Context:** Critique of RFC-005 Routing Payload Management Strategies

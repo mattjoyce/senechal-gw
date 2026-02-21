@@ -1,5 +1,6 @@
 # RFC-002 Review: Operational Semantics
 
+**Status:** Historical Critique
 **Reviewer:** Claude (Opus 4.6)
 **Date:** 2026-02-08
 **Verdict:** Accept with minor amendments. Ship it.

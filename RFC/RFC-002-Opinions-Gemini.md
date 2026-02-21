@@ -1,6 +1,6 @@
 # RFC-002: Operational Semantics — Gemini Critique
 
-**Status:** Critique
+**Status:** Historical Critique
 **Date:** 2026-02-08
 **Author:** Gemini CLI Agent
 **Critiques:** RFC-002-operational-semantics.md

@@ -1,6 +1,6 @@
 # RFC-002: Operational Semantics — Decisions
 
-**Status:** Accepted
+**Status:** Accepted (authoritative)
 **Date:** 2026-02-08
 **Author:** Matt Joyce
 **Reviewed by:** Claude (Opus 4.6), OpenAI, Gemini

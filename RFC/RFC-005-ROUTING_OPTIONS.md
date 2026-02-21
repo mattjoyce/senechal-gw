@@ -1,6 +1,6 @@
 # RFC-005: Routing Payload Management Strategies
 
-**Status:** Draft — Design Review  
+**Status:** Draft (partially implemented; pending final consolidation)  
 **Date:** 2026-02-11  
 **Author:** Matt Joyce  
 **Depends on:** RFC-001, RFC-002  

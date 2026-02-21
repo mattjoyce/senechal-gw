@@ -1,5 +1,6 @@
 # RFC-002 Opinions (OpenAI) — Lock The Design
 
+**Status:** Historical Critique
 Target: `RFC-002-operational-semantics.md` (Draft, dated 2026-02-08)
 
 This RFC is ~90% of the way to “buildable”. The overall direction is correct and matches the product constraint (personal gateway, unattended reliability, low complexity).
@@ -120,4 +121,3 @@ Keep these out of the first build. They’re tempting, but they’re scope traps
 ## Bottom Line
 
 Treat RFC-002 as the design, **apply the 5 binding changes above**, and start implementing. This locks a coherent V1 that will behave predictably under crash/retry/timeout, without overbuilding.
-
