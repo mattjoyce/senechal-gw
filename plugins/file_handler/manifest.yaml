@@ -1,3 +1,5 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
 name: file_handler
 version: 0.1.0
 protocol: 2

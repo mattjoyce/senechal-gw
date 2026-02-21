@@ -21,7 +21,9 @@ func TestDiscover(t *testing.T) {
 				pluginDir := filepath.Join(dir, "test-plugin")
 				os.Mkdir(pluginDir, 0755)
 
-				manifest := `name: test-plugin
+				manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: test-plugin
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
@@ -59,7 +61,9 @@ commands: [poll, health]
 					pluginDir := filepath.Join(dir, name)
 					os.Mkdir(pluginDir, 0755)
 
-					manifest := `name: ` + name + `
+					manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: ` + name + `
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
@@ -92,7 +96,9 @@ commands: [poll]
 				pluginDir := filepath.Join(dir, "bad-protocol")
 				os.Mkdir(pluginDir, 0755)
 
-				manifest := `name: bad-protocol
+				manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: bad-protocol
 version: 1.0.0
 protocol: 99
 entrypoint: run.sh
@@ -111,7 +117,9 @@ commands: [poll]
 				pluginDir := filepath.Join(dir, "non-exec")
 				os.Mkdir(pluginDir, 0755)
 
-				manifest := `name: non-exec
+				manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: non-exec
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
@@ -171,7 +179,9 @@ func TestDiscoverMany_MultipleRootsAndDuplicatePrecedence(t *testing.T) {
 		if err := os.MkdirAll(pDir, 0o755); err != nil {
 			t.Fatalf("mkdir plugin dir: %v", err)
 		}
-		manifest := `name: ` + manifestName + `
+		manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: ` + manifestName + `
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
@@ -214,7 +224,9 @@ func TestDiscoverMany_RecursiveManifestScan(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("mkdir nested plugin dir: %v", err)
 	}
-	manifest := `name: plugin-x
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: plugin-x
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
@@ -245,66 +257,103 @@ func TestValidateManifest(t *testing.T) {
 		{
 			name: "valid manifest",
 			manifest: &Manifest{
-				Name:       "test",
-				Protocol:   2,
-				Entrypoint: "run.sh",
-				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: false,
 		},
 		{
+			name: "missing manifest spec",
+			manifest: &Manifest{
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsupported manifest version",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: 99,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "missing name",
 			manifest: &Manifest{
-				Protocol:   2,
-				Entrypoint: "run.sh",
-				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing protocol",
 			manifest: &Manifest{
-				Name:       "test",
-				Entrypoint: "run.sh",
-				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing entrypoint",
 			manifest: &Manifest{
-				Name:     "test",
-				Protocol: 1,
-				Commands: Commands{{Name: "poll", Type: CommandTypeWrite}},
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        1,
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing commands",
 			manifest: &Manifest{
-				Name:       "test",
-				Protocol:   2,
-				Entrypoint: "run.sh",
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
 			},
 			wantErr: true,
 		},
 		{
 			name: "path traversal in entrypoint",
 			manifest: &Manifest{
-				Name:       "test",
-				Protocol:   2,
-				Entrypoint: "../evil/run.sh",
-				Commands:   Commands{{Name: "poll", Type: CommandTypeWrite}},
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "../evil/run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid command",
 			manifest: &Manifest{
-				Name:       "test",
-				Protocol:   2,
-				Entrypoint: "run.sh",
-				Commands:   Commands{{Name: "invalid_command", Type: CommandTypeWrite}},
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "invalid_command", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -456,7 +505,9 @@ func TestDiscover_TypedCommandMetadata(t *testing.T) {
 	pluginDir := filepath.Join(dir, "test-plugin")
 	os.Mkdir(pluginDir, 0755)
 
-	manifest := `name: test-plugin
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: test-plugin
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh

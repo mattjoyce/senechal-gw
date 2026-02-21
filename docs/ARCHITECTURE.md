@@ -255,6 +255,8 @@ plugins/
 
 **Array format (legacy, deprecated Sprint 5):**
 ```yaml
+manifest_spec: ductile.plugin
+manifest_version: 1
 name: withings
 version: 1.0.0
 protocol: 1
@@ -268,6 +270,8 @@ config_keys:
 
 **Object format (Sprint 3+, recommended):**
 ```yaml
+manifest_spec: ductile.plugin
+manifest_version: 1
 name: withings
 version: 1.0.0
 protocol: 1
@@ -303,6 +307,8 @@ config_keys:
 **Purpose:** Enables manifest-driven token scopes (`plugin:ro` vs `plugin:rw`) without hardcoding command knowledge in auth middleware.
 
 **Validation:**
+- `manifest_spec` — must be `ductile.plugin`.
+- `manifest_version` — must be `1`.
 - `protocol` — must match a version the core supports. Mismatch → plugin not loaded.
 - `entrypoint` — mandatory. Core constructs execution path relative to the discovered plugin directory.
 - `config_keys.required` — validated at load time. Missing keys → plugin not loaded, error logged.

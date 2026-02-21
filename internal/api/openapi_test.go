@@ -196,3 +196,42 @@ func TestHandleOpenAPIPlugin_NotFound(t *testing.T) {
 		t.Fatalf("expected status 404, got %d", rr.Code)
 	}
 }
+
+func TestHandleOpenAPIAll_NoAuth(t *testing.T) {
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name:     "echo",
+				Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeWrite}},
+			},
+			"withings": {
+				Name:     "withings",
+				Commands: plugin.Commands{{Name: "health", Type: plugin.CommandTypeRead}},
+			},
+		},
+	}
+	server := newTestServer(&mockQueue{}, reg)
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var doc map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&doc); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	paths, ok := doc["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected paths map in openapi doc")
+	}
+	if _, ok := paths["/plugin/echo/poll"]; !ok {
+		t.Fatalf("expected /plugin/echo/poll in global openapi")
+	}
+	if _, ok := paths["/plugin/withings/health"]; !ok {
+		t.Fatalf("expected /plugin/withings/health in global openapi")
+	}
+}

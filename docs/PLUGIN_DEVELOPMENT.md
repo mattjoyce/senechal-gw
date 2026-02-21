@@ -207,6 +207,8 @@ return {
 Every plugin must have a `manifest.yaml` in its directory.
 
 ```yaml
+manifest_spec: ductile.plugin
+manifest_version: 1
 name: echo
 version: 0.1.0
 protocol: 2
@@ -226,6 +228,8 @@ commands:
 ```
 
 ### Manifest Fields
+- `manifest_spec`: Required manifest schema identifier. Current supported value: `ductile.plugin`.
+- `manifest_version`: Required manifest schema version. Current supported value: `1`.
 - `description`: A human-readable (and LLM-readable) summary of what the plugin or command does.
 - `type`: `read` (no side effects) or `write` (mutates state or external systems). This determines the token scope required to invoke it.
 - `input_schema` / `output_schema`: (Optional) JSON Schema describing the command's expected payload and result.

@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -566,6 +567,76 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// handleListJobs handles GET /jobs.
+func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	filter := queue.ListJobsFilter{
+		Plugin:  strings.TrimSpace(q.Get("plugin")),
+		Command: strings.TrimSpace(q.Get("command")),
+		Limit:   50,
+	}
+
+	if rawLimit := strings.TrimSpace(q.Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit <= 0 {
+			s.writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		filter.Limit = limit
+	}
+
+	if rawStatus := strings.TrimSpace(q.Get("status")); rawStatus != "" {
+		status, ok := parseJobStatusFilter(rawStatus)
+		if !ok {
+			s.writeError(w, http.StatusBadRequest, "invalid status filter")
+			return
+		}
+		filter.Status = &status
+	}
+
+	jobs, total, err := s.queue.ListJobs(r.Context(), filter)
+	if err != nil {
+		s.logger.Error("failed to list jobs", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to list jobs")
+		return
+	}
+
+	resp := JobListResponse{
+		Jobs:  make([]JobListItem, 0, len(jobs)),
+		Total: total,
+	}
+	for _, job := range jobs {
+		resp.Jobs = append(resp.Jobs, JobListItem{
+			JobID:       job.JobID,
+			Plugin:      job.Plugin,
+			Command:     job.Command,
+			Status:      string(job.Status),
+			CreatedAt:   job.CreatedAt,
+			StartedAt:   job.StartedAt,
+			CompletedAt: job.CompletedAt,
+			Attempt:     job.Attempt,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
+func parseJobStatusFilter(raw string) (queue.Status, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "pending":
+		return queue.StatusQueued, true
+	case "ok":
+		return queue.StatusSucceeded, true
+	case "error":
+		return queue.StatusFailed, true
+	case string(queue.StatusQueued), string(queue.StatusRunning), string(queue.StatusSucceeded), string(queue.StatusFailed), string(queue.StatusTimedOut), string(queue.StatusDead):
+		return queue.Status(strings.ToLower(strings.TrimSpace(raw))), true
+	default:
+		return "", false
+	}
+}
+
 // handleListPlugins handles GET /plugins and GET /skills.
 func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	plugins := s.registry.All()
@@ -638,13 +709,36 @@ func (s *Server) handleOpenAPIPlugin(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, doc)
 }
 
+// handleOpenAPIAll handles GET /openapi.json — returns OpenAPI 3.1 doc for all plugins (no auth).
+func (s *Server) handleOpenAPIAll(w http.ResponseWriter, r *http.Request) {
+	doc := buildOpenAPIDoc(s.registry.All())
+	respondJSON(w, http.StatusOK, doc)
+}
+
+// handleWellKnownPlugin handles GET /.well-known/ai-plugin.json (no auth).
+func (s *Server) handleWellKnownPlugin(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, map[string]any{
+		"schema_version":        "v1",
+		"name_for_human":        "Ductile Gateway",
+		"name_for_model":        "ductile",
+		"description_for_human": "Integration gateway for triggering plugins and pipelines.",
+		"description_for_model": "Discover and invoke plugins. Fetch /openapi.json for the full spec, or /plugin/{name}/openapi.json for a single plugin. Invoke commands via POST /plugin/{name}/{command}.",
+		"auth": map[string]any{
+			"type": "bearer",
+		},
+		"api": map[string]any{
+			"type": "openapi",
+			"url":  "/openapi.json",
+		},
+	})
+}
+
 // respondJSON is a helper to write JSON responses
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(data)
 }
-
 
 // writeError writes a JSON error response
 func (s *Server) writeError(w http.ResponseWriter, statusCode int, message string) {

@@ -1,3 +1,5 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
 name: ts-bun-greet
 version: 0.1.0
 protocol: 2
@@ -6,8 +8,10 @@ description: "TypeScript/Bun example plugin - greets the user with a configurabl
 commands:
   - name: poll
     type: read
+    description: "Emits a greeting heartbeat and updates last-run state."
   - name: health
     type: read
+    description: "Returns plugin health and version information."
 config_keys:
   required: []
   optional: [greeting, name]

@@ -24,6 +24,7 @@ type JobQueuer interface {
 	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
 	GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error)
 	GetJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, error)
+	ListJobs(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
 	Depth(ctx context.Context) (int, error)
 }
 
@@ -147,6 +148,8 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/plugins", s.handleListPlugins)
 	r.Get("/skills", s.handleListPlugins)
+	r.Get("/openapi.json", s.handleOpenAPIAll)
+	r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 	r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
 
 	// Protected API.
@@ -157,6 +160,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
 	})
 

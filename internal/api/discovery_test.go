@@ -209,3 +209,38 @@ func TestHandleGetPlugin(t *testing.T) {
 		}
 	})
 }
+
+func TestHandleWellKnownPlugin_NoAuth(t *testing.T) {
+	server := newTestServer(&mockQueue{}, &mockRegistry{})
+
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/ai-plugin.json", nil)
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var manifest map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&manifest); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if manifest["schema_version"] != "v1" {
+		t.Fatalf("schema_version = %v, want v1", manifest["schema_version"])
+	}
+	if manifest["name_for_model"] != "ductile" {
+		t.Fatalf("name_for_model = %v, want ductile", manifest["name_for_model"])
+	}
+
+	api, ok := manifest["api"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected api object in manifest")
+	}
+	if api["type"] != "openapi" {
+		t.Fatalf("api.type = %v, want openapi", api["type"])
+	}
+	if api["url"] != "/openapi.json" {
+		t.Fatalf("api.url = %v, want /openapi.json", api["url"])
+	}
+}
