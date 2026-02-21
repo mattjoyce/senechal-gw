@@ -1,6 +1,6 @@
 ---
 id: 116
-status: backlog
+status: done
 priority: Low
 blocked_by: []
 assignee: ""
@@ -73,11 +73,12 @@ Dependencies are then resolved at runtime by `uv` on first invocation (cached in
 
 ## Acceptance Criteria
 
-- [ ] All four Python plugins run correctly under `uv run`
-- [ ] No `requirements.txt` files remain in plugin directories
-- [ ] Dockerfile no longer has the `find requirements.txt` install step
-- [ ] Plugin startup time is acceptable (uv cache warm on second run)
+- [x] All four Python plugins run correctly under `uv run`
+- [x] No `requirements.txt` files remain in plugin directories
+- [x] Dockerfile no longer has the `find requirements.txt` install step
+- [x] Plugin startup time is acceptable (uv cache warm on second run)
 
 ## Narrative
 
 - 2026-02-21: Card created. `uv` added to Dockerfile as standard tooling. New plugins (ductile-withings) will use uv from the start; existing plugins to be uplifted as a separate effort.
+- 2026-02-21: Investigated and found the uplift was already complete. All four plugins (fabric, file_handler, jina-reader, youtube_transcript) use only stdlib — no third-party deps, so no PEP 723 headers required. `requirements.txt` files were already absent. Dockerfile pip install step was already removed and uv installed via official installer. Manifests all use `entrypoint: run.py`, which the dispatcher invokes via `uv run`. Nothing left to do.
