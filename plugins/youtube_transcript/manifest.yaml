@@ -3,7 +3,16 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.py
 description: "Fetch YouTube video transcripts from URL or video ID"
-commands: [poll, handle, health]
+commands:
+  - name: poll
+    description: "No-op scheduled tick — youtube_transcript is event-driven."
+  - name: handle
+    description: "Fetch the transcript for a YouTube video by URL or video ID."
+    input_schema:
+      url: string
+      language: string
+  - name: health
+    description: "Returns plugin health status."
 config_keys:
   required: []
   optional: [default_language, request_timeout_seconds, user_agent]

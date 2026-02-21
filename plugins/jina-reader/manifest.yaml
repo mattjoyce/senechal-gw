@@ -5,11 +5,13 @@ entrypoint: run.py
 description: "Scrapes web pages via Jina Reader API and returns clean markdown"
 commands:
   - name: poll
-    type: read
+    description: "Fetch the configured URL and emit a content_changed event if content has changed."
   - name: handle
-    type: read
+    description: "Scrape a URL from the event payload and return clean markdown."
+    input_schema:
+      url: string
   - name: health
-    type: read
+    description: "Returns plugin health status."
 config_keys:
   required: []
   optional: [url, max_size, jina_api_key]

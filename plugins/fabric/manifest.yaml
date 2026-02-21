@@ -3,7 +3,20 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.py
 description: "Wrapper for fabric AI pattern tool - processes text through predefined patterns"
-commands: [poll, handle, health]
+commands:
+  - name: poll
+    description: "No-op scheduled tick — no configured scheduled actions."
+  - name: handle
+    description: "Process text, URL, or YouTube video through a fabric AI pattern."
+    input_schema:
+      text: string
+      url: string
+      youtube_url: string
+      pattern: string
+      prompt: string
+      model: string
+  - name: health
+    description: "Check fabric binary availability and list available patterns."
 config_keys:
   required: []
   optional: [FABRIC_BIN_PATH, FABRIC_DEFAULT_MODEL]

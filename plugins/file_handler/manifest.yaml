@@ -3,7 +3,20 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.py
 description: "Read and write local files with path restrictions"
-commands: [poll, handle, health]
+commands:
+  - name: poll
+    description: "No-op scheduled tick — file_handler is event-driven."
+  - name: handle
+    description: "Read or write a file. Set action to 'read' (requires file_path) or 'write' (requires content/result and output_path or output_dir)."
+    input_schema:
+      action: string
+      file_path: string
+      content: string
+      result: string
+      output_path: string
+      output_dir: string
+  - name: health
+    description: "Validate configured read/write paths are accessible."
 config_keys:
   required: []
   optional: [allowed_read_paths, allowed_write_paths]
