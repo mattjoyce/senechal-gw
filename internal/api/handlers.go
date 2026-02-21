@@ -626,6 +626,18 @@ func (s *Server) handleGetPlugin(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// handleOpenAPIPlugin handles GET /plugin/{plugin}/openapi.json — returns OpenAPI 3.1 doc for one plugin (no auth).
+func (s *Server) handleOpenAPIPlugin(w http.ResponseWriter, r *http.Request) {
+	pluginName := chi.URLParam(r, "plugin")
+	p, ok := s.registry.Get(pluginName)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "plugin not found")
+		return
+	}
+	doc := buildOpenAPIDoc(map[string]*plugin.Plugin{pluginName: p})
+	respondJSON(w, http.StatusOK, doc)
+}
+
 // respondJSON is a helper to write JSON responses
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")

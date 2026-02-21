@@ -9,6 +9,24 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 )
 
+func TestHandleListPlugins_NoAuth(t *testing.T) {
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {Name: "echo", Commands: plugin.Commands{{Name: "poll"}}},
+		},
+	}
+	server := newTestServer(&mockQueue{}, reg)
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	// No Authorization header — discovery must be unauthenticated.
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200 without auth, got %d", rr.Code)
+	}
+}
+
 func TestHandleListPlugins(t *testing.T) {
 	reg := &mockRegistry{
 		plugins: map[string]*plugin.Plugin{

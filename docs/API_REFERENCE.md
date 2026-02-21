@@ -7,7 +7,7 @@ Default: `http://localhost:8080`
 
 ## Authentication
 
-All API requests (except `/healthz`) require a Bearer token in the `Authorization` header.
+All API requests (except `/healthz`, `/plugins`, `/skills`, and `/plugin/{name}/openapi.json`) require a Bearer token in the `Authorization` header.
 
 ```http
 Authorization: Bearer <your_token>
@@ -157,12 +157,65 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
 
 ---
 
-### 4. Plugin Discovery
+### 4. OpenAPI Discovery
 
-List available plugins and retrieve their metadata/schemas.
+Unauthenticated endpoints for agent-driven capability discovery. Two-tier design:
+- **`/plugins`** — lightweight catalog for initial discovery (semantic signaling, minimal tokens)
+- **`/plugin/{name}/openapi.json`** — full OpenAPI 3.1 spec for a chosen plugin (schemas, call structure)
+
+#### Single Plugin (OpenAPI)
+**Endpoint**: `GET /plugin/{name}/openapi.json`
+
+Returns an OpenAPI 3.1 document scoped to one plugin. Use after selecting a plugin from the `/plugins` list.
+
+**Response (200 OK)**:
+```json
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Ductile Gateway", "version": "1.0" },
+  "paths": {
+    "/plugin/echo/poll": {
+      "post": {
+        "operationId": "echo__poll",
+        "summary": "Poll for data",
+        "tags": ["echo"],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "message": { "type": "string" } } }
+            }
+          }
+        },
+        "responses": {
+          "202": { "description": "Job queued" },
+          "400": { "description": "Bad request" },
+          "403": { "description": "Insufficient scope" }
+        },
+        "security": [{ "BearerAuth": [] }]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": { "BearerAuth": { "type": "http", "scheme": "bearer" } }
+  }
+}
+```
+
+**Graceful degradation:**
+- No `input_schema` in manifest → `requestBody` omitted
+- No `description` on command → summary defaults to `"{plugin}: {command}"`
+
+Returns `404` if the plugin is not found.
+
+---
+
+### 5. Plugin Discovery
+
+List available plugins and retrieve their metadata/schemas. The list endpoints are unauthenticated to support lightweight agent discovery.
 
 #### List Plugins
-**Endpoint**: `GET /plugins` (alias: `GET /skills`)
+**Endpoint**: `GET /plugins` (alias: `GET /skills`) — **No auth required**
 
 **Response (200 OK)**:
 ```json

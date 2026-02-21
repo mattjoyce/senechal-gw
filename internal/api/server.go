@@ -143,8 +143,11 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(middleware.Recoverer)
 
 	// Routes
-	// Unauthenticated ops endpoint.
+	// Unauthenticated discovery endpoints.
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/plugins", s.handleListPlugins)
+	r.Get("/skills", s.handleListPlugins)
+	r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
 
 	// Protected API.
 	r.Group(func(r chi.Router) {
@@ -152,8 +155,6 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/trigger/{plugin}/{command}", s.handleTrigger)
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugins", s.handleListPlugins)
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/skills", s.handleListPlugins)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
