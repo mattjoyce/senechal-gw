@@ -331,6 +331,9 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.API.Auth.APIKey != "" {
 		dst.API.Auth.APIKey = src.API.Auth.APIKey
 	}
+	if len(src.API.Auth.Tokens) > 0 {
+		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
+	}
 
 	// Merge plugins_dir
 	if src.PluginsDir != "" {
