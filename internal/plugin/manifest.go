@@ -15,6 +15,9 @@ type CommandType string
 const (
 	CommandTypeRead  CommandType = "read"
 	CommandTypeWrite CommandType = "write"
+
+	SupportedManifestSpec    = "ductile.plugin"
+	SupportedManifestVersion = 1
 )
 
 func (t CommandType) valid() bool {
@@ -127,13 +130,15 @@ func (c *Commands) UnmarshalYAML(n *yaml.Node) error {
 
 // Manifest defines the structure of a plugin's manifest.yaml file.
 type Manifest struct {
-	Name        string      `yaml:"name"`
-	Version     string      `yaml:"version"`
-	Protocol    int         `yaml:"protocol"`
-	Entrypoint  string      `yaml:"entrypoint"`
-	Description string      `yaml:"description,omitempty"`
-	Commands    Commands    `yaml:"commands"`
-	ConfigKeys  *ConfigKeys `yaml:"config_keys,omitempty"`
+	ManifestSpec    string      `yaml:"manifest_spec"`
+	ManifestVersion int         `yaml:"manifest_version"`
+	Name            string      `yaml:"name"`
+	Version         string      `yaml:"version"`
+	Protocol        int         `yaml:"protocol"`
+	Entrypoint      string      `yaml:"entrypoint"`
+	Description     string      `yaml:"description,omitempty"`
+	Commands        Commands    `yaml:"commands"`
+	ConfigKeys      *ConfigKeys `yaml:"config_keys,omitempty"`
 }
 
 // ConfigKeys defines required and optional configuration keys for a plugin.
@@ -144,14 +149,16 @@ type ConfigKeys struct {
 
 // Plugin represents a discovered and validated plugin.
 type Plugin struct {
-	Name        string   // Plugin name from manifest
-	Path        string   // Absolute path to plugin directory
-	Entrypoint  string   // Absolute path to entrypoint executable
-	Protocol    int      // Protocol version
-	Version     string   // Plugin version
-	Description string   // Human-readable description
-	Commands    Commands // Supported commands (poll, handle, health, init)
-	ConfigKeys  *ConfigKeys
+	ManifestSpec    string   // Manifest spec identifier.
+	ManifestVersion int      // Manifest schema version.
+	Name            string   // Plugin name from manifest.
+	Path            string   // Absolute path to plugin directory.
+	Entrypoint      string   // Absolute path to entrypoint executable.
+	Protocol        int      // Protocol version.
+	Version         string   // Plugin version.
+	Description     string   // Human-readable description.
+	Commands        Commands // Supported commands (poll, handle, health, init).
+	ConfigKeys      *ConfigKeys
 }
 
 // SupportsCommand checks if the plugin supports a given command.

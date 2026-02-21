@@ -1,6 +1,6 @@
 ---
 id: 118
-status: backlog
+status: done
 priority: Medium
 blocked_by: []
 assignee: ""
@@ -54,12 +54,14 @@ List jobs, optionally filtered.
 
 ## Acceptance Criteria
 
-- [ ] `GET /jobs` returns paginated job list from SQLite
-- [ ] Supports `plugin`, `command`, `status`, `limit` query params
-- [ ] Sorted by `created_at` descending (most recent first)
-- [ ] Existing `GET /job/{jobID}` unchanged
-- [ ] Documented in `docs/API_REFERENCE.md`
+- [x] `GET /jobs` returns paginated job list from SQLite
+- [x] Supports `plugin`, `command`, `status`, `limit` query params
+- [x] Sorted by `created_at` descending (most recent first)
+- [x] Existing `GET /job/{jobID}` unchanged
+- [x] Documented in `docs/API_REFERENCE.md`
 
 ## Narrative
 
 - 2026-02-22: Card created. Gap discovered during withings plugin deployment planning — no API way to verify scheduled job execution without TUI or direct DB access.
+- 2026-02-21: Moved to doing and implementation started for `GET /jobs` endpoint, including query filtering, ordering, tests, and API docs update. (by @assistant)
+- 2026-02-21: Completed end-to-end. Added queue-backed `ListJobs` filtering with total count + created_at-desc ordering, wired authenticated `GET /jobs` route/handler (including status aliases `pending|ok|error`), added API and queue tests, and documented endpoint behavior in API reference. Full `go test ./...` passes. (by @assistant)

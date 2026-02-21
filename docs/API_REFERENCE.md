@@ -7,7 +7,7 @@ Default: `http://localhost:8080`
 
 ## Authentication
 
-All API requests (except `/healthz`, `/plugins`, `/skills`, and `/plugin/{name}/openapi.json`) require a Bearer token in the `Authorization` header.
+All API requests (except `/healthz`, `/plugins`, `/skills`, `/openapi.json`, `/.well-known/ai-plugin.json`, and `/plugin/{name}/openapi.json`) require a Bearer token in the `Authorization` header.
 
 ```http
 Authorization: Bearer <your_token>
@@ -139,7 +139,44 @@ Retrieve the current status and execution results of a job.
 
 ---
 
-### 3. System Health
+### 3. Jobs List
+
+List jobs with optional filtering. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
+
+**Endpoint**: `GET /jobs`
+
+**Query Parameters**:
+- `plugin` (String, optional): Exact plugin name filter.
+- `command` (String, optional): Exact command name filter.
+- `status` (String, optional): Job status filter. Accepted values:
+  - Native: `queued`, `running`, `succeeded`, `failed`, `timed_out`, `dead`
+  - Aliases: `pending` -> `queued`, `ok` -> `succeeded`, `error` -> `failed`
+- `limit` (Integer, optional): Max rows returned. Default: `50`.
+
+**Response (200 OK)**:
+```json
+{
+  "jobs": [
+    {
+      "job_id": "uuid-v4",
+      "plugin": "withings",
+      "command": "poll",
+      "status": "succeeded",
+      "created_at": "2026-02-21T10:00:00Z",
+      "started_at": "2026-02-21T10:00:01Z",
+      "completed_at": "2026-02-21T10:00:02Z",
+      "attempt": 1
+    }
+  ],
+  "total": 42
+}
+```
+
+Results are sorted by `created_at` descending (most recent first).
+
+---
+
+### 4. System Health
 
 Unauthenticated endpoint for health checks. Typically used by monitoring tools or load balancers.
 
@@ -157,11 +194,41 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
 
 ---
 
-### 4. OpenAPI Discovery
+### 5. OpenAPI Discovery
 
 Unauthenticated endpoints for agent-driven capability discovery. Two-tier design:
 - **`/plugins`** — lightweight catalog for initial discovery (semantic signaling, minimal tokens)
-- **`/plugin/{name}/openapi.json`** — full OpenAPI 3.1 spec for a chosen plugin (schemas, call structure)
+- **`/openapi.json`** — global OpenAPI 3.1 spec for all plugins
+- **`/plugin/{name}/openapi.json`** — scoped OpenAPI 3.1 spec for one chosen plugin
+- **`/.well-known/ai-plugin.json`** — OpenAI-style discovery manifest that points at `/openapi.json`
+
+#### Well-Known AI Plugin Manifest
+**Endpoint**: `GET /.well-known/ai-plugin.json`
+
+Returns service metadata for LLM agents and links to the global OpenAPI document.
+
+**Response (200 OK)**:
+```json
+{
+  "schema_version": "v1",
+  "name_for_human": "Ductile Gateway",
+  "name_for_model": "ductile",
+  "description_for_human": "Integration gateway for triggering plugins and pipelines.",
+  "description_for_model": "Discover and invoke plugins. Fetch /openapi.json for the full spec, or /plugin/{name}/openapi.json for a single plugin. Invoke commands via POST /plugin/{name}/{command}.",
+  "auth": {
+    "type": "bearer"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "/openapi.json"
+  }
+}
+```
+
+#### Global OpenAPI
+**Endpoint**: `GET /openapi.json`
+
+Returns an OpenAPI 3.1 document for every discovered plugin command.
 
 #### Single Plugin (OpenAPI)
 **Endpoint**: `GET /plugin/{name}/openapi.json`
@@ -210,7 +277,7 @@ Returns `404` if the plugin is not found.
 
 ---
 
-### 5. Plugin Discovery
+### 6. Plugin Discovery
 
 List available plugins and retrieve their metadata/schemas. The list endpoints are unauthenticated to support lightweight agent discovery.
 

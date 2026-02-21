@@ -50,6 +50,14 @@ type EnqueueRequest struct {
 	SourceEventID  *string
 }
 
+// ListJobsFilter defines optional filters for listing jobs.
+type ListJobsFilter struct {
+	Plugin  string
+	Command string
+	Status  *Status
+	Limit   int
+}
+
 type CircuitState string
 
 const (
@@ -97,9 +105,21 @@ type JobResult struct {
 	Status      Status
 	Plugin      string
 	Command     string
-	StepID      string          // From event_context.step_id via event_context_id
+	StepID      string // From event_context.step_id via event_context_id
 	Result      json.RawMessage
 	LastError   *string
 	StartedAt   *time.Time
 	CompletedAt *time.Time
+}
+
+// JobSummary is a lightweight projection for jobs list APIs.
+type JobSummary struct {
+	JobID       string
+	Plugin      string
+	Command     string
+	Status      Status
+	CreatedAt   time.Time
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+	Attempt     int
 }

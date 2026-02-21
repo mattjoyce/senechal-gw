@@ -26,6 +26,7 @@ import (
 type mockQueue struct {
 	enqueueFunc    func(ctx context.Context, req queue.EnqueueRequest) (string, error)
 	getJobByIDFunc func(ctx context.Context, jobID string) (*queue.JobResult, error)
+	listJobsFunc   func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
 	depthFunc      func(ctx context.Context) (int, error)
 }
 
@@ -35,6 +36,13 @@ func (m *mockQueue) Enqueue(ctx context.Context, req queue.EnqueueRequest) (stri
 
 func (m *mockQueue) GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error) {
 	return m.getJobByIDFunc(ctx, jobID)
+}
+
+func (m *mockQueue) ListJobs(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
+	if m.listJobsFunc == nil {
+		return nil, 0, nil
+	}
+	return m.listJobsFunc(ctx, filter)
 }
 
 func (m *mockQueue) Depth(ctx context.Context) (int, error) {
@@ -799,6 +807,111 @@ func TestHandleGetJob_NotFound(t *testing.T) {
 
 	if resp.Error != "job not found" {
 		t.Errorf("expected error 'job not found', got %s", resp.Error)
+	}
+}
+
+func TestHandleListJobs_SuccessWithFilters(t *testing.T) {
+	createdAt := time.Date(2026, 2, 21, 15, 0, 0, 0, time.UTC)
+	startedAt := createdAt.Add(2 * time.Second)
+
+	q := &mockQueue{
+		listJobsFunc: func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
+			if filter.Plugin != "withings" {
+				t.Fatalf("plugin filter = %q, want withings", filter.Plugin)
+			}
+			if filter.Command != "poll" {
+				t.Fatalf("command filter = %q, want poll", filter.Command)
+			}
+			if filter.Limit != 5 {
+				t.Fatalf("limit filter = %d, want 5", filter.Limit)
+			}
+			if filter.Status == nil || *filter.Status != queue.StatusSucceeded {
+				t.Fatalf("status filter = %v, want %q", filter.Status, queue.StatusSucceeded)
+			}
+
+			return []*queue.JobSummary{
+				{
+					JobID:     "job-1",
+					Plugin:    "withings",
+					Command:   "poll",
+					Status:    queue.StatusSucceeded,
+					CreatedAt: createdAt,
+					StartedAt: &startedAt,
+					Attempt:   1,
+				},
+			}, 42, nil
+		},
+	}
+
+	server := newTestServer(q, &mockRegistry{})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs?plugin=withings&command=poll&status=ok&limit=5", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var resp JobListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Total != 42 {
+		t.Fatalf("total = %d, want 42", resp.Total)
+	}
+	if len(resp.Jobs) != 1 {
+		t.Fatalf("jobs len = %d, want 1", len(resp.Jobs))
+	}
+	if resp.Jobs[0].JobID != "job-1" {
+		t.Fatalf("job_id = %s, want job-1", resp.Jobs[0].JobID)
+	}
+	if resp.Jobs[0].Status != "succeeded" {
+		t.Fatalf("status = %s, want succeeded", resp.Jobs[0].Status)
+	}
+	if !resp.Jobs[0].CreatedAt.Equal(createdAt) {
+		t.Fatalf("created_at = %s, want %s", resp.Jobs[0].CreatedAt, createdAt)
+	}
+}
+
+func TestHandleListJobs_InvalidLimit(t *testing.T) {
+	q := &mockQueue{
+		listJobsFunc: func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
+			t.Fatal("list jobs should not be called for invalid limit")
+			return nil, 0, nil
+		},
+	}
+
+	server := newTestServer(q, &mockRegistry{})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs?limit=0", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rr.Code)
+	}
+}
+
+func TestHandleListJobs_InvalidStatus(t *testing.T) {
+	q := &mockQueue{
+		listJobsFunc: func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
+			t.Fatal("list jobs should not be called for invalid status")
+			return nil, 0, nil
+		},
+	}
+
+	server := newTestServer(q, &mockRegistry{})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs?status=bogus", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rr.Code)
 	}
 }
 

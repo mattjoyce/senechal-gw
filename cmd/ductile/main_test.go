@@ -557,6 +557,8 @@ func createTestPlugin(t *testing.T, pluginsDir, name string) {
 		t.Fatal(err)
 	}
 	manifest := `
+manifest_spec: ductile.plugin
+manifest_version: 1
 name: ` + name + `
 version: "1.0.0"
 protocol: 2

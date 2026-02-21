@@ -338,6 +338,103 @@ WHERE status = ?;
 	return jobs, nil
 }
 
+// ListJobs retrieves jobs using optional filters and returns total matches before limit.
+func (q *Queue) ListJobs(ctx context.Context, filter ListJobsFilter) ([]*JobSummary, int, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var (
+		whereParts []string
+		args       []any
+	)
+	whereParts = append(whereParts, "1=1")
+
+	if filter.Plugin != "" {
+		whereParts = append(whereParts, "plugin = ?")
+		args = append(args, filter.Plugin)
+	}
+	if filter.Command != "" {
+		whereParts = append(whereParts, "command = ?")
+		args = append(args, filter.Command)
+	}
+	if filter.Status != nil {
+		whereParts = append(whereParts, "status = ?")
+		args = append(args, *filter.Status)
+	}
+
+	whereClause := strings.Join(whereParts, " AND ")
+
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM job_queue WHERE %s;`, whereClause)
+	var total int
+	if err := q.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count jobs: %w", err)
+	}
+
+	listQuery := fmt.Sprintf(`
+SELECT
+  id, plugin, command, status, created_at, started_at, completed_at, attempt
+FROM job_queue
+WHERE %s
+ORDER BY created_at DESC, rowid DESC
+LIMIT ?;
+`, whereClause)
+	listArgs := append(append([]any{}, args...), limit)
+	rows, err := q.db.QueryContext(ctx, listQuery, listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var jobs []*JobSummary
+	for rows.Next() {
+		var (
+			job         JobSummary
+			statusS     string
+			createdAtS  string
+			startedAtS  sql.NullString
+			completedAt sql.NullString
+		)
+
+		if err := rows.Scan(&job.JobID, &job.Plugin, &job.Command, &statusS, &createdAtS, &startedAtS, &completedAt, &job.Attempt); err != nil {
+			return nil, 0, fmt.Errorf("scan listed job: %w", err)
+		}
+
+		job.Status = Status(statusS)
+
+		createdAt, err := time.Parse(time.RFC3339Nano, createdAtS)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse listed job created_at: %w", err)
+		}
+		job.CreatedAt = createdAt
+
+		if startedAtS.Valid {
+			t, err := time.Parse(time.RFC3339Nano, startedAtS.String)
+			if err != nil {
+				return nil, 0, fmt.Errorf("parse listed job started_at: %w", err)
+			}
+			job.StartedAt = &t
+		}
+
+		if completedAt.Valid {
+			t, err := time.Parse(time.RFC3339Nano, completedAt.String)
+			if err != nil {
+				return nil, 0, fmt.Errorf("parse listed job completed_at: %w", err)
+			}
+			job.CompletedAt = &t
+		}
+
+		jobs = append(jobs, &job)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate listed jobs: %w", err)
+	}
+
+	return jobs, total, nil
+}
+
 // LatestCompletedPollResult returns the most recently completed poll result for a plugin
 // submitted by the scheduler identity.
 func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*PollResult, error) {

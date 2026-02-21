@@ -174,19 +174,34 @@ func loadPlugin(name, pluginPath, pluginsDir string) (*Plugin, error) {
 	}
 
 	return &Plugin{
-		Name:        manifest.Name,
-		Path:        pluginPath,
-		Entrypoint:  entrypointPath,
-		Protocol:    manifest.Protocol,
-		Version:     manifest.Version,
-		Description: manifest.Description,
-		Commands:    manifest.Commands,
-		ConfigKeys:  manifest.ConfigKeys,
+		ManifestSpec:    manifest.ManifestSpec,
+		ManifestVersion: manifest.ManifestVersion,
+		Name:            manifest.Name,
+		Path:            pluginPath,
+		Entrypoint:      entrypointPath,
+		Protocol:        manifest.Protocol,
+		Version:         manifest.Version,
+		Description:     manifest.Description,
+		Commands:        manifest.Commands,
+		ConfigKeys:      manifest.ConfigKeys,
 	}, nil
 }
 
 // validateManifest checks required manifest fields.
 func validateManifest(m *Manifest) error {
+	if strings.TrimSpace(m.ManifestSpec) == "" {
+		return fmt.Errorf("manifest_spec is required")
+	}
+	if m.ManifestSpec != SupportedManifestSpec {
+		return fmt.Errorf("unsupported manifest_spec %q (supported: %q)", m.ManifestSpec, SupportedManifestSpec)
+	}
+	if m.ManifestVersion == 0 {
+		return fmt.Errorf("manifest_version is required")
+	}
+	if m.ManifestVersion != SupportedManifestVersion {
+		return fmt.Errorf("unsupported manifest_version %d (supported: %d)", m.ManifestVersion, SupportedManifestVersion)
+	}
+
 	if m.Name == "" {
 		return fmt.Errorf("name is required")
 	}

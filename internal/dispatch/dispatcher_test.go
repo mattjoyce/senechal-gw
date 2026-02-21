@@ -73,7 +73,9 @@ func createTestPlugin(t *testing.T, pluginsDir, name, script string) *plugin.Plu
 	}
 
 	// Write manifest
-	manifest := fmt.Sprintf(`name: %s
+	manifest := fmt.Sprintf(`manifest_spec: ductile.plugin
+manifest_version: 1
+name: %s
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh

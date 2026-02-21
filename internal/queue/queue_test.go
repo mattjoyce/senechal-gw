@@ -186,6 +186,106 @@ func TestGetJobByIDNotFound(t *testing.T) {
 	}
 }
 
+func TestListJobs_FilterSortAndLimit(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id1, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "api",
+	})
+	if err != nil {
+		t.Fatalf("enqueue id1: %v", err)
+	}
+	id2, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "handle",
+		SubmittedBy: "api",
+	})
+	if err != nil {
+		t.Fatalf("enqueue id2: %v", err)
+	}
+	id3, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "withings",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("enqueue id3: %v", err)
+	}
+
+	if _, err := db.Exec(`
+UPDATE job_queue SET status = ?, attempt = 1, created_at = ? WHERE id = ?;
+`, StatusQueued, "2026-02-21T10:00:00Z", id1); err != nil {
+		t.Fatalf("update id1: %v", err)
+	}
+	if _, err := db.Exec(`
+UPDATE job_queue SET status = ?, attempt = 2, created_at = ?, started_at = ? WHERE id = ?;
+`, StatusRunning, "2026-02-21T10:01:00Z", "2026-02-21T10:01:01Z", id2); err != nil {
+		t.Fatalf("update id2: %v", err)
+	}
+	if _, err := db.Exec(`
+UPDATE job_queue SET status = ?, attempt = 3, created_at = ?, started_at = ?, completed_at = ? WHERE id = ?;
+`, StatusFailed, "2026-02-21T10:02:00Z", "2026-02-21T10:02:01Z", "2026-02-21T10:02:02Z", id3); err != nil {
+		t.Fatalf("update id3: %v", err)
+	}
+
+	echoJobs, totalEcho, err := q.ListJobs(context.Background(), ListJobsFilter{
+		Plugin: "echo",
+		Limit:  1,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs echo: %v", err)
+	}
+	if totalEcho != 2 {
+		t.Fatalf("totalEcho=%d want 2", totalEcho)
+	}
+	if len(echoJobs) != 1 {
+		t.Fatalf("len(echoJobs)=%d want 1", len(echoJobs))
+	}
+	if echoJobs[0].JobID != id2 {
+		t.Fatalf("first echo job id=%s want %s", echoJobs[0].JobID, id2)
+	}
+
+	status := StatusRunning
+	runningJobs, totalRunning, err := q.ListJobs(context.Background(), ListJobsFilter{
+		Status: &status,
+		Limit:  50,
+	})
+	if err != nil {
+		t.Fatalf("ListJobs running: %v", err)
+	}
+	if totalRunning != 1 {
+		t.Fatalf("totalRunning=%d want 1", totalRunning)
+	}
+	if len(runningJobs) != 1 || runningJobs[0].JobID != id2 {
+		t.Fatalf("unexpected running jobs: %+v", runningJobs)
+	}
+
+	allJobs, totalAll, err := q.ListJobs(context.Background(), ListJobsFilter{})
+	if err != nil {
+		t.Fatalf("ListJobs all: %v", err)
+	}
+	if totalAll != 3 {
+		t.Fatalf("totalAll=%d want 3", totalAll)
+	}
+	if len(allJobs) != 3 {
+		t.Fatalf("len(allJobs)=%d want 3", len(allJobs))
+	}
+	if allJobs[0].JobID != id3 || allJobs[1].JobID != id2 || allJobs[2].JobID != id1 {
+		t.Fatalf("unexpected sort order: [%s %s %s]", allJobs[0].JobID, allJobs[1].JobID, allJobs[2].JobID)
+	}
+}
+
 func TestQueueDequeueRespectsNextRetryAtStrictly(t *testing.T) {
 	t.Parallel()
 

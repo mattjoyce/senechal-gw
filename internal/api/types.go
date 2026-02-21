@@ -29,6 +29,24 @@ type JobStatusResponse struct {
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 }
 
+// JobListResponse is returned by GET /jobs.
+type JobListResponse struct {
+	Jobs  []JobListItem `json:"jobs"`
+	Total int           `json:"total"`
+}
+
+// JobListItem is one row in GET /jobs.
+type JobListItem struct {
+	JobID       string     `json:"job_id"`
+	Plugin      string     `json:"plugin"`
+	Command     string     `json:"command"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	Attempt     int        `json:"attempt"`
+}
+
 // SyncResponse is returned for successful synchronous pipeline executions.
 type SyncResponse struct {
 	JobID      string          `json:"job_id"`
@@ -98,10 +116,9 @@ type PluginDetailResponse struct {
 
 // PluginCommand describes a single command supported by a plugin.
 type PluginCommand struct {
-	Name         string      `json:"name"`
-	Type         string      `json:"type"`
-	Description  string      `json:"description,omitempty"`
-	InputSchema  any         `json:"input_schema,omitempty"`
-	OutputSchema any         `json:"output_schema,omitempty"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Description  string `json:"description,omitempty"`
+	InputSchema  any    `json:"input_schema,omitempty"`
+	OutputSchema any    `json:"output_schema,omitempty"`
 }
-
