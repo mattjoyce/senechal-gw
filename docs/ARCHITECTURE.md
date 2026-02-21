@@ -304,7 +304,7 @@ config_keys:
 
 **Validation:**
 - `protocol` — must match a version the core supports. Mismatch → plugin not loaded.
-- `entrypoint` — mandatory. Core constructs execution path as `<plugins_dir>/<plugin_name>/<entrypoint>`.
+- `entrypoint` — mandatory. Core constructs execution path relative to the discovered plugin directory.
 - `config_keys.required` — validated at load time. Missing keys → plugin not loaded, error logged.
 - `commands.*.type` — must be `read` or `write` if specified. Invalid type → plugin not loaded.
 
@@ -312,7 +312,7 @@ See card #36 (Manifest Command Type Metadata).
 
 ### 5.5 Trust & Execution
 
-- Plugins MUST live under `plugins_dir`. Symlinks resolved, must resolve within `plugins_dir`.
+- Plugins MUST live under one of the configured plugin roots. Symlinks resolved, must resolve within an approved root.
 - `..` in `entrypoint` is rejected (path traversal prevention).
 - Entrypoint MUST be executable (`chmod +x`). Shebang line handles interpreter selection.
 - World-writable plugin directories are refused at load time.

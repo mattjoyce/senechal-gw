@@ -66,7 +66,7 @@ func TestValidate_MissingPluginsDir(t *testing.T) {
 	if r.Valid {
 		t.Fatal("expected invalid")
 	}
-	assertHasError(t, r, "service", "plugins_dir")
+	assertHasError(t, r, "service", "plugin_roots")
 }
 
 func TestValidate_MissingStatePath(t *testing.T) {

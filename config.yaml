@@ -25,7 +25,8 @@ api:
       - token: ${DUCTILE_TOKEN_ADMIN}
         scopes: ["*"]
 
-plugins_dir: ./plugins         # Plugin directory
+plugin_roots:
+  - ./plugins                  # Native in-repo plugin directory
 
 plugins:
   echo:

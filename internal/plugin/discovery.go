@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,56 +47,93 @@ func (r *Registry) Add(plugin *Plugin) error {
 	return nil
 }
 
-// Discover scans pluginsDir for plugins with manifest.yaml and validates them.
+// Discover scans a single pluginsDir for plugins with manifest.yaml and validates them.
 // Returns a registry of valid plugins. Invalid plugins are logged but not fatal.
 func Discover(pluginsDir string, logger func(level, msg string, args ...any)) (*Registry, error) {
+	return DiscoverMany([]string{pluginsDir}, logger)
+}
+
+// DiscoverMany scans multiple plugin roots for manifest.yaml files and validates plugins.
+// Roots are processed in input order; duplicate plugin names keep the first discovered plugin.
+func DiscoverMany(pluginRoots []string, logger func(level, msg string, args ...any)) (*Registry, error) {
 	if logger == nil {
 		logger = func(level, msg string, args ...any) {}
 	}
-	absPluginsDir, err := filepath.Abs(pluginsDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve plugins directory: %w", err)
+	if len(pluginRoots) == 0 {
+		return nil, fmt.Errorf("at least one plugin root is required")
 	}
 
-	// Check plugins directory exists
-	if _, err := os.Stat(absPluginsDir); os.IsNotExist(err) {
-		return nil, fmt.Errorf("plugins directory does not exist: %s", absPluginsDir)
+	absRoots := make([]string, 0, len(pluginRoots))
+	seenRoots := make(map[string]struct{}, len(pluginRoots))
+	for _, root := range pluginRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve plugin root %q: %w", root, err)
+		}
+		info, err := os.Stat(absRoot)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("plugin root does not exist: %s", absRoot)
+			}
+			return nil, fmt.Errorf("failed to stat plugin root %s: %w", absRoot, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("plugin root is not a directory: %s", absRoot)
+		}
+		if _, ok := seenRoots[absRoot]; ok {
+			continue
+		}
+		seenRoots[absRoot] = struct{}{}
+		absRoots = append(absRoots, absRoot)
+	}
+	if len(absRoots) == 0 {
+		return nil, fmt.Errorf("at least one plugin root is required")
 	}
 
 	registry := NewRegistry()
+	for _, root := range absRoots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() || d.Name() != manifestFilename {
+				return nil
+			}
 
-	entries, err := os.ReadDir(absPluginsDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read plugins directory: %w", err)
-	}
+			pluginPath := filepath.Dir(path)
+			pluginDirName := filepath.Base(pluginPath)
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue // Skip files, only process directories
-		}
+			plugin, err := loadPlugin(pluginDirName, pluginPath, root)
+			if err != nil {
+				logger("warn", "failed to load plugin", "root", root, "path", pluginPath, "error", err.Error())
+				return nil
+			}
 
-		pluginName := entry.Name()
-		pluginPath := filepath.Join(absPluginsDir, pluginName)
+			if err := registry.Add(plugin); err != nil {
+				if existing, ok := registry.Get(plugin.Name); ok {
+					logger(
+						"warn",
+						"duplicate plugin ignored (keeping first discovered)",
+						"plugin", plugin.Name,
+						"ignored_path", plugin.Path,
+						"kept_path", existing.Path,
+					)
+				} else {
+					logger("warn", "duplicate plugin", "plugin", plugin.Name, "error", err.Error())
+				}
+				return nil
+			}
 
-		// Check for manifest.yaml
-		manifestPath := filepath.Join(pluginPath, manifestFilename)
-		if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-			continue // No manifest, skip this directory
-		}
-
-		// Load and validate plugin
-		plugin, err := loadPlugin(pluginName, pluginPath, absPluginsDir)
+			logger("info", "loaded plugin", "plugin", plugin.Name, "path", plugin.Path, "version", plugin.Version, "protocol", plugin.Protocol)
+			return nil
+		})
 		if err != nil {
-			logger("warn", "failed to load plugin", "plugin", pluginName, "error", err.Error())
-			continue
+			return nil, fmt.Errorf("failed to scan plugin root %s: %w", root, err)
 		}
-
-		if err := registry.Add(plugin); err != nil {
-			logger("warn", "duplicate plugin", "plugin", pluginName, "error", err.Error())
-			continue
-		}
-
-		logger("info", "loaded plugin", "plugin", pluginName, "version", plugin.Version, "protocol", plugin.Protocol)
 	}
 
 	return registry, nil
@@ -189,6 +227,14 @@ func validateManifest(m *Manifest) error {
 
 // validateTrust enforces security constraints (SPEC §5.5).
 func validateTrust(entrypointPath, pluginPath, pluginsDir string) error {
+	return validateTrustInRoots(entrypointPath, pluginPath, []string{pluginsDir})
+}
+
+func validateTrustInRoots(entrypointPath, pluginPath string, pluginRoots []string) error {
+	if len(pluginRoots) == 0 {
+		return fmt.Errorf("no plugin roots configured")
+	}
+
 	// Resolve symlinks
 	resolvedEntrypoint, err := filepath.EvalSymlinks(entrypointPath)
 	if err != nil {
@@ -200,14 +246,20 @@ func validateTrust(entrypointPath, pluginPath, pluginsDir string) error {
 		return fmt.Errorf("failed to resolve plugin path symlink: %w", err)
 	}
 
-	resolvedPluginsDir, err := filepath.EvalSymlinks(pluginsDir)
-	if err != nil {
-		return fmt.Errorf("failed to resolve plugins directory symlink: %w", err)
+	// Check entrypoint is under one of the configured plugin roots
+	inApprovedRoot := false
+	for _, root := range pluginRoots {
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			return fmt.Errorf("failed to resolve plugin root symlink %s: %w", root, err)
+		}
+		if strings.HasPrefix(resolvedEntrypoint, resolvedRoot+string(os.PathSeparator)) {
+			inApprovedRoot = true
+			break
+		}
 	}
-
-	// Check entrypoint is under plugins_dir
-	if !strings.HasPrefix(resolvedEntrypoint, resolvedPluginsDir+string(os.PathSeparator)) {
-		return fmt.Errorf("entrypoint %s is not under plugins directory %s", resolvedEntrypoint, resolvedPluginsDir)
+	if !inApprovedRoot {
+		return fmt.Errorf("entrypoint %s is not under any configured plugin root", resolvedEntrypoint)
 	}
 
 	// Check entrypoint is under plugin directory

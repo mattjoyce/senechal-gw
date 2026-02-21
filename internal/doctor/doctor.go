@@ -66,8 +66,8 @@ func (d *Doctor) addWarning(r *Result, category, field, msg string) {
 
 // validateServiceConfig checks required service fields.
 func (d *Doctor) validateServiceConfig(r *Result) {
-	if d.cfg.PluginsDir == "" {
-		d.addError(r, "service", "plugins_dir", "plugins_dir is required")
+	if len(d.cfg.EffectivePluginRoots()) == 0 {
+		d.addError(r, "service", "plugin_roots", "plugin_roots or plugins_dir is required")
 	}
 	if d.cfg.State.Path == "" {
 		d.addError(r, "service", "state.path", "state.path is required")
@@ -85,7 +85,7 @@ func (d *Doctor) validatePluginRefs(r *Result) {
 		}
 		if _, ok := d.registry.Get(name); !ok {
 			d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s", name),
-				fmt.Sprintf("plugin %q in config but not found in plugins_dir", name))
+				fmt.Sprintf("plugin %q in config but not found in configured plugin roots", name))
 		}
 
 		// Check required config keys

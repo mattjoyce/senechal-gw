@@ -150,7 +150,11 @@ func runConfigTokenCreate(args []string) int {
 			fmt.Fprintf(os.Stderr, "Load config failed: %v\n", err)
 			return 1
 		}
-		registry, _ := plugin.Discover(cfg.PluginsDir, nil)
+		registry, err := discoverRegistry(cfg, resolvedPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
+			return 1
+		}
 
 		tm := tokenmgr.New(registry)
 		p := tea.NewProgram(tm)
@@ -884,19 +888,37 @@ func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
 }
 
 func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, error) {
-	pluginsDir := cfg.PluginsDir
-	if !filepath.IsAbs(pluginsDir) {
-		baseDir := configPath
-		if cfg.ConfigDir != "" {
-			baseDir = cfg.ConfigDir
-		} else {
-			if info, err := os.Stat(configPath); err == nil && !info.IsDir() {
-				baseDir = filepath.Dir(configPath)
-			}
-		}
-		pluginsDir = filepath.Join(baseDir, pluginsDir)
+	pluginRoots, err := resolvePluginRoots(cfg, configPath)
+	if err != nil {
+		return nil, err
 	}
-	return plugin.Discover(pluginsDir, func(level, msg string, args ...any) {})
+	return plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {})
+}
+
+func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {
+	roots := cfg.EffectivePluginRoots()
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("plugin_roots or plugins_dir is required")
+	}
+
+	baseDir := configPath
+	if cfg.ConfigDir != "" {
+		baseDir = cfg.ConfigDir
+	} else {
+		if info, err := os.Stat(configPath); err == nil && !info.IsDir() {
+			baseDir = filepath.Dir(configPath)
+		}
+	}
+
+	resolved := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if filepath.IsAbs(root) {
+			resolved = append(resolved, root)
+			continue
+		}
+		resolved = append(resolved, filepath.Join(baseDir, root))
+	}
+	return resolved, nil
 }
 
 func printValidationSummary(result *doctor.Result) {
@@ -1310,7 +1332,12 @@ func runConfigPluginList(args []string) int {
 		return 0
 	}
 
-	fmt.Printf("Discovered plugins in %s:\n", cfg.PluginsDir)
+	roots, err := resolvePluginRoots(cfg, resolvedPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to resolve plugin roots: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Discovered plugins in %s:\n", strings.Join(roots, ", "))
 	if len(rows) == 0 {
 		fmt.Println("  (none)")
 		return 0

@@ -162,6 +162,80 @@ commands: [poll]
 	}
 }
 
+func TestDiscoverMany_MultipleRootsAndDuplicatePrecedence(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+
+	makePlugin := func(root, dirName, manifestName string) {
+		pDir := filepath.Join(root, dirName)
+		if err := os.MkdirAll(pDir, 0o755); err != nil {
+			t.Fatalf("mkdir plugin dir: %v", err)
+		}
+		manifest := `name: ` + manifestName + `
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands: [poll]
+`
+		if err := os.WriteFile(filepath.Join(pDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+			t.Fatalf("write manifest: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(pDir, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write entrypoint: %v", err)
+		}
+	}
+
+	makePlugin(rootA, "echo", "echo")
+	makePlugin(rootA, "from-a", "from-a")
+	makePlugin(rootB, "echo-alt", "echo") // duplicate manifest name; should be ignored
+	makePlugin(rootB, "from-b", "from-b")
+
+	reg, err := DiscoverMany([]string{rootA, rootB}, nil)
+	if err != nil {
+		t.Fatalf("DiscoverMany() error = %v", err)
+	}
+	if len(reg.All()) != 3 {
+		t.Fatalf("DiscoverMany() found %d plugins, want 3", len(reg.All()))
+	}
+
+	echo, ok := reg.Get("echo")
+	if !ok {
+		t.Fatalf("expected echo to be discovered")
+	}
+	wantEchoPath := filepath.Join(rootA, "echo")
+	if echo.Path != wantEchoPath {
+		t.Fatalf("expected first-root echo path %q, got %q", wantEchoPath, echo.Path)
+	}
+}
+
+func TestDiscoverMany_RecursiveManifestScan(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "team", "plugin-x")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("mkdir nested plugin dir: %v", err)
+	}
+	manifest := `name: plugin-x
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands: [poll]
+`
+	if err := os.WriteFile(filepath.Join(nested, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write entrypoint: %v", err)
+	}
+
+	reg, err := DiscoverMany([]string{root}, nil)
+	if err != nil {
+		t.Fatalf("DiscoverMany() error = %v", err)
+	}
+	if _, ok := reg.Get("plugin-x"); !ok {
+		t.Fatalf("expected nested plugin to be discovered")
+	}
+}
+
 func TestValidateManifest(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -332,6 +406,27 @@ func TestValidateTrust(t *testing.T) {
 				t.Errorf("validateTrust() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidateTrustInRoots(t *testing.T) {
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	pluginDir := filepath.Join(rootB, "test")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	entrypoint := filepath.Join(pluginDir, "run.sh")
+	if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write entrypoint: %v", err)
+	}
+
+	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA, rootB}); err != nil {
+		t.Fatalf("validateTrustInRoots() error = %v, want nil", err)
+	}
+
+	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA}); err == nil {
+		t.Fatal("validateTrustInRoots() expected error when rootB is not configured")
 	}
 }
 

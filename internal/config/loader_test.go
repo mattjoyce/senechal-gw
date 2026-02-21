@@ -59,6 +59,48 @@ plugins:
 			},
 		},
 		{
+			name: "plugin_roots parsed and preferred over plugins_dir",
+			yaml: `
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugin_roots:
+  - ./external-plugins
+  - /opt/ductile-plugins
+plugins:
+  echo:
+    enabled: true
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				roots := cfg.EffectivePluginRoots()
+				if len(roots) != 2 {
+					t.Fatalf("expected 2 effective roots, got %d", len(roots))
+				}
+				if roots[0] != "./external-plugins" || roots[1] != "/opt/ductile-plugins" {
+					t.Fatalf("unexpected effective roots: %v", roots)
+				}
+			},
+		},
+		{
+			name: "invalid plugin_roots entries fail validation",
+			yaml: `
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ""
+  - "   "
+plugins:
+  echo:
+    enabled: true
+`,
+			wantErr: true,
+		},
+		{
 			name: "env var interpolation",
 			yaml: `
 service:

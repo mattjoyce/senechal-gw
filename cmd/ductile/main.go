@@ -870,7 +870,7 @@ func runSystemSkills(args []string) int {
 		return 1
 	}
 
-	registry, err := plugin.Discover(cfg.PluginsDir, nil)
+	registry, err := discoverRegistry(cfg, *configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
 		return 1
@@ -1081,7 +1081,11 @@ func runStart(args []string) int {
 
 		// 2. Perform "doctor" validation
 		// We need registry for full validation, discover it temporarily
-		tempRegistry, _ := plugin.Discover(cfg.PluginsDir, nil)
+		tempRegistry, err := discoverRegistry(cfg, *configPath)
+		if err != nil {
+			logger.Error("plugin discovery failed (strict mode)", "error", err)
+			return 1
+		}
 		doc := doctor.New(cfg, tempRegistry)
 		report := doc.Validate()
 		if !report.Valid {
@@ -1128,7 +1132,13 @@ func runStart(args []string) int {
 	contextStore := state.NewContextStore(db)
 	hub := events.NewHub(256)
 
-	registry, err := plugin.Discover(cfg.PluginsDir, func(level, msg string, args ...any) {
+	pluginRoots, err := resolvePluginRoots(cfg, *configPath)
+	if err != nil {
+		logger.Error("plugin root resolution failed", "error", err)
+		return 1
+	}
+
+	registry, err := plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {
 		switch level {
 		case "debug":
 			logger.Debug(msg, args...)
@@ -1141,7 +1151,7 @@ func runStart(args []string) int {
 		}
 	})
 	if err != nil {
-		logger.Error("plugin discovery failed", "plugins_dir", cfg.PluginsDir, "error", err)
+		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
 		return 1
 	}
 	logger.Info("plugin discovery complete", "count", len(registry.All()))

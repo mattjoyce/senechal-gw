@@ -89,13 +89,16 @@ pipelines:
 ```yaml
 service:
   name: ductile
-  plugins_dir: /opt/ductile/plugins
   tick_interval: 60s
   log_level: info
   log_format: json
   dedupe_ttl: 24h
   job_log_retention: 30d
   strict_mode: true  # Enforce integrity & configuration checks on startup
+
+plugin_roots:
+  - /opt/ductile/plugins
+  - /opt/ductile/plugins-private
 
 api:
   enabled: true
@@ -104,6 +107,8 @@ api:
 state:
   path: ./data/state.db
 ```
+
+`plugin_roots` is the preferred multi-root setting. Legacy `plugins_dir` is still supported as a fallback for backward compatibility.
 
 ### 4.2 plugins/*.yaml (Plugin definitions)
 ```yaml

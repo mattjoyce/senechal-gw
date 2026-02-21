@@ -336,6 +336,9 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.PluginsDir != "" {
 		dst.PluginsDir = src.PluginsDir
 	}
+	if len(src.PluginRoots) > 0 {
+		dst.PluginRoots = append(dst.PluginRoots, src.PluginRoots...)
+	}
 
 	// Merge plugins (additive - src plugins added/override dst plugins)
 	if src.Plugins != nil {
@@ -505,9 +508,9 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("state.path is required")
 	}
 
-	// Plugins dir validation
-	if cfg.PluginsDir == "" {
-		return fmt.Errorf("plugins_dir is required")
+	// Plugin roots validation
+	if len(cfg.EffectivePluginRoots()) == 0 {
+		return fmt.Errorf("plugin_roots or plugins_dir is required")
 	}
 
 	// API auth validation

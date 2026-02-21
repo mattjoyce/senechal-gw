@@ -23,7 +23,8 @@ api:
       - token: ${DUCTILE_TOKEN_READONLY}
         scopes: ["plugin:ro", "job:ro", "state:ro"]
 
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 
 plugins:
   # Echo plugin for basic testing
