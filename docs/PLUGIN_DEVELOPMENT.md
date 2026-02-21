@@ -79,7 +79,17 @@ EOF
 
 ## 4. Python Example
 
+Python plugins should use **uv** (installed in the ductile runtime image) with [PEP 723 inline script metadata](https://peps.python.org/pep-0723/). Declare dependencies at the top of the script — no `requirements.txt` or separate venv management needed.
+
+The manifest entrypoint stays as `run.py`; ductile invokes it via `uv run run.py`.
+
 ```python
+# /// script
+# dependencies = [
+#   "requests>=2.31",
+# ]
+# ///
+
 import sys, json, os
 
 def main():
@@ -106,6 +116,17 @@ def main():
 if __name__ == "__main__":
     main()
 ```
+
+**Plugin directory structure (Python):**
+```
+plugins/my-plugin/
+├── manifest.yaml    # entrypoint: run.py
+└── run.py           # inline deps via PEP 723 header
+```
+
+> If your plugin has no third-party dependencies, the `# /// script` block can be omitted and `run.py` is invoked directly. uv falls back gracefully.
+
+> **Legacy plugins** (fabric, file_handler, jina-reader, youtube_transcript) still use `requirements.txt` — see kanban #116 for the uplift backlog.
 
 ---
 
