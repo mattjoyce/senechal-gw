@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
@@ -906,4 +907,53 @@ plugins: {}
 	if !foundPIDCheck {
 		t.Fatalf("expected pid_lock check in output; output=%s", stdout)
 	}
+}
+
+func TestValidateScheduledCommands(t *testing.T) {
+	registry := plugin.NewRegistry()
+	if err := registry.Add(&plugin.Plugin{
+		Name: "echo",
+		Commands: plugin.Commands{
+			{Name: "poll", Type: plugin.CommandTypeWrite},
+			{Name: "token_refresh", Type: plugin.CommandTypeWrite},
+		},
+	}); err != nil {
+		t.Fatalf("registry add: %v", err)
+	}
+
+	t.Run("valid scheduled command", func(t *testing.T) {
+		cfg := &config.Config{
+			Plugins: map[string]config.PluginConf{
+				"echo": {
+					Enabled: true,
+					Schedules: []config.ScheduleConfig{
+						{ID: "refresh", Every: "1h", Command: "token_refresh"},
+					},
+				},
+			},
+		}
+		if err := validateScheduledCommands(cfg, registry); err != nil {
+			t.Fatalf("validateScheduledCommands() error = %v", err)
+		}
+	})
+
+	t.Run("unsupported scheduled command", func(t *testing.T) {
+		cfg := &config.Config{
+			Plugins: map[string]config.PluginConf{
+				"echo": {
+					Enabled: true,
+					Schedules: []config.ScheduleConfig{
+						{ID: "bad", Every: "1h", Command: "missing"},
+					},
+				},
+			},
+		}
+		err := validateScheduledCommands(cfg, registry)
+		if err == nil {
+			t.Fatal("expected error for unsupported scheduled command")
+		}
+		if !strings.Contains(err.Error(), `unsupported command "missing"`) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
