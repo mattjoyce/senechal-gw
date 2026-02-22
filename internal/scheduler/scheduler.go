@@ -2,11 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,28 +19,48 @@ import (
 
 // Scheduler manages the scheduling and recovery of plugin jobs.
 type Scheduler struct {
-	cfg    *config.Config
-	queue  QueueService // Use the interface here
-	events *events.Hub
-	logger *slog.Logger
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	cfg             *config.Config
+	queue           QueueService // Use the interface here
+	events          *events.Hub
+	logger          *slog.Logger
+	stopCh          chan struct{}
+	wg              sync.WaitGroup
+	supportsCommand func(pluginName, commandName string) bool
 }
 
-const pollCommand = "poll"
+const (
+	pollCommand   = "poll"
+	handleCommand = "handle"
+)
+
+// Option mutates scheduler behavior.
+type Option func(*Scheduler)
+
+// WithCommandSupportChecker validates plugin command support using the discovered registry.
+func WithCommandSupportChecker(fn func(pluginName, commandName string) bool) Option {
+	return func(s *Scheduler) {
+		s.supportsCommand = fn
+	}
+}
 
 // New creates a new Scheduler instance.
-func New(cfg *config.Config, q QueueService, hub *events.Hub, logger *slog.Logger) *Scheduler { // Accept *slog.Logger here
+func New(cfg *config.Config, q QueueService, hub *events.Hub, logger *slog.Logger, opts ...Option) *Scheduler {
 	if hub == nil {
 		hub = events.NewHub(128)
 	}
-	return &Scheduler{
+	s := &Scheduler{
 		cfg:    cfg,
 		queue:  q,
 		events: hub,
 		logger: logger.With("component", "scheduler"),
 		stopCh: make(chan struct{}),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
 }
 
 // Start begins the scheduler's tick loop and crash recovery.
@@ -106,58 +128,14 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if !pluginConf.Enabled {
 			continue
 		}
-		if pluginConf.Schedule == nil {
+
+		schedules := pluginConf.NormalizedSchedules()
+		if len(schedules) == 0 {
 			continue
 		}
 
-		s.logger.Debug(
-			"Processing plugin for scheduling",
-			"plugin", pluginName,
-			"schedule_every", pluginConf.Schedule.Every,
-			"jitter", pluginConf.Schedule.Jitter,
-		)
-
-		baseInterval, err := parseScheduleEvery(pluginConf.Schedule.Every)
-		if err != nil {
-			s.logger.Error("Invalid schedule interval for plugin", "plugin", pluginName, "interval", pluginConf.Schedule.Every, "error", err)
-			continue
-		}
-
-		// Calculate jittered interval (though not directly used in simplified MVP enqueue logic)
-		_ = calculateJitteredInterval(baseInterval, pluginConf.Schedule.Jitter)
-
-		// Determine if it's time to enqueue a poll job
-		// This is a simplified check. A more robust solution would track last scheduled time.
-		// For now, we assume if the current time aligns with an interval, we schedule.
-		// For actual "every" semantics, we need a persistent record of the last successful schedule time.
-		// This MVP implementation focuses on demonstrating the jitter and enqueueing.
-
-		// TODO: Implement a proper "next run" calculation based on a persisted last_run timestamp
-		// and the jittered interval. For now, this just enqueues on every tick if the interval is short,
-		// or will need a more complex time check for daily/weekly/monthly.
-
-		// For MVP, we'll just enqueue on each tick for simplicity,
-		// but guard poll fanout and breaker state before enqueueing.
-		if err := s.reconcileCircuitBreaker(ctx, pluginName, pluginConf); err != nil {
-			s.logger.Error("Failed to reconcile circuit breaker state", "plugin", pluginName, "error", err)
-			continue
-		}
-
-		if allowed, reason, err := s.canSchedulePoll(ctx, pluginName, pluginConf); err != nil {
-			s.logger.Error("Failed poll scheduling checks", "plugin", pluginName, "error", err)
-			continue
-		} else if !allowed {
-			s.events.Publish("scheduler.skipped", map[string]any{
-				"plugin":  pluginName,
-				"command": pollCommand,
-				"reason":  reason,
-			})
-			s.logger.Info("Skipped poll scheduling", "plugin", pluginName, "reason", reason)
-			continue
-		}
-
-		if err := s.enqueuePollJob(ctx, pluginName, pluginConf); err != nil {
-			s.logger.Error("Failed to enqueue poll job", "plugin", pluginName, "error", err)
+		for _, schedule := range schedules {
+			s.processSchedule(ctx, pluginName, pluginConf, schedule)
 		}
 	}
 
@@ -169,57 +147,221 @@ func (s *Scheduler) tick(ctx context.Context) {
 	}
 }
 
-// enqueuePollJob creates and enqueues a poll job for a given plugin.
-func (s *Scheduler) enqueuePollJob(ctx context.Context, pluginName string, pluginConf config.PluginConf) error {
-	dedupeKey := fmt.Sprintf("poll:%s", pluginName) // Dedupe key for poll jobs
+func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, pluginConf config.PluginConf, schedule config.ScheduleConfig) {
+	scheduleID := strings.TrimSpace(schedule.ID)
+	if scheduleID == "" {
+		scheduleID = "default"
+	}
+
+	command := strings.TrimSpace(schedule.Command)
+	if command == "" {
+		command = pollCommand
+	}
+
+	s.logger.Debug(
+		"Processing schedule entry",
+		"plugin", pluginName,
+		"schedule_id", scheduleID,
+		"command", command,
+		"schedule_every", schedule.Every,
+		"jitter", schedule.Jitter,
+	)
+
+	entryState, err := s.currentScheduleEntryState(ctx, pluginName, scheduleID, command)
+	if err != nil {
+		s.logger.Error("Failed to load schedule entry state", "plugin", pluginName, "schedule_id", scheduleID, "error", err)
+		return
+	}
+	if entryState.Status == queue.ScheduleEntryPausedManual {
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      "schedule_paused_manual",
+		})
+		return
+	}
+
+	baseInterval, err := parseScheduleEvery(schedule.Every)
+	if err != nil {
+		reason := "invalid_schedule_interval"
+		s.logger.Error("Invalid schedule interval for plugin", "plugin", pluginName, "schedule_id", scheduleID, "interval", schedule.Every, "error", err)
+		if upsertErr := s.pauseScheduleInvalid(ctx, pluginName, scheduleID, command, reason); upsertErr != nil {
+			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+		}
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      reason,
+		})
+		return
+	}
+
+	if command == handleCommand {
+		reason := "scheduled_handle_disallowed"
+		if upsertErr := s.pauseScheduleInvalid(ctx, pluginName, scheduleID, command, reason); upsertErr != nil {
+			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+		}
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      reason,
+		})
+		s.logger.Error("Scheduled command is not allowed", "plugin", pluginName, "schedule_id", scheduleID, "command", command)
+		return
+	}
+
+	if s.supportsCommand != nil && !s.supportsCommand(pluginName, command) {
+		reason := "command_not_supported"
+		if upsertErr := s.pauseScheduleInvalid(ctx, pluginName, scheduleID, command, reason); upsertErr != nil {
+			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+		}
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      reason,
+		})
+		s.logger.Warn("Scheduled command not found in plugin manifest", "plugin", pluginName, "schedule_id", scheduleID, "command", command)
+		return
+	}
+
+	if entryState.Status == queue.ScheduleEntryPausedInvalid {
+		if err := s.activateScheduleEntry(ctx, pluginName, scheduleID, command); err != nil {
+			s.logger.Error("Failed to reactivate schedule entry", "plugin", pluginName, "schedule_id", scheduleID, "error", err)
+			return
+		}
+	}
+
+	// Calculate jittered interval (though not directly used in simplified MVP enqueue logic)
+	_ = calculateJitteredInterval(baseInterval, schedule.Jitter)
+
+	if err := s.reconcileCircuitBreaker(ctx, pluginName, command, pluginConf); err != nil {
+		s.logger.Error("Failed to reconcile circuit breaker state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		return
+	}
+
+	if allowed, reason, err := s.canSchedule(ctx, pluginName, command, pluginConf); err != nil {
+		s.logger.Error("Failed scheduling checks", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		return
+	} else if !allowed {
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      reason,
+		})
+		s.logger.Info("Skipped scheduled job", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "reason", reason)
+		return
+	}
+
+	if err := s.enqueueScheduledJob(ctx, pluginName, scheduleID, command, pluginConf, schedule.Payload); err != nil {
+		s.logger.Error("Failed to enqueue scheduled job", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+	}
+}
+
+func (s *Scheduler) currentScheduleEntryState(ctx context.Context, pluginName, scheduleID, command string) (queue.ScheduleEntryState, error) {
+	state, err := s.queue.GetScheduleEntryState(ctx, pluginName, scheduleID)
+	if err != nil {
+		return queue.ScheduleEntryState{}, err
+	}
+	if state == nil {
+		return queue.ScheduleEntryState{
+			Plugin:     pluginName,
+			ScheduleID: scheduleID,
+			Command:    command,
+			Status:     queue.ScheduleEntryActive,
+		}, nil
+	}
+	if state.Command == "" {
+		state.Command = command
+	}
+	if state.Status == "" {
+		state.Status = queue.ScheduleEntryActive
+	}
+	return *state, nil
+}
+
+func (s *Scheduler) pauseScheduleInvalid(ctx context.Context, pluginName, scheduleID, command, reason string) error {
+	reasonCopy := reason
+	return s.queue.UpsertScheduleEntryState(ctx, queue.ScheduleEntryState{
+		Plugin:     pluginName,
+		ScheduleID: scheduleID,
+		Command:    command,
+		Status:     queue.ScheduleEntryPausedInvalid,
+		Reason:     &reasonCopy,
+	})
+}
+
+func (s *Scheduler) activateScheduleEntry(ctx context.Context, pluginName, scheduleID, command string) error {
+	return s.queue.UpsertScheduleEntryState(ctx, queue.ScheduleEntryState{
+		Plugin:     pluginName,
+		ScheduleID: scheduleID,
+		Command:    command,
+		Status:     queue.ScheduleEntryActive,
+		Reason:     nil,
+	})
+}
+
+// enqueueScheduledJob creates and enqueues a command job for a given schedule entry.
+func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, scheduleID, command string, pluginConf config.PluginConf, payload map[string]any) error {
+	dedupeKey := fmt.Sprintf("%s:%s:%s", pluginName, command, scheduleID)
+
+	rawPayload := []byte(`{}`)
+	if len(payload) > 0 {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal schedule payload: %w", err)
+		}
+		rawPayload = encoded
+	}
 
 	req := queue.EnqueueRequest{
 		Plugin:      pluginName,
-		Command:     pollCommand,
-		Payload:     []byte(`{}`), // Empty JSON payload for now
+		Command:     command,
+		Payload:     rawPayload,
 		SubmittedBy: s.cfg.Service.Name,
-		DedupeKey:   &dedupeKey, // Apply dedupe key
+		DedupeKey:   &dedupeKey,
 	}
 	if pluginConf.Retry != nil {
 		req.MaxAttempts = pluginConf.Retry.MaxAttempts
 	}
-
-	// For MVP, NextRetryAt is not fully utilized for backoff, but setting it here
-	// allows for future expansion. A poll job doesn't have a specific retry time
-	// in the same way a failed job does, so we'll leave it to default queue handling for now.
 
 	jobID, err := s.queue.Enqueue(ctx, req)
 	if err != nil {
 		var dedupeErr *queue.DedupeDropError
 		if errors.As(err, &dedupeErr) {
 			s.logger.Info(
-				"Skipped poll enqueue due to dedupe hit",
+				"Skipped enqueue due to dedupe hit",
 				"plugin", pluginName,
+				"command", command,
+				"schedule_id", scheduleID,
 				"dedupe_key", dedupeErr.DedupeKey,
 				"existing_job_id", dedupeErr.ExistingJobID,
 			)
 			return nil
 		}
-		// If the error is due to deduplication, we can log it at debug level instead of error.
-		// For now, treating all enqueue errors as significant.
-		return fmt.Errorf("enqueue poll job for %s: %w", pluginName, err)
+		return fmt.Errorf("enqueue scheduled job for %s/%s: %w", pluginName, command, err)
 	}
 	s.events.Publish("scheduler.scheduled", map[string]any{
-		"job_id":  jobID,
-		"plugin":  pluginName,
-		"command": pollCommand,
+		"job_id":      jobID,
+		"plugin":      pluginName,
+		"command":     command,
+		"schedule_id": scheduleID,
 	})
-	s.logger.Info("Enqueued poll job", "plugin", pluginName, "job_id", jobID, "dedupe_key", dedupeKey)
+	s.logger.Info("Enqueued scheduled job", "plugin", pluginName, "command", command, "schedule_id", scheduleID, "job_id", jobID, "dedupe_key", dedupeKey)
 	return nil
 }
 
-func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName string, pluginConf config.PluginConf) error {
-	cb, err := s.currentCircuitBreaker(ctx, pluginName)
+func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) error {
+	cb, err := s.currentCircuitBreaker(ctx, pluginName, command)
 	if err != nil {
 		return err
 	}
 
-	latest, err := s.queue.LatestCompletedPollResult(ctx, pluginName, s.cfg.Service.Name)
+	latest, err := s.queue.LatestCompletedCommandResult(ctx, pluginName, command, s.cfg.Service.Name)
 	if err != nil {
 		return err
 	}
@@ -259,7 +401,7 @@ func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName stri
 	if cb.State != previousState {
 		s.events.Publish("scheduler.circuit_state_changed", map[string]any{
 			"plugin":         pluginName,
-			"command":        pollCommand,
+			"command":        command,
 			"previous_state": previousState,
 			"state":          cb.State,
 			"failure_count":  cb.FailureCount,
@@ -267,7 +409,7 @@ func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName stri
 		s.logger.Info(
 			"Circuit breaker state changed",
 			"plugin", pluginName,
-			"command", pollCommand,
+			"command", command,
 			"previous_state", previousState,
 			"state", cb.State,
 			"failure_count", cb.FailureCount,
@@ -277,8 +419,8 @@ func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName stri
 	return nil
 }
 
-func (s *Scheduler) canSchedulePoll(ctx context.Context, pluginName string, pluginConf config.PluginConf) (bool, string, error) {
-	cb, err := s.currentCircuitBreaker(ctx, pluginName)
+func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) (bool, string, error) {
+	cb, err := s.currentCircuitBreaker(ctx, pluginName, command)
 	if err != nil {
 		return false, "", err
 	}
@@ -294,9 +436,9 @@ func (s *Scheduler) canSchedulePoll(ctx context.Context, pluginName string, plug
 		}
 		s.events.Publish("scheduler.circuit_half_open", map[string]any{
 			"plugin":  pluginName,
-			"command": pollCommand,
+			"command": command,
 		})
-		s.logger.Info("Circuit breaker moved to half-open", "plugin", pluginName, "command", pollCommand)
+		s.logger.Info("Circuit breaker moved to half-open", "plugin", pluginName, "command", command)
 	}
 
 	maxOutstanding := pluginConf.MaxOutstandingPolls
@@ -304,26 +446,26 @@ func (s *Scheduler) canSchedulePoll(ctx context.Context, pluginName string, plug
 		maxOutstanding = 1
 	}
 
-	outstanding, err := s.queue.CountOutstandingPollJobs(ctx, pluginName)
+	outstanding, err := s.queue.CountOutstandingJobs(ctx, pluginName, command)
 	if err != nil {
 		return false, "", err
 	}
 	if outstanding >= maxOutstanding {
-		return false, "poll_guard_outstanding", nil
+		return false, "outstanding_limit", nil
 	}
 
 	return true, "", nil
 }
 
-func (s *Scheduler) currentCircuitBreaker(ctx context.Context, pluginName string) (queue.CircuitBreaker, error) {
-	cb, err := s.queue.GetCircuitBreaker(ctx, pluginName, pollCommand)
+func (s *Scheduler) currentCircuitBreaker(ctx context.Context, pluginName, command string) (queue.CircuitBreaker, error) {
+	cb, err := s.queue.GetCircuitBreaker(ctx, pluginName, command)
 	if err != nil {
 		return queue.CircuitBreaker{}, err
 	}
 	if cb == nil {
 		return queue.CircuitBreaker{
 			Plugin:       pluginName,
-			Command:      pollCommand,
+			Command:      command,
 			State:        queue.CircuitClosed,
 			FailureCount: 0,
 		}, nil

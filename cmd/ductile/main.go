@@ -1181,7 +1181,13 @@ func runStart(args []string) int {
 		}
 	}
 
-	sched := scheduler.New(cfg, q, hub, logger)
+	sched := scheduler.New(cfg, q, hub, logger, scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
+		plug, ok := registry.Get(pluginName)
+		if !ok {
+			return false
+		}
+		return plug.SupportsCommand(commandName)
+	}))
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())

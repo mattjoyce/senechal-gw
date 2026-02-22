@@ -364,6 +364,13 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("outstanding queued count=%d, want 1", n)
 	}
+	n, err = q.CountOutstandingJobs(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("CountOutstandingJobs queued: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("generic outstanding queued count=%d, want 1", n)
+	}
 
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
@@ -375,6 +382,13 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("outstanding running count=%d, want 1", n)
 	}
+	n, err = q.CountOutstandingJobs(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("CountOutstandingJobs running: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("generic outstanding running count=%d, want 1", n)
+	}
 
 	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete: %v", err)
@@ -385,6 +399,13 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("outstanding completed count=%d, want 0", n)
+	}
+	n, err = q.CountOutstandingJobs(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("CountOutstandingJobs completed: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("generic outstanding completed count=%d, want 0", n)
 	}
 }
 
@@ -430,6 +451,17 @@ func TestQueueLatestCompletedPollResult(t *testing.T) {
 	}
 	if res.CompletedAt.IsZero() {
 		t.Fatal("expected completed_at timestamp")
+	}
+
+	generic, err := q.LatestCompletedCommandResult(context.Background(), "echo", "poll", "ductile")
+	if err != nil {
+		t.Fatalf("LatestCompletedCommandResult: %v", err)
+	}
+	if generic == nil {
+		t.Fatal("expected latest completed command result")
+	}
+	if generic.JobID != id {
+		t.Fatalf("generic job id=%q want %q", generic.JobID, id)
 	}
 
 	res, err = q.LatestCompletedPollResult(context.Background(), "echo", "scheduler")
@@ -514,6 +546,75 @@ func TestQueueCircuitBreakerRoundTripAndReset(t *testing.T) {
 	}
 	if got.OpenedAt != nil || got.LastFailure != nil || got.LastJobID != nil {
 		t.Fatalf("expected cleared breaker timing fields after reset, got %#v", got)
+	}
+}
+
+func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	got, err := q.GetScheduleEntryState(context.Background(), "echo", "default")
+	if err != nil {
+		t.Fatalf("GetScheduleEntryState initial: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil initial state, got %#v", got)
+	}
+
+	reason := "command_not_supported"
+	if err := q.UpsertScheduleEntryState(context.Background(), ScheduleEntryState{
+		Plugin:     "echo",
+		ScheduleID: "default",
+		Command:    "token_refresh",
+		Status:     ScheduleEntryPausedInvalid,
+		Reason:     &reason,
+	}); err != nil {
+		t.Fatalf("UpsertScheduleEntryState insert: %v", err)
+	}
+
+	got, err = q.GetScheduleEntryState(context.Background(), "echo", "default")
+	if err != nil {
+		t.Fatalf("GetScheduleEntryState after insert: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected persisted schedule state")
+	}
+	if got.Status != ScheduleEntryPausedInvalid {
+		t.Fatalf("status=%q want %q", got.Status, ScheduleEntryPausedInvalid)
+	}
+	if got.Reason == nil || *got.Reason != reason {
+		t.Fatalf("reason=%v want %q", got.Reason, reason)
+	}
+
+	if err := q.UpsertScheduleEntryState(context.Background(), ScheduleEntryState{
+		Plugin:     "echo",
+		ScheduleID: "default",
+		Command:    "token_refresh",
+		Status:     ScheduleEntryActive,
+	}); err != nil {
+		t.Fatalf("UpsertScheduleEntryState update: %v", err)
+	}
+
+	got, err = q.GetScheduleEntryState(context.Background(), "echo", "default")
+	if err != nil {
+		t.Fatalf("GetScheduleEntryState after update: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected state after update")
+	}
+	if got.Status != ScheduleEntryActive {
+		t.Fatalf("status=%q want %q", got.Status, ScheduleEntryActive)
+	}
+	if got.Reason != nil {
+		t.Fatalf("expected nil reason after activate, got %v", *got.Reason)
 	}
 }
 

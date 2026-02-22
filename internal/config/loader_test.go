@@ -222,6 +222,87 @@ plugins:
 			wantErr: true,
 		},
 		{
+			name: "schedule and schedules together is invalid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  test:
+    enabled: true
+    schedule:
+      every: 5m
+    schedules:
+      - id: refresh
+        every: 1h
+        command: token_refresh
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedules entries require id",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 1h
+        command: token_refresh
+`,
+			wantErr: true,
+		},
+		{
+			name: "scheduled handle is invalid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  test:
+    enabled: true
+    schedule:
+      every: 5m
+      command: handle
+`,
+			wantErr: true,
+		},
+		{
+			name: "multiple schedules are valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugins_dir: ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - id: refresh
+        every: 1h
+        command: token_refresh
+      - id: poll
+        every: 15m
+        command: poll
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				test := cfg.Plugins["test"]
+				if len(test.Schedules) != 2 {
+					t.Fatalf("expected 2 schedules, got %d", len(test.Schedules))
+				}
+			},
+		},
+		{
 			name: "custom schedule interval",
 			yaml: `
 service:

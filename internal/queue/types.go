@@ -77,10 +77,30 @@ type CircuitBreaker struct {
 	UpdatedAt    time.Time
 }
 
-type PollResult struct {
+type CommandResult struct {
 	JobID       string
 	Status      Status
 	CompletedAt time.Time
+}
+
+// PollResult is kept as an alias for compatibility with existing tests/callers.
+type PollResult = CommandResult
+
+type ScheduleEntryStatus string
+
+const (
+	ScheduleEntryActive        ScheduleEntryStatus = "active"
+	ScheduleEntryPausedManual  ScheduleEntryStatus = "paused_manual"
+	ScheduleEntryPausedInvalid ScheduleEntryStatus = "paused_invalid"
+)
+
+type ScheduleEntryState struct {
+	Plugin     string
+	ScheduleID string
+	Command    string
+	Status     ScheduleEntryStatus
+	Reason     *string
+	UpdatedAt  time.Time
 }
 
 var ErrJobNotFound = errors.New("job not found")

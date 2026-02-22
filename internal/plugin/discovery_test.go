@@ -346,14 +346,26 @@ func TestValidateManifest(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid command",
+			name: "custom command is valid",
 			manifest: &Manifest{
 				ManifestSpec:    SupportedManifestSpec,
 				ManifestVersion: SupportedManifestVersion,
 				Name:            "test",
 				Protocol:        2,
 				Entrypoint:      "run.sh",
-				Commands:        Commands{{Name: "invalid_command", Type: CommandTypeWrite}},
+				Commands:        Commands{{Name: "token_refresh", Type: CommandTypeWrite}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid command format",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "bad command!", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},

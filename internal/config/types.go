@@ -69,6 +69,7 @@ type APIToken struct {
 type PluginConf struct {
 	Enabled             bool                  `yaml:"enabled"`
 	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"`
+	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`
 	Retry               *RetryConfig          `yaml:"retry,omitempty"`
 	Timeouts            *TimeoutsConfig       `yaml:"timeouts,omitempty"`
@@ -76,11 +77,59 @@ type PluginConf struct {
 	MaxOutstandingPolls int                   `yaml:"max_outstanding_polls,omitempty"`
 }
 
-// ScheduleConfig defines when a plugin should be polled.
+// ScheduleConfig defines when a plugin command should be scheduled.
 type ScheduleConfig struct {
+	ID              string           `yaml:"id,omitempty"`
 	Every           string           `yaml:"every"` // e.g., "5m", "hourly", "daily"
 	Jitter          time.Duration    `yaml:"jitter,omitempty"`
+	Command         string           `yaml:"command,omitempty"`          // default: "poll"
+	Payload         map[string]any   `yaml:"payload,omitempty"`          // default: {}
 	PreferredWindow *PreferredWindow `yaml:"preferred_window,omitempty"` // Not in MVP
+}
+
+// NormalizedSchedules returns the schedule list with compatibility defaults applied.
+func (p PluginConf) NormalizedSchedules() []ScheduleConfig {
+	if p.Schedule != nil {
+		legacy := p.Schedule.copy()
+		if strings.TrimSpace(legacy.ID) == "" {
+			legacy.ID = "default"
+		}
+		legacy.applyDefaults()
+		return []ScheduleConfig{legacy}
+	}
+
+	if len(p.Schedules) == 0 {
+		return nil
+	}
+
+	out := make([]ScheduleConfig, 0, len(p.Schedules))
+	for _, s := range p.Schedules {
+		entry := s.copy()
+		entry.applyDefaults()
+		out = append(out, entry)
+	}
+	return out
+}
+
+// applyDefaults applies per-entry defaults in-place.
+func (s *ScheduleConfig) applyDefaults() {
+	if strings.TrimSpace(s.Command) == "" {
+		s.Command = "poll"
+	}
+	if s.Payload == nil {
+		s.Payload = map[string]any{}
+	}
+}
+
+func (s ScheduleConfig) copy() ScheduleConfig {
+	copied := s
+	if s.Payload != nil {
+		copied.Payload = make(map[string]any, len(s.Payload))
+		for k, v := range s.Payload {
+			copied.Payload[k] = v
+		}
+	}
+	return copied
 }
 
 // PreferredWindow defines time-of-day constraints for scheduling.
