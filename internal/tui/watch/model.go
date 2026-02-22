@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattjoyce/ductile/internal/events"
 )
 
@@ -20,6 +20,7 @@ type Model struct {
 	// State
 	health    HealthState
 	pipelines map[string]*PipelineState
+	schedules map[string]*ScheduleState
 	jobs      map[string]*JobState
 	eventLog  []events.Event
 	lastTick  time.Time
@@ -45,6 +46,7 @@ func New(apiURL, apiKey string) *Model {
 		apiURL:    apiURL,
 		apiKey:    apiKey,
 		pipelines: make(map[string]*PipelineState),
+		schedules: make(map[string]*ScheduleState),
 		jobs:      make(map[string]*JobState),
 		eventLog:  make([]events.Event, 0),
 		hubEvents: make(chan events.Event, 100),
@@ -108,6 +110,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update pipeline/job state
 		updatePipelineState(m.pipelines, m.jobs, e)
+		updateScheduleState(m.schedules, e)
 
 		// Mark as connected
 		m.health.Connected = true
@@ -159,6 +162,7 @@ func (m Model) View() string {
 
 	header := renderHeader(m.health, m.ticker, m.spinner, m.theme, m.width)
 	pipelines := renderPipelines(m.pipelines, m.selectedPipeline, m.theme, m.width)
+	schedules := renderSchedules(m.schedules, m.theme, m.width)
 	eventStream := renderEventStream(m.eventLog, m.theme, m.width)
 
 	// Error bar
@@ -171,7 +175,7 @@ func (m Model) View() string {
 		Foreground(lipgloss.Color("241")).
 		Render(" [q] Quit • [↑/↓] Navigate Pipelines")
 
-	parts := []string{header, pipelines, eventStream}
+	parts := []string{header, pipelines, schedules, eventStream}
 	if errBar != "" {
 		parts = append(parts, errBar)
 	}

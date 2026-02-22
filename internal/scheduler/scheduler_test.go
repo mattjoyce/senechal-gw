@@ -246,6 +246,58 @@ func TestSchedulerTickRejectsScheduledHandle(t *testing.T) {
 	assert.Contains(t, logBuf.String(), "Scheduled command is not allowed")
 }
 
+func TestSchedulerTickSkipsWhenNotDueAfterSuccess(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, logBuf := NewTestSlogger()
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	cfg.Service.JobLogRetention = 24 * time.Hour
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedule: &config.ScheduleConfig{
+				Every: "1h",
+			},
+		},
+	}
+
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(&queue.ScheduleEntryState{
+		Plugin:     "echo",
+		ScheduleID: "default",
+		Command:    "poll",
+		Status:     queue.ScheduleEntryActive,
+	}, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	completedAt := time.Now().UTC()
+	mockQueue.EXPECT().LatestCompletedCommandResult(gomock.Any(), "echo", pollCommand, "ductile").Return(&queue.CommandResult{
+		JobID:       "job-1",
+		Status:      queue.StatusSucceeded,
+		CompletedAt: completedAt,
+	}, nil)
+	mockQueue.EXPECT().UpsertCircuitBreaker(gomock.Any(), gomock.Any()).Return(nil)
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.Equal(t, "echo", state.Plugin)
+		assert.Equal(t, "default", state.ScheduleID)
+		assert.NotNil(t, state.LastSuccessJobID)
+		assert.Equal(t, "job-1", *state.LastSuccessJobID)
+		assert.NotNil(t, state.LastSuccessAt)
+		assert.NotNil(t, state.NextRunAt)
+		assert.True(t, state.NextRunAt.After(completedAt))
+		return nil
+	})
+	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
+
+	s.tick(ctx)
+	assert.Contains(t, logBuf.String(), "Skipped scheduled job (not due)")
+}
+
 func TestCircuitBreakerStateTransitions(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -272,7 +324,8 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 		assert.Equal(t, "job-1", *cb.LastJobID)
 		return nil
 	})
-	assert.NoError(t, s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf))
+	_, err := s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf)
+	assert.NoError(t, err)
 
 	job1ID := "job-1"
 	job2 := queue.PollResult{JobID: "job-2", Status: queue.StatusFailed, CompletedAt: time.Now().UTC().Add(-3 * time.Minute)}
@@ -284,7 +337,8 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 		assert.NotNil(t, cb.OpenedAt)
 		return nil
 	})
-	assert.NoError(t, s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf))
+	_, err = s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf)
+	assert.NoError(t, err)
 
 	openedAt := time.Now().UTC().Add(-1 * time.Minute)
 	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(&queue.CircuitBreaker{Plugin: "echo", Command: pollCommand, State: queue.CircuitOpen, FailureCount: 2, OpenedAt: &openedAt}, nil)
@@ -315,5 +369,6 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 		assert.Nil(t, cb.OpenedAt)
 		return nil
 	})
-	assert.NoError(t, s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf))
+	_, err = s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf)
+	assert.NoError(t, err)
 }

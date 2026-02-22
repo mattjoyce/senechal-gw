@@ -505,16 +505,19 @@ func (q *Queue) GetScheduleEntryState(ctx context.Context, plugin, scheduleID st
 	}
 
 	row := q.db.QueryRowContext(ctx, `
-SELECT plugin, schedule_id, command, status, reason, updated_at
+SELECT plugin, schedule_id, command, status, reason, last_success_job_id, last_success_at, next_run_at, updated_at
 FROM schedule_entries
 WHERE plugin = ? AND schedule_id = ?;
 `, plugin, scheduleID)
 
 	var (
-		state     ScheduleEntryState
-		statusS   string
-		reason    sql.NullString
-		updatedAt string
+		state            ScheduleEntryState
+		statusS          string
+		reason           sql.NullString
+		lastSuccessJobID sql.NullString
+		lastSuccessAt    sql.NullString
+		nextRunAt        sql.NullString
+		updatedAt        string
 	)
 	if err := row.Scan(
 		&state.Plugin,
@@ -522,6 +525,9 @@ WHERE plugin = ? AND schedule_id = ?;
 		&state.Command,
 		&statusS,
 		&reason,
+		&lastSuccessJobID,
+		&lastSuccessAt,
+		&nextRunAt,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -533,6 +539,19 @@ WHERE plugin = ? AND schedule_id = ?;
 	state.Status = ScheduleEntryStatus(statusS)
 	if reason.Valid {
 		state.Reason = &reason.String
+	}
+	if lastSuccessJobID.Valid {
+		state.LastSuccessJobID = &lastSuccessJobID.String
+	}
+	if lastSuccessAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, lastSuccessAt.String); err == nil {
+			state.LastSuccessAt = &t
+		}
+	}
+	if nextRunAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, nextRunAt.String); err == nil {
+			state.NextRunAt = &t
+		}
 	}
 	if t, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
 		state.UpdatedAt = t
@@ -560,16 +579,31 @@ func (q *Queue) UpsertScheduleEntryState(ctx context.Context, state ScheduleEntr
 	if state.Reason != nil {
 		reason = *state.Reason
 	}
+	var lastSuccessJobID any
+	if state.LastSuccessJobID != nil {
+		lastSuccessJobID = *state.LastSuccessJobID
+	}
+	var lastSuccessAt any
+	if state.LastSuccessAt != nil {
+		lastSuccessAt = state.LastSuccessAt.UTC().Format(time.RFC3339Nano)
+	}
+	var nextRunAt any
+	if state.NextRunAt != nil {
+		nextRunAt = state.NextRunAt.UTC().Format(time.RFC3339Nano)
+	}
 
 	_, err := q.db.ExecContext(ctx, `
-INSERT INTO schedule_entries(plugin, schedule_id, command, status, reason, updated_at)
-VALUES(?, ?, ?, ?, ?, ?)
+INSERT INTO schedule_entries(plugin, schedule_id, command, status, reason, last_success_job_id, last_success_at, next_run_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(plugin, schedule_id) DO UPDATE SET
   command = excluded.command,
   status = excluded.status,
   reason = excluded.reason,
+  last_success_job_id = excluded.last_success_job_id,
+  last_success_at = excluded.last_success_at,
+  next_run_at = excluded.next_run_at,
   updated_at = excluded.updated_at;
-`, state.Plugin, state.ScheduleID, state.Command, state.Status, reason, updatedAt)
+`, state.Plugin, state.ScheduleID, state.Command, state.Status, reason, lastSuccessJobID, lastSuccessAt, nextRunAt, updatedAt)
 	if err != nil {
 		return fmt.Errorf("upsert schedule entry state: %w", err)
 	}

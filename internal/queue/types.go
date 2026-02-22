@@ -95,12 +95,15 @@ const (
 )
 
 type ScheduleEntryState struct {
-	Plugin     string
-	ScheduleID string
-	Command    string
-	Status     ScheduleEntryStatus
-	Reason     *string
-	UpdatedAt  time.Time
+	Plugin           string
+	ScheduleID       string
+	Command          string
+	Status           ScheduleEntryStatus
+	Reason           *string
+	LastSuccessJobID *string
+	LastSuccessAt    *time.Time
+	NextRunAt        *time.Time
+	UpdatedAt        time.Time
 }
 
 var ErrJobNotFound = errors.New("job not found")

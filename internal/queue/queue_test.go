@@ -570,12 +570,18 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 
 	reason := "command_not_supported"
+	lastSuccessJobID := "job-123"
+	lastSuccessAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Microsecond)
+	nextRunAt := time.Now().UTC().Add(50 * time.Minute).Truncate(time.Microsecond)
 	if err := q.UpsertScheduleEntryState(context.Background(), ScheduleEntryState{
-		Plugin:     "echo",
-		ScheduleID: "default",
-		Command:    "token_refresh",
-		Status:     ScheduleEntryPausedInvalid,
-		Reason:     &reason,
+		Plugin:           "echo",
+		ScheduleID:       "default",
+		Command:          "token_refresh",
+		Status:           ScheduleEntryPausedInvalid,
+		Reason:           &reason,
+		LastSuccessJobID: &lastSuccessJobID,
+		LastSuccessAt:    &lastSuccessAt,
+		NextRunAt:        &nextRunAt,
 	}); err != nil {
 		t.Fatalf("UpsertScheduleEntryState insert: %v", err)
 	}
@@ -592,6 +598,15 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 	if got.Reason == nil || *got.Reason != reason {
 		t.Fatalf("reason=%v want %q", got.Reason, reason)
+	}
+	if got.LastSuccessJobID == nil || *got.LastSuccessJobID != lastSuccessJobID {
+		t.Fatalf("last_success_job_id=%v want %q", got.LastSuccessJobID, lastSuccessJobID)
+	}
+	if got.LastSuccessAt == nil || !got.LastSuccessAt.Equal(lastSuccessAt) {
+		t.Fatalf("last_success_at=%v want %v", got.LastSuccessAt, lastSuccessAt)
+	}
+	if got.NextRunAt == nil || !got.NextRunAt.Equal(nextRunAt) {
+		t.Fatalf("next_run_at=%v want %v", got.NextRunAt, nextRunAt)
 	}
 
 	if err := q.UpsertScheduleEntryState(context.Background(), ScheduleEntryState{
@@ -615,6 +630,9 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 	if got.Reason != nil {
 		t.Fatalf("expected nil reason after activate, got %v", *got.Reason)
+	}
+	if got.LastSuccessJobID != nil || got.LastSuccessAt != nil || got.NextRunAt != nil {
+		t.Fatalf("expected timing fields cleared after activate update, got %#v", got)
 	}
 }
 

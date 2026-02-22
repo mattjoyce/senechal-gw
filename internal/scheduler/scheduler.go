@@ -172,6 +172,20 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		s.logger.Error("Failed to load schedule entry state", "plugin", pluginName, "schedule_id", scheduleID, "error", err)
 		return
 	}
+	if entryState.Command != command {
+		entryState.Command = command
+		entryState.LastSuccessJobID = nil
+		entryState.LastSuccessAt = nil
+		entryState.NextRunAt = nil
+		if entryState.Status == queue.ScheduleEntryPausedInvalid {
+			entryState.Status = queue.ScheduleEntryActive
+			entryState.Reason = nil
+		}
+		if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+			s.logger.Error("Failed to persist schedule command change", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+			return
+		}
+	}
 	if entryState.Status == queue.ScheduleEntryPausedManual {
 		s.events.Publish("scheduler.skipped", map[string]any{
 			"plugin":      pluginName,
@@ -186,7 +200,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 	if err != nil {
 		reason := "invalid_schedule_interval"
 		s.logger.Error("Invalid schedule interval for plugin", "plugin", pluginName, "schedule_id", scheduleID, "interval", schedule.Every, "error", err)
-		if upsertErr := s.pauseScheduleInvalid(ctx, pluginName, scheduleID, command, reason); upsertErr != nil {
+		if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
 			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
 		}
 		s.events.Publish("scheduler.skipped", map[string]any{
@@ -200,7 +214,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 
 	if command == handleCommand {
 		reason := "scheduled_handle_disallowed"
-		if upsertErr := s.pauseScheduleInvalid(ctx, pluginName, scheduleID, command, reason); upsertErr != nil {
+		if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
 			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
 		}
 		s.events.Publish("scheduler.skipped", map[string]any{
@@ -215,7 +229,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 
 	if s.supportsCommand != nil && !s.supportsCommand(pluginName, command) {
 		reason := "command_not_supported"
-		if upsertErr := s.pauseScheduleInvalid(ctx, pluginName, scheduleID, command, reason); upsertErr != nil {
+		if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
 			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
 		}
 		s.events.Publish("scheduler.skipped", map[string]any{
@@ -229,17 +243,40 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 	}
 
 	if entryState.Status == queue.ScheduleEntryPausedInvalid {
-		if err := s.activateScheduleEntry(ctx, pluginName, scheduleID, command); err != nil {
+		if err := s.activateScheduleEntry(ctx, entryState); err != nil {
 			s.logger.Error("Failed to reactivate schedule entry", "plugin", pluginName, "schedule_id", scheduleID, "error", err)
+			return
+		}
+		entryState.Status = queue.ScheduleEntryActive
+		entryState.Reason = nil
+	}
+
+	latestCompleted, err := s.reconcileCircuitBreaker(ctx, pluginName, command, pluginConf)
+	if err != nil {
+		s.logger.Error("Failed to reconcile circuit breaker state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		return
+	}
+
+	if stateChanged, err := s.reconcileScheduleTiming(&entryState, latestCompleted, baseInterval, schedule.Jitter); err != nil {
+		s.logger.Error("Failed to reconcile schedule timing", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		return
+	} else if stateChanged {
+		if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+			s.logger.Error("Failed to persist schedule timing state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 			return
 		}
 	}
 
-	// Calculate jittered interval (though not directly used in simplified MVP enqueue logic)
-	_ = calculateJitteredInterval(baseInterval, schedule.Jitter)
-
-	if err := s.reconcileCircuitBreaker(ctx, pluginName, command, pluginConf); err != nil {
-		s.logger.Error("Failed to reconcile circuit breaker state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+	now := time.Now().UTC()
+	if entryState.NextRunAt != nil && now.Before(*entryState.NextRunAt) {
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      "not_due",
+			"next_run_at": entryState.NextRunAt.Format(time.RFC3339Nano),
+		})
+		s.logger.Debug("Skipped scheduled job (not due)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "next_run_at", entryState.NextRunAt.Format(time.RFC3339Nano))
 		return
 	}
 
@@ -284,25 +321,17 @@ func (s *Scheduler) currentScheduleEntryState(ctx context.Context, pluginName, s
 	return *state, nil
 }
 
-func (s *Scheduler) pauseScheduleInvalid(ctx context.Context, pluginName, scheduleID, command, reason string) error {
+func (s *Scheduler) pauseScheduleInvalid(ctx context.Context, state queue.ScheduleEntryState, reason string) error {
 	reasonCopy := reason
-	return s.queue.UpsertScheduleEntryState(ctx, queue.ScheduleEntryState{
-		Plugin:     pluginName,
-		ScheduleID: scheduleID,
-		Command:    command,
-		Status:     queue.ScheduleEntryPausedInvalid,
-		Reason:     &reasonCopy,
-	})
+	state.Status = queue.ScheduleEntryPausedInvalid
+	state.Reason = &reasonCopy
+	return s.queue.UpsertScheduleEntryState(ctx, state)
 }
 
-func (s *Scheduler) activateScheduleEntry(ctx context.Context, pluginName, scheduleID, command string) error {
-	return s.queue.UpsertScheduleEntryState(ctx, queue.ScheduleEntryState{
-		Plugin:     pluginName,
-		ScheduleID: scheduleID,
-		Command:    command,
-		Status:     queue.ScheduleEntryActive,
-		Reason:     nil,
-	})
+func (s *Scheduler) activateScheduleEntry(ctx context.Context, state queue.ScheduleEntryState) error {
+	state.Status = queue.ScheduleEntryActive
+	state.Reason = nil
+	return s.queue.UpsertScheduleEntryState(ctx, state)
 }
 
 // enqueueScheduledJob creates and enqueues a command job for a given schedule entry.
@@ -355,21 +384,21 @@ func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, schedul
 	return nil
 }
 
-func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) error {
+func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) (*queue.CommandResult, error) {
 	cb, err := s.currentCircuitBreaker(ctx, pluginName, command)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	latest, err := s.queue.LatestCompletedCommandResult(ctx, pluginName, command, s.cfg.Service.Name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if latest == nil {
-		return nil
+		return nil, nil
 	}
 	if cb.LastJobID != nil && *cb.LastJobID == latest.JobID {
-		return nil
+		return latest, nil
 	}
 
 	threshold := breakerThreshold(pluginConf)
@@ -395,7 +424,7 @@ func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, com
 
 	cb.LastJobID = &latest.JobID
 	if err := s.queue.UpsertCircuitBreaker(ctx, cb); err != nil {
-		return err
+		return nil, err
 	}
 
 	if cb.State != previousState {
@@ -416,7 +445,33 @@ func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, com
 		)
 	}
 
-	return nil
+	return latest, nil
+}
+
+func (s *Scheduler) reconcileScheduleTiming(
+	state *queue.ScheduleEntryState,
+	latestCompleted *queue.CommandResult,
+	baseInterval time.Duration,
+	jitter time.Duration,
+) (bool, error) {
+	if state == nil || latestCompleted == nil {
+		return false, nil
+	}
+	if latestCompleted.Status != queue.StatusSucceeded {
+		return false, nil
+	}
+	if state.LastSuccessJobID != nil && *state.LastSuccessJobID == latestCompleted.JobID {
+		return false, nil
+	}
+
+	completedAt := latestCompleted.CompletedAt.UTC()
+	nextRunAt := completedAt.Add(calculateJitteredInterval(baseInterval, jitter))
+	jobID := latestCompleted.JobID
+
+	state.LastSuccessJobID = &jobID
+	state.LastSuccessAt = &completedAt
+	state.NextRunAt = &nextRunAt
+	return true, nil
 }
 
 func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) (bool, string, error) {
