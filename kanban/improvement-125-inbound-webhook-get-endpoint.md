@@ -10,15 +10,21 @@ tags: [improvement, webhook, oauth, api]
 
 ## Motivation
 
-The Withings OAuth flow requires ductile to receive an inbound HTTP GET request
-from an external service (Withings authorization server) and route it to a plugin
-command. This pattern — receiving an inbound callback and handing it to a plugin —
-is the same as a webhook, but the caller is a browser redirect (GET + query params)
-rather than a POST with a JSON body.
+Multiple existing standalone services follow the same pattern:
+
+| Service | Callback URL | Token store | Refresh |
+|---------|-------------|-------------|---------|
+| Withings | `https://mattjoyce.ai/api/withings/` | `withings.db` | systemd/cron |
+| Google OAuth | `localhost:9000/oauth/google/callback` | `google_oauth.db` | systemd timer |
+
+Each is a FastAPI app whose sole job is: receive a browser redirect (GET + `?code=&state=`),
+exchange the code for tokens, store them, return JSON. All are candidates for replacement
+by a ductile plugin.
 
 Currently ductile only exposes POST endpoints for plugin triggers. This card adds
 a synchronous GET-capable inbound endpoint so plugins can own OAuth callbacks and
-similar browser-redirect flows without a separate service.
+similar browser-redirect flows without a separate service — making this the general
+solution for all OAuth integrations on this server.
 
 ## The Withings OAuth Callback Flow (Concrete Example)
 
