@@ -204,6 +204,41 @@ func readBuildSetting(key string) string {
 	return ""
 }
 
+func validateScheduledCommands(cfg *config.Config, registry *plugin.Registry) error {
+	if cfg == nil || registry == nil {
+		return nil
+	}
+
+	for pluginName, pluginConf := range cfg.Plugins {
+		if !pluginConf.Enabled {
+			continue
+		}
+
+		plug, ok := registry.Get(pluginName)
+		if !ok {
+			return fmt.Errorf("plugin %q is configured but not discoverable", pluginName)
+		}
+
+		for _, schedule := range pluginConf.NormalizedSchedules() {
+			command := strings.TrimSpace(schedule.Command)
+			if command == "" {
+				command = "poll"
+			}
+
+			scheduleID := strings.TrimSpace(schedule.ID)
+			if scheduleID == "" {
+				scheduleID = "default"
+			}
+
+			if !plug.SupportsCommand(command) {
+				return fmt.Errorf("plugin %q schedule %q references unsupported command %q", pluginName, scheduleID, command)
+			}
+		}
+	}
+
+	return nil
+}
+
 func printUsage() {
 	fmt.Print(`ductile - Lightweight YAML-configured integration gateway
 
@@ -1155,6 +1190,10 @@ func runStart(args []string) int {
 		return 1
 	}
 	logger.Info("plugin discovery complete", "count", len(registry.All()))
+	if err := validateScheduledCommands(cfg, registry); err != nil {
+		logger.Error("invalid scheduled command configuration", "error", err)
+		return 1
+	}
 
 	configDir := *configPath
 	if stat, err := os.Stat(configDir); err != nil || !stat.IsDir() {
@@ -1181,7 +1220,13 @@ func runStart(args []string) int {
 		}
 	}
 
-	sched := scheduler.New(cfg, q, hub, logger)
+	sched := scheduler.New(cfg, q, hub, logger, scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
+		plug, ok := registry.Get(pluginName)
+		if !ok {
+			return false
+		}
+		return plug.SupportsCommand(commandName)
+	}))
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())

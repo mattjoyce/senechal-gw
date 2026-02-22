@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -223,14 +224,12 @@ func validateManifest(m *Manifest) error {
 		return fmt.Errorf("at least one command must be declared")
 	}
 
-	// Validate command names
-	validCommands := map[string]bool{"poll": true, "handle": true, "health": true, "init": true}
 	for _, cmd := range m.Commands {
 		if cmd.Name == "" {
 			return fmt.Errorf("command name is required")
 		}
-		if !validCommands[cmd.Name] {
-			return fmt.Errorf("invalid command %q (valid: poll, handle, health, init)", cmd.Name)
+		if !validCommandName(cmd.Name) {
+			return fmt.Errorf("invalid command %q (must start with a letter and contain only letters, digits, '_' or '-')", cmd.Name)
 		}
 		if !cmd.Type.valid() {
 			return fmt.Errorf("invalid command type %q for %q (valid: read, write)", cmd.Type, cmd.Name)
@@ -238,6 +237,21 @@ func validateManifest(m *Manifest) error {
 	}
 
 	return nil
+}
+
+func validCommandName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case i == 0 && unicode.IsLetter(r):
+		case i > 0 && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validateTrust enforces security constraints (SPEC §5.5).

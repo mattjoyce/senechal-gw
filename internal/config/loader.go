@@ -549,16 +549,31 @@ func validate(cfg *Config) error {
 			continue // Skip disabled plugins
 		}
 
-		// Validate schedule if present (plugins without a schedule are API-triggered only)
-		if plugin.Schedule != nil {
-			if plugin.Schedule.Every == "" {
-				return fmt.Errorf("plugin %q: schedule.every is required", name)
+		if plugin.Schedule != nil && len(plugin.Schedules) > 0 {
+			return fmt.Errorf("plugin %q: schedule and schedules are mutually exclusive", name)
+		}
+
+		// Validate schedule entries if present (plugins without schedules are API-triggered only).
+		scheduleIDs := make(map[string]struct{}, len(plugin.Schedules))
+		for i, schedule := range plugin.NormalizedSchedules() {
+			sourcePath := "schedule"
+			requireID := false
+			if len(plugin.Schedules) > 0 {
+				sourcePath = fmt.Sprintf("schedules[%d]", i)
+				requireID = true
+			}
+			if err := validateScheduleConfig(name, sourcePath, schedule, requireID); err != nil {
+				return err
 			}
 
-			// Validate schedule.every with flexible parser.
-			if _, err := ParseInterval(plugin.Schedule.Every); err != nil {
-				return fmt.Errorf("plugin %q: %w", name, err)
+			id := strings.TrimSpace(schedule.ID)
+			if id == "" {
+				continue // Legacy single schedule maps to default ID.
 			}
+			if _, exists := scheduleIDs[id]; exists {
+				return fmt.Errorf("plugin %q: duplicate schedule id %q", name, id)
+			}
+			scheduleIDs[id] = struct{}{}
 		}
 
 		// Check for unresolved env vars in config (security: no secrets leaked in logs)
@@ -567,6 +582,31 @@ func validate(cfg *Config) error {
 				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConfig, requireID bool) error {
+	if requireID && strings.TrimSpace(schedule.ID) == "" {
+		return fmt.Errorf("plugin %q: %s.id is required", pluginName, sourcePath)
+	}
+
+	if strings.TrimSpace(schedule.Every) == "" {
+		return fmt.Errorf("plugin %q: %s.every is required", pluginName, sourcePath)
+	}
+
+	// Validate schedule.every with flexible parser.
+	if _, err := ParseInterval(schedule.Every); err != nil {
+		return fmt.Errorf("plugin %q: %w", pluginName, err)
+	}
+
+	command := strings.TrimSpace(schedule.Command)
+	if command == "" {
+		command = "poll"
+	}
+	if command == "handle" {
+		return fmt.Errorf("plugin %q: %s.command %q cannot be scheduled", pluginName, sourcePath, command)
 	}
 
 	return nil

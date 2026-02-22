@@ -68,22 +68,30 @@ WHERE status IN (?, ?);
 	return n, nil
 }
 
-// CountOutstandingPollJobs returns queued+running poll jobs for a plugin.
-func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (int, error) {
+// CountOutstandingJobs returns queued+running jobs for a plugin command.
+func (q *Queue) CountOutstandingJobs(ctx context.Context, plugin, command string) (int, error) {
 	if plugin == "" {
 		return 0, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return 0, fmt.Errorf("command is empty")
 	}
 
 	row := q.db.QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM job_queue
-WHERE plugin = ? AND command = 'poll' AND status IN (?, ?);
-`, plugin, StatusQueued, StatusRunning)
+WHERE plugin = ? AND command = ? AND status IN (?, ?);
+`, plugin, command, StatusQueued, StatusRunning)
 	var n int
 	if err := row.Scan(&n); err != nil {
-		return 0, fmt.Errorf("count outstanding poll jobs: %w", err)
+		return 0, fmt.Errorf("count outstanding jobs: %w", err)
 	}
 	return n, nil
+}
+
+// CountOutstandingPollJobs returns queued+running poll jobs for a plugin.
+func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (int, error) {
+	return q.CountOutstandingJobs(ctx, plugin, "poll")
 }
 
 func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error) {
@@ -435,11 +443,14 @@ LIMIT ?;
 	return jobs, total, nil
 }
 
-// LatestCompletedPollResult returns the most recently completed poll result for a plugin
-// submitted by the scheduler identity.
-func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*PollResult, error) {
+// LatestCompletedCommandResult returns the most recently completed result for a
+// plugin command submitted by a given producer identity.
+func (q *Queue) LatestCompletedCommandResult(ctx context.Context, plugin, command, submittedBy string) (*CommandResult, error) {
 	if plugin == "" {
 		return nil, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return nil, fmt.Errorf("command is empty")
 	}
 	if submittedBy == "" {
 		return nil, fmt.Errorf("submitted_by is empty")
@@ -448,11 +459,11 @@ func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submitted
 	row := q.db.QueryRowContext(ctx, `
 SELECT id, status, completed_at
 FROM job_queue
-WHERE plugin = ? AND command = 'poll' AND submitted_by = ? AND completed_at IS NOT NULL
+WHERE plugin = ? AND command = ? AND submitted_by = ? AND completed_at IS NOT NULL
   AND status IN (?, ?, ?, ?)
 ORDER BY completed_at DESC, rowid DESC
 LIMIT 1;
-`, plugin, submittedBy, StatusSucceeded, StatusFailed, StatusTimedOut, StatusDead)
+`, plugin, command, submittedBy, StatusSucceeded, StatusFailed, StatusTimedOut, StatusDead)
 
 	var (
 		jobID       string
@@ -463,19 +474,107 @@ LIMIT 1;
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("latest completed poll result: %w", err)
+		return nil, fmt.Errorf("latest completed command result: %w", err)
 	}
 
 	completedAtT, err := time.Parse(time.RFC3339Nano, completedAt)
 	if err != nil {
-		return nil, fmt.Errorf("latest completed poll result: parse completed_at: %w", err)
+		return nil, fmt.Errorf("latest completed command result: parse completed_at: %w", err)
 	}
 
-	return &PollResult{
+	return &CommandResult{
 		JobID:       jobID,
 		Status:      Status(statusS),
 		CompletedAt: completedAtT,
 	}, nil
+}
+
+// LatestCompletedPollResult returns the most recently completed poll result for a plugin
+// submitted by the scheduler identity.
+func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*PollResult, error) {
+	return q.LatestCompletedCommandResult(ctx, plugin, "poll", submittedBy)
+}
+
+// GetScheduleEntryState returns persisted schedule-entry state for plugin+schedule_id.
+func (q *Queue) GetScheduleEntryState(ctx context.Context, plugin, scheduleID string) (*ScheduleEntryState, error) {
+	if plugin == "" {
+		return nil, fmt.Errorf("plugin is empty")
+	}
+	if scheduleID == "" {
+		return nil, fmt.Errorf("schedule_id is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT plugin, schedule_id, command, status, reason, updated_at
+FROM schedule_entries
+WHERE plugin = ? AND schedule_id = ?;
+`, plugin, scheduleID)
+
+	var (
+		state     ScheduleEntryState
+		statusS   string
+		reason    sql.NullString
+		updatedAt string
+	)
+	if err := row.Scan(
+		&state.Plugin,
+		&state.ScheduleID,
+		&state.Command,
+		&statusS,
+		&reason,
+		&updatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get schedule entry state: %w", err)
+	}
+
+	state.Status = ScheduleEntryStatus(statusS)
+	if reason.Valid {
+		state.Reason = &reason.String
+	}
+	if t, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
+		state.UpdatedAt = t
+	}
+	return &state, nil
+}
+
+// UpsertScheduleEntryState inserts or updates persisted schedule-entry state.
+func (q *Queue) UpsertScheduleEntryState(ctx context.Context, state ScheduleEntryState) error {
+	if state.Plugin == "" {
+		return fmt.Errorf("plugin is empty")
+	}
+	if state.ScheduleID == "" {
+		return fmt.Errorf("schedule_id is empty")
+	}
+	if state.Command == "" {
+		return fmt.Errorf("command is empty")
+	}
+	if state.Status == "" {
+		state.Status = ScheduleEntryActive
+	}
+
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	var reason any
+	if state.Reason != nil {
+		reason = *state.Reason
+	}
+
+	_, err := q.db.ExecContext(ctx, `
+INSERT INTO schedule_entries(plugin, schedule_id, command, status, reason, updated_at)
+VALUES(?, ?, ?, ?, ?, ?)
+ON CONFLICT(plugin, schedule_id) DO UPDATE SET
+  command = excluded.command,
+  status = excluded.status,
+  reason = excluded.reason,
+  updated_at = excluded.updated_at;
+`, state.Plugin, state.ScheduleID, state.Command, state.Status, reason, updatedAt)
+	if err != nil {
+		return fmt.Errorf("upsert schedule entry state: %w", err)
+	}
+
+	return nil
 }
 
 // GetCircuitBreaker returns the persisted circuit breaker row for plugin+command.
