@@ -1,6 +1,6 @@
 ---
 id: 126
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [bug, scheduler, dedupe, queue]
@@ -118,8 +118,12 @@ Fix: in the scheduler's dedupe-hit branch (around `scheduler.go:363`), call the 
 
 ## Acceptance Criteria
 
-- [ ] A 20-minute schedule fires every ~20 minutes (not once per 24h)
-- [ ] Dedupe still prevents two concurrent runs of the same scheduled job
-- [ ] `next_run_at` in `schedule_entries` is always advanced after each scheduler evaluation, even on dedupe hit
-- [ ] TUI schedule countdown remains visible and accurate
-- [ ] Existing queue dedupe behaviour for API-submitted jobs is unchanged
+- [x] A 20-minute schedule fires every ~20 minutes (not once per 24h)
+- [x] Dedupe still prevents two concurrent runs of the same scheduled job
+- [x] `next_run_at` in `schedule_entries` is always advanced after each scheduler evaluation, even on dedupe hit
+- [x] TUI schedule countdown remains visible and accurate
+- [x] Existing queue dedupe behaviour for API-submitted jobs is unchanged
+
+## Narrative
+- 2026-02-23: Confirmed scheduler dedupe was using the global 24h success-window semantics, which suppresses frequent schedules and leaves `next_run_at` stale on dedupe hits. Implementing per-schedule dedupe TTL plus explicit `next_run_at` advancement on dedupe to preserve cadence and TUI visibility while keeping API enqueue dedupe defaults intact. (by @assistant)
+- 2026-02-23: Implemented per-enqueue dedupe TTL (`EnqueueRequest.DedupeTTL`) and had scheduler pass the parsed schedule interval so frequent schedules no longer inherit the global 24h window. Added scheduler dedupe-hit handling to persist a fresh `next_run_at` (`now + jittered interval`) so schedule state stays visible/accurate in watch views. Added scheduler-scoped in-flight dedupe guard (`queued`/`running`) when override TTL is set, preserving concurrency protection without changing default API dedupe semantics. Added regression tests for queue override behavior and scheduler dedupe-hit timing, and verified with `go test ./...`. (by @assistant)

@@ -45,6 +45,7 @@ type EnqueueRequest struct {
 	MaxAttempts    int
 	SubmittedBy    string
 	DedupeKey      *string
+	DedupeTTL      *time.Duration
 	ParentJobID    *string
 	EventContextID *string
 	SourceEventID  *string

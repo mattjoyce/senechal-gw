@@ -106,21 +106,47 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	}
 	if req.DedupeKey != nil {
 		dedupeKey := strings.TrimSpace(*req.DedupeKey)
-		if dedupeKey != "" && q.dedupeTTL > 0 {
-			existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, dedupeKey, q.dedupeTTL)
-			if err != nil {
-				return "", fmt.Errorf("dedupe lookup: %w", err)
+		dedupeTTL := q.dedupeTTL
+		if req.DedupeTTL != nil {
+			dedupeTTL = *req.DedupeTTL
+		}
+		if dedupeKey != "" {
+			if req.DedupeTTL != nil {
+				existingID, found, err := q.findOutstandingByDedupeKey(ctx, dedupeKey)
+				if err != nil {
+					return "", fmt.Errorf("dedupe lookup: %w", err)
+				}
+				if found {
+					q.logger.Info(
+						"dropped duplicate enqueue",
+						"dedupe_key", dedupeKey,
+						"existing_job_id", existingID,
+						"dedupe_reason", "outstanding",
+					)
+					return "", &DedupeDropError{
+						DedupeKey:     dedupeKey,
+						ExistingJobID: existingID,
+					}
+				}
 			}
-			if found {
-				q.logger.Info(
-					"dropped duplicate enqueue",
-					"dedupe_key", dedupeKey,
-					"existing_job_id", existingID,
-					"dedupe_ttl", q.dedupeTTL.String(),
-				)
-				return "", &DedupeDropError{
-					DedupeKey:     dedupeKey,
-					ExistingJobID: existingID,
+
+			if dedupeTTL > 0 {
+				existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, dedupeKey, dedupeTTL)
+				if err != nil {
+					return "", fmt.Errorf("dedupe lookup: %w", err)
+				}
+				if found {
+					q.logger.Info(
+						"dropped duplicate enqueue",
+						"dedupe_key", dedupeKey,
+						"existing_job_id", existingID,
+						"dedupe_ttl", dedupeTTL.String(),
+						"dedupe_reason", "recent_success",
+					)
+					return "", &DedupeDropError{
+						DedupeKey:     dedupeKey,
+						ExistingJobID: existingID,
+					}
 				}
 			}
 		}
@@ -166,6 +192,25 @@ WHERE dedupe_key = ?
 ORDER BY completed_at DESC
 LIMIT 1;
 `, dedupeKey, StatusSucceeded, cutoff).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}
+
+func (q *Queue) findOutstandingByDedupeKey(ctx context.Context, dedupeKey string) (string, bool, error) {
+	var id string
+	err := q.db.QueryRowContext(ctx, `
+SELECT id
+FROM job_queue
+WHERE dedupe_key = ?
+  AND status IN (?, ?)
+ORDER BY created_at DESC, rowid DESC
+LIMIT 1;
+`, dedupeKey, StatusQueued, StatusRunning).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}

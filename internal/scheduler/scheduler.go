@@ -294,8 +294,15 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		return
 	}
 
-	if err := s.enqueueScheduledJob(ctx, pluginName, scheduleID, command, pluginConf, schedule.Payload); err != nil {
+	dedupeHit, err := s.enqueueScheduledJob(ctx, pluginName, scheduleID, command, pluginConf, baseInterval, schedule.Payload)
+	if err != nil {
 		s.logger.Error("Failed to enqueue scheduled job", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		return
+	}
+	if dedupeHit {
+		if err := s.advanceScheduleNextRun(ctx, &entryState, baseInterval, schedule.Jitter); err != nil {
+			s.logger.Error("Failed to advance schedule after dedupe hit", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		}
 	}
 }
 
@@ -334,15 +341,25 @@ func (s *Scheduler) activateScheduleEntry(ctx context.Context, state queue.Sched
 	return s.queue.UpsertScheduleEntryState(ctx, state)
 }
 
+func (s *Scheduler) advanceScheduleNextRun(ctx context.Context, state *queue.ScheduleEntryState, baseInterval, jitter time.Duration) error {
+	if state == nil {
+		return nil
+	}
+
+	nextRunAt := time.Now().UTC().Add(calculateJitteredInterval(baseInterval, jitter))
+	state.NextRunAt = &nextRunAt
+	return s.queue.UpsertScheduleEntryState(ctx, *state)
+}
+
 // enqueueScheduledJob creates and enqueues a command job for a given schedule entry.
-func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, scheduleID, command string, pluginConf config.PluginConf, payload map[string]any) error {
+func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, scheduleID, command string, pluginConf config.PluginConf, dedupeTTL time.Duration, payload map[string]any) (bool, error) {
 	dedupeKey := fmt.Sprintf("%s:%s:%s", pluginName, command, scheduleID)
 
 	rawPayload := []byte(`{}`)
 	if len(payload) > 0 {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("marshal schedule payload: %w", err)
+			return false, fmt.Errorf("marshal schedule payload: %w", err)
 		}
 		rawPayload = encoded
 	}
@@ -353,6 +370,7 @@ func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, schedul
 		Payload:     rawPayload,
 		SubmittedBy: s.cfg.Service.Name,
 		DedupeKey:   &dedupeKey,
+		DedupeTTL:   &dedupeTTL,
 	}
 	if pluginConf.Retry != nil {
 		req.MaxAttempts = pluginConf.Retry.MaxAttempts
@@ -370,9 +388,9 @@ func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, schedul
 				"dedupe_key", dedupeErr.DedupeKey,
 				"existing_job_id", dedupeErr.ExistingJobID,
 			)
-			return nil
+			return true, nil
 		}
-		return fmt.Errorf("enqueue scheduled job for %s/%s: %w", pluginName, command, err)
+		return false, fmt.Errorf("enqueue scheduled job for %s/%s: %w", pluginName, command, err)
 	}
 	s.events.Publish("scheduler.scheduled", map[string]any{
 		"job_id":      jobID,
@@ -381,7 +399,7 @@ func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, schedul
 		"schedule_id": scheduleID,
 	})
 	s.logger.Info("Enqueued scheduled job", "plugin", pluginName, "command", command, "schedule_id", scheduleID, "job_id", jobID, "dedupe_key", dedupeKey)
-	return nil
+	return false, nil
 }
 
 func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) (*queue.CommandResult, error) {

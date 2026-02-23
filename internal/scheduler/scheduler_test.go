@@ -158,6 +158,8 @@ func TestSchedulerTickEnqueuesWhenAllowed(t *testing.T) {
 		assert.Equal(t, pollCommand, req.Command)
 		assert.NotNil(t, req.DedupeKey)
 		assert.Equal(t, "echo:poll:default", *req.DedupeKey)
+		assert.NotNil(t, req.DedupeTTL)
+		assert.Equal(t, 1*time.Minute, *req.DedupeTTL)
 		assert.Equal(t, 3, req.MaxAttempts)
 		assert.Equal(t, []byte(`{}`), []byte(req.Payload))
 		return "job-1", nil
@@ -296,6 +298,64 @@ func TestSchedulerTickSkipsWhenNotDueAfterSuccess(t *testing.T) {
 
 	s.tick(ctx)
 	assert.Contains(t, logBuf.String(), "Skipped scheduled job (not due)")
+}
+
+func TestSchedulerTickDedupeHitAdvancesNextRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, logBuf := NewTestSlogger()
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	cfg.Service.JobLogRetention = 24 * time.Hour
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedule: &config.ScheduleConfig{
+				Every: "1m",
+			},
+		},
+	}
+
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	pastDue := time.Now().UTC().Add(-30 * time.Second)
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(&queue.ScheduleEntryState{
+		Plugin:     "echo",
+		ScheduleID: "default",
+		Command:    "poll",
+		Status:     queue.ScheduleEntryActive,
+		NextRunAt:  &pastDue,
+	}, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().LatestCompletedCommandResult(gomock.Any(), "echo", pollCommand, "ductile").Return(nil, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(0, nil)
+	mockQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req queue.EnqueueRequest) (string, error) {
+		assert.NotNil(t, req.DedupeTTL)
+		assert.Equal(t, 1*time.Minute, *req.DedupeTTL)
+		return "", &queue.DedupeDropError{
+			DedupeKey:     "echo:poll:default",
+			ExistingJobID: "job-1",
+		}
+	})
+
+	callStart := time.Now().UTC()
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.Equal(t, "echo", state.Plugin)
+		assert.Equal(t, "default", state.ScheduleID)
+		assert.Equal(t, "poll", state.Command)
+		assert.NotNil(t, state.NextRunAt)
+		assert.WithinDuration(t, callStart.Add(1*time.Minute), *state.NextRunAt, 3*time.Second)
+		return nil
+	})
+	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
+
+	s.tick(ctx)
+	assert.Contains(t, logBuf.String(), "Skipped enqueue due to dedupe hit")
 }
 
 func TestCircuitBreakerStateTransitions(t *testing.T) {

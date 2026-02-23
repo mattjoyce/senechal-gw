@@ -679,6 +679,53 @@ func TestQueueEnqueueDedupeMissBeforeSuccess(t *testing.T) {
 	}
 }
 
+func TestQueueEnqueueDedupeOverrideBlocksOutstanding(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db, WithLogger(slog.Default()), WithDedupeTTL(24*time.Hour))
+	key := "poll:echo"
+	overrideTTL := 1 * time.Minute
+
+	firstID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+		DedupeTTL:   &overrideTTL,
+	})
+	if err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+	if firstID == "" {
+		t.Fatal("first enqueue returned empty job id")
+	}
+
+	dupID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+		DedupeTTL:   &overrideTTL,
+	})
+	if err == nil {
+		t.Fatalf("expected dedupe drop error for outstanding job, got nil with id=%q", dupID)
+	}
+	var dedupeErr *DedupeDropError
+	if !errors.As(err, &dedupeErr) {
+		t.Fatalf("expected DedupeDropError, got %T: %v", err, err)
+	}
+	if dedupeErr.ExistingJobID != firstID {
+		t.Fatalf("existing job id = %q, want %q", dedupeErr.ExistingJobID, firstID)
+	}
+}
+
 func TestQueueEnqueueDedupeHitAfterSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -776,6 +823,67 @@ func TestQueueEnqueueDedupeTTLExpiredAllowsNewJob(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("enqueue after ttl expiry should succeed: %v", err)
+	}
+	if secondID == "" {
+		t.Fatal("second enqueue returned empty job id")
+	}
+}
+
+func TestQueueEnqueueDedupeTTLOverride(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db, WithLogger(slog.Default()), WithDedupeTTL(24*time.Hour))
+	key := "poll:echo"
+
+	firstID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+	})
+	if err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+		t.Fatalf("complete success: %v", err)
+	}
+
+	completedAt := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`UPDATE job_queue SET completed_at = ? WHERE id = ?`, completedAt, firstID); err != nil {
+		t.Fatalf("set completed_at: %v", err)
+	}
+
+	_, err = q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+	})
+	var dedupeErr *DedupeDropError
+	if !errors.As(err, &dedupeErr) {
+		t.Fatalf("expected global dedupe hit, got %v", err)
+	}
+
+	overrideTTL := 1 * time.Minute
+	secondID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+		DedupeTTL:   &overrideTTL,
+	})
+	if err != nil {
+		t.Fatalf("enqueue with dedupe ttl override: %v", err)
 	}
 	if secondID == "" {
 		t.Fatal("second enqueue returned empty job id")

@@ -143,8 +143,8 @@ queued → running → succeeded
 **At-least-once.** A job may run more than once (after crash, timeout, or retry). It will never be silently dropped.
 
 - Plugins MUST be idempotent, or use `state` to track what they've already processed.
-- The core provides an opt-in `dedupe_key` field. If a job is enqueued with a `dedupe_key` matching a job that succeeded within `dedupe_ttl`, it is not enqueued. The drop is logged at `INFO` with the `dedupe_key` and existing job ID.
-- `dedupe_ttl` is configurable (default 24h).
+- The core provides an opt-in `dedupe_key` field. If a job is enqueued with a `dedupe_key` matching a job that succeeded within the effective dedupe window, it is not enqueued. The drop is logged at `INFO` with the `dedupe_key` and existing job ID.
+- `dedupe_ttl` is configurable (default 24h) and acts as the default dedupe window. Callers may set a per-enqueue dedupe TTL override when a narrower window is needed (for example, scheduler cadence). When this override is set, enqueue also guards against in-flight duplicates (`queued`/`running`) for that `dedupe_key`.
 
 ### 3.5 Dispatch
 
@@ -156,9 +156,11 @@ Revisit condition: daily job count exceeds 500, or median queue wait time exceed
 
 When a producer enqueues a job with a `dedupe_key`:
 
-1. Query for a `succeeded` job with the same `dedupe_key` completed within `dedupe_ttl`.
-2. If found: do not enqueue. Log at `INFO`: dedupe_key, existing job ID.
-3. If not found: enqueue normally.
+1. Determine effective dedupe TTL: per-enqueue override (if provided), otherwise service `dedupe_ttl`.
+2. If a per-enqueue override is set, query for an existing `queued` or `running` job with the same `dedupe_key`.
+3. Query for a `succeeded` job with the same `dedupe_key` completed within the effective TTL.
+4. If either check finds a match: do not enqueue. Log at `INFO`: dedupe_key, existing job ID.
+5. If no match is found: enqueue normally.
 
 ---
 
