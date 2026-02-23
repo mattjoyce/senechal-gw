@@ -686,6 +686,9 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 				EventContextID: contextID,
 				SourceEventID:  strPtrOrNil(sourceEventID),
 			}
+			if dedupeKey := strings.TrimSpace(next.Event.DedupeKey); dedupeKey != "" {
+				enqueueReq.DedupeKey = &dedupeKey
+			}
 			childJobID, err := d.queue.Enqueue(ctx, enqueueReq)
 			if err != nil {
 				return fmt.Errorf("enqueue routed job for plugin %q: %w", next.Plugin, err)

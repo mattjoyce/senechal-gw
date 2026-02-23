@@ -698,7 +698,7 @@ if [ -n "$workspace_dir" ]; then
   mkdir -p "$workspace_dir"
   echo "artifact-from-a" > "$workspace_dir/artifact.txt"
 fi
-echo '{"status":"ok","events":[{"type":"chain.start","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
+echo '{"status":"ok","events":[{"type":"chain.start","dedupe_key":"chain:start:hello","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
 `
 	scriptB := `#!/bin/bash
 read input
@@ -800,6 +800,9 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 	}
 	if childJob.EventContextID == nil {
 		t.Fatalf("child event_context_id is nil")
+	}
+	if childJob.DedupeKey == nil || *childJob.DedupeKey != "chain:start:hello" {
+		t.Fatalf("child dedupe_key = %v, want %q", childJob.DedupeKey, "chain:start:hello")
 	}
 
 	var routedEvent protocol.Event
