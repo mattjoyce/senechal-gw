@@ -5,9 +5,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/router"
 )
+
+type mockSkillsRouter struct {
+	mockRouter
+	pipelines []router.PipelineInfo
+}
+
+func (m *mockSkillsRouter) PipelineSummary() []router.PipelineInfo {
+	out := make([]router.PipelineInfo, len(m.pipelines))
+	copy(out, m.pipelines)
+	return out
+}
 
 func TestHandleListPlugins_NoAuth(t *testing.T) {
 	reg := &mockRegistry{
@@ -19,6 +32,28 @@ func TestHandleListPlugins_NoAuth(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
 	// No Authorization header — discovery must be unauthenticated.
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200 without auth, got %d", rr.Code)
+	}
+}
+
+func TestHandleListSkills_NoAuth(t *testing.T) {
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {Name: "echo", Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeWrite}}},
+		},
+	}
+	server := newTestServer(&mockQueue{}, reg)
+	server.router = &mockSkillsRouter{
+		pipelines: []router.PipelineInfo{
+			{Name: "daily-summary", Trigger: "scheduler.tick", ExecutionMode: "asynchronous"},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/skills", nil)
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
@@ -81,6 +116,90 @@ func TestHandleListPlugins(t *testing.T) {
 
 	if len(resp.Plugins[0].Commands) != 2 {
 		t.Errorf("expected 2 commands for echo, got %d", len(resp.Plugins[0].Commands))
+	}
+}
+
+func TestHandleListSkills(t *testing.T) {
+	reg := &mockRegistry{
+		plugins: map[string]*plugin.Plugin{
+			"echo": {
+				Name:        "echo",
+				Version:     "0.1.0",
+				Description: "Echo plugin",
+				Commands: plugin.Commands{
+					{Name: "poll", Type: plugin.CommandTypeWrite, Description: "Poll for events"},
+					{Name: "health", Type: plugin.CommandTypeRead, Description: "Read health"},
+				},
+			},
+		},
+	}
+	server := newTestServer(&mockQueue{}, reg)
+	server.router = &mockSkillsRouter{
+		pipelines: []router.PipelineInfo{
+			{
+				Name:          "discord-fabric",
+				Trigger:       "discord.message",
+				ExecutionMode: "synchronous",
+				Timeout:       45 * time.Second,
+			},
+			{
+				Name:    "nightly-summary",
+				Trigger: "scheduler.tick",
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/skills", nil)
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var resp SkillsIndexResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Skills) != 4 {
+		t.Fatalf("expected 4 skills, got %d", len(resp.Skills))
+	}
+
+	index := make(map[string]SkillSummary, len(resp.Skills))
+	for _, s := range resp.Skills {
+		index[s.Name] = s
+	}
+
+	health, ok := index["plugin.echo.health"]
+	if !ok {
+		t.Fatalf("missing plugin.echo.health skill")
+	}
+	if health.Kind != "plugin" || health.Tier != "READ" || health.Endpoint != "/plugin/echo/health" {
+		t.Fatalf("unexpected plugin.echo.health skill: %+v", health)
+	}
+
+	poll, ok := index["plugin.echo.poll"]
+	if !ok {
+		t.Fatalf("missing plugin.echo.poll skill")
+	}
+	if poll.Kind != "plugin" || poll.Tier != "WRITE" || poll.Endpoint != "/plugin/echo/poll" {
+		t.Fatalf("unexpected plugin.echo.poll skill: %+v", poll)
+	}
+
+	syncPipeline, ok := index["pipeline.discord-fabric"]
+	if !ok {
+		t.Fatalf("missing pipeline.discord-fabric skill")
+	}
+	if syncPipeline.Kind != "pipeline" || syncPipeline.ExecutionMode != "synchronous" || syncPipeline.TimeoutSecs != 45 {
+		t.Fatalf("unexpected pipeline.discord-fabric skill: %+v", syncPipeline)
+	}
+
+	asyncPipeline, ok := index["pipeline.nightly-summary"]
+	if !ok {
+		t.Fatalf("missing pipeline.nightly-summary skill")
+	}
+	if asyncPipeline.ExecutionMode != "asynchronous" {
+		t.Fatalf("expected default async mode, got %q", asyncPipeline.ExecutionMode)
 	}
 }
 

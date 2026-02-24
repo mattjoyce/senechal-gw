@@ -16,6 +16,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
 )
 
 // handleHealthz handles GET /healthz (no auth).
@@ -637,7 +638,7 @@ func parseJobStatusFilter(raw string) (queue.Status, bool) {
 	}
 }
 
-// handleListPlugins handles GET /plugins and GET /skills.
+// handleListPlugins handles GET /plugins.
 func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	plugins := s.registry.All()
 	var pNames []string
@@ -662,6 +663,70 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			summary.Commands = append(summary.Commands, cmd.Name)
 		}
 		resp.Plugins = append(resp.Plugins, summary)
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
+// handleListSkills handles GET /skills.
+// It returns a unified skills index with atomic plugin skills and orchestrated pipeline skills.
+func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
+	plugins := s.registry.All()
+	var pNames []string
+	for name := range plugins {
+		pNames = append(pNames, name)
+	}
+	sort.Strings(pNames)
+
+	resp := SkillsIndexResponse{
+		Skills: make([]SkillSummary, 0, len(pNames)),
+	}
+
+	for _, name := range pNames {
+		p := plugins[name]
+		commands := append([]plugin.Command(nil), p.Commands...)
+		sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
+
+		for _, cmd := range commands {
+			tier := "WRITE"
+			if cmd.Type == plugin.CommandTypeRead {
+				tier = "READ"
+			}
+			resp.Skills = append(resp.Skills, SkillSummary{
+				Name:        fmt.Sprintf("plugin.%s.%s", p.Name, cmd.Name),
+				Kind:        "plugin",
+				Description: cmd.Description,
+				Endpoint:    fmt.Sprintf("/plugin/%s/%s", p.Name, cmd.Name),
+				Tier:        tier,
+				Plugin:      p.Name,
+				Command:     cmd.Name,
+			})
+		}
+	}
+
+	type pipelineSummarizer interface {
+		PipelineSummary() []router.PipelineInfo
+	}
+	if summarizer, ok := s.router.(pipelineSummarizer); ok && summarizer != nil {
+		pipelines := summarizer.PipelineSummary()
+		for _, p := range pipelines {
+			mode := strings.TrimSpace(p.ExecutionMode)
+			if mode == "" {
+				mode = "asynchronous"
+			}
+			skill := SkillSummary{
+				Name:          fmt.Sprintf("pipeline.%s", p.Name),
+				Kind:          "pipeline",
+				Endpoint:      fmt.Sprintf("/pipeline/%s", p.Name),
+				Pipeline:      p.Name,
+				Trigger:       p.Trigger,
+				ExecutionMode: mode,
+			}
+			if p.Timeout > 0 {
+				skill.TimeoutSecs = int64(p.Timeout.Seconds())
+			}
+			resp.Skills = append(resp.Skills, skill)
+		}
 	}
 
 	respondJSON(w, http.StatusOK, resp)

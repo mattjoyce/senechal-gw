@@ -147,7 +147,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	// Unauthenticated discovery endpoints.
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/plugins", s.handleListPlugins)
-	r.Get("/skills", s.handleListPlugins)
+	r.Get("/skills", s.handleListSkills)
 	r.Get("/openapi.json", s.handleOpenAPIAll)
 	r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 	r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)

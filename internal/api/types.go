@@ -92,7 +92,7 @@ type HealthzResponse struct {
 	PluginsCircuitOpen int `json:"plugins_circuit_open"`
 }
 
-// PluginListResponse is returned by GET /plugins or GET /skills.
+// PluginListResponse is returned by GET /plugins.
 type PluginListResponse struct {
 	Plugins []PluginSummary `json:"plugins"`
 }
@@ -103,6 +103,26 @@ type PluginSummary struct {
 	Version     string   `json:"version"`
 	Description string   `json:"description,omitempty"`
 	Commands    []string `json:"commands"`
+}
+
+// SkillsIndexResponse is returned by GET /skills.
+type SkillsIndexResponse struct {
+	Skills []SkillSummary `json:"skills"`
+}
+
+// SkillSummary describes one operator-facing skill entry.
+type SkillSummary struct {
+	Name          string `json:"name"`
+	Kind          string `json:"kind"` // plugin | pipeline
+	Description   string `json:"description,omitempty"`
+	Endpoint      string `json:"endpoint"`
+	Tier          string `json:"tier,omitempty"` // READ | WRITE (plugin skills)
+	Plugin        string `json:"plugin,omitempty"`
+	Command       string `json:"command,omitempty"`
+	Pipeline      string `json:"pipeline,omitempty"`
+	Trigger       string `json:"trigger,omitempty"`
+	ExecutionMode string `json:"execution_mode,omitempty"` // asynchronous | synchronous
+	TimeoutSecs   int64  `json:"timeout_secs,omitempty"`
 }
 
 // PluginDetailResponse is returned by GET /plugin/{name}.

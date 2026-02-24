@@ -198,6 +198,7 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
 
 Unauthenticated endpoints for agent-driven capability discovery. Two-tier design:
 - **`/plugins`** — lightweight catalog for initial discovery (semantic signaling, minimal tokens)
+- **`/skills`** — unified skill index (atomic plugin skills + orchestrated pipeline skills)
 - **`/openapi.json`** — global OpenAPI 3.1 spec for all plugins
 - **`/plugin/{name}/openapi.json`** — scoped OpenAPI 3.1 spec for one chosen plugin
 - **`/.well-known/ai-plugin.json`** — OpenAI-style discovery manifest that points at `/openapi.json`
@@ -282,7 +283,7 @@ Returns `404` if the plugin is not found.
 List available plugins and retrieve their metadata/schemas. The list endpoints are unauthenticated to support lightweight agent discovery.
 
 #### List Plugins
-**Endpoint**: `GET /plugins` (alias: `GET /skills`) — **No auth required**
+**Endpoint**: `GET /plugins` — **No auth required**
 
 **Response (200 OK)**:
 ```json
@@ -323,6 +324,43 @@ List available plugins and retrieve their metadata/schemas. The list endpoints a
   ]
 }
 ```
+
+---
+
+### 7. Skills Index
+
+Unified, operator-facing capability index across both atomic plugin commands and named pipelines.
+
+#### List Skills
+**Endpoint**: `GET /skills` — **No auth required**
+
+**Response (200 OK)**:
+```json
+{
+  "skills": [
+    {
+      "name": "plugin.echo.poll",
+      "kind": "plugin",
+      "description": "Emits echo.poll events",
+      "endpoint": "/plugin/echo/poll",
+      "tier": "WRITE",
+      "plugin": "echo",
+      "command": "poll"
+    },
+    {
+      "name": "pipeline.discord-fabric",
+      "kind": "pipeline",
+      "endpoint": "/pipeline/discord-fabric",
+      "pipeline": "discord-fabric",
+      "trigger": "discord.message",
+      "execution_mode": "synchronous",
+      "timeout_secs": 30
+    }
+  ]
+}
+```
+
+Pipeline entries default to `execution_mode: "asynchronous"` when unset in config.
 
 ---
 
