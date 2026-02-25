@@ -1117,6 +1117,28 @@ func runStart(args []string) int {
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
 
+	pluginRoots, err := resolvePluginRoots(cfg, *configPath)
+	if err != nil {
+		logger.Error("plugin root resolution failed", "error", err)
+		return 1
+	}
+	registry, err := plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {
+		switch level {
+		case "debug":
+			logger.Debug(msg, args...)
+		case "info":
+			logger.Info(msg, args...)
+		case "warn":
+			logger.Warn(msg, args...)
+		case "error":
+			logger.Error(msg, args...)
+		}
+	})
+	if err != nil {
+		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
+		return 1
+	}
+
 	// Preflight: report which config files were loaded
 	{
 		logger.Info("config loaded", "path", *configPath, "source", configSource)
@@ -1139,13 +1161,19 @@ func runStart(args []string) int {
 			logger.Info("config file", "file", rel)
 		}
 
-		enabledPlugins := 0
+		pluginsConfigured := len(cfg.Plugins)
+		pluginsEnabled := 0
 		for _, p := range cfg.Plugins {
 			if p.Enabled {
-				enabledPlugins++
+				pluginsEnabled++
 			}
 		}
-		logger.Info("config summary", "plugins_configured", enabledPlugins, "api_listen", cfg.API.Listen)
+		logger.Info("config summary",
+			"plugins_discovered", len(registry.All()),
+			"plugins_configured", pluginsConfigured,
+			"plugins_enabled", pluginsEnabled,
+			"api_listen", cfg.API.Listen,
+		)
 	}
 
 	// Strict mode enforcement
@@ -1163,13 +1191,8 @@ func runStart(args []string) int {
 		}
 
 		// 2. Perform "doctor" validation
-		// We need registry for full validation, discover it temporarily
-		tempRegistry, err := discoverRegistry(cfg, *configPath)
-		if err != nil {
-			logger.Error("plugin discovery failed (strict mode)", "error", err)
-			return 1
-		}
-		doc := doctor.New(cfg, tempRegistry)
+		// registry was built during preflight — reuse it here.
+		doc := doctor.New(cfg, registry)
 		report := doc.Validate()
 		if !report.Valid {
 			logger.Error("configuration validation failed (strict mode)")
@@ -1215,28 +1238,7 @@ func runStart(args []string) int {
 	contextStore := state.NewContextStore(db)
 	hub := events.NewHub(256)
 
-	pluginRoots, err := resolvePluginRoots(cfg, *configPath)
-	if err != nil {
-		logger.Error("plugin root resolution failed", "error", err)
-		return 1
-	}
-
-	registry, err := plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {
-		switch level {
-		case "debug":
-			logger.Debug(msg, args...)
-		case "info":
-			logger.Info(msg, args...)
-		case "warn":
-			logger.Warn(msg, args...)
-		case "error":
-			logger.Error(msg, args...)
-		}
-	})
-	if err != nil {
-		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
-		return 1
-	}
+	// registry was discovered during preflight.
 	logger.Info("plugin discovery complete", "count", len(registry.All()))
 	if err := validateScheduledCommands(cfg, registry); err != nil {
 		logger.Error("invalid scheduled command configuration", "error", err)
