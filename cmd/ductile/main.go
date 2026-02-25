@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -45,6 +46,12 @@ var (
 	gitCommit = "unknown"
 	buildDate = "unknown"
 )
+
+//go:embed templates/skills-core-mode.md
+var skillsCoreMode string
+
+//go:embed templates/skills-cli-commands.md
+var skillsCLICommands string
 
 func main() {
 	os.Exit(runCLI(os.Args[1:]))
@@ -890,6 +897,8 @@ func runSystemSkills(args []string) int {
 		return 1
 	}
 
+	explicitConfig := *configPath != ""
+
 	// Try to auto-discover config if not specified; failure is non-fatal.
 	if *configPath == "" {
 		if discovered, err := config.DiscoverConfigDir(); err == nil {
@@ -897,11 +906,18 @@ func runSystemSkills(args []string) int {
 		}
 	}
 
-	// Attempt to load config and registry; silently degrade if unavailable.
+	// Attempt to load config and registry.
 	var registry *plugin.Registry
 	hasConfig := false
 	if *configPath != "" {
-		if cfg, err := config.Load(*configPath); err == nil {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			if explicitConfig {
+				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+				return 1
+			}
+			// Auto-discovered config failed to load — fall through to core mode.
+		} else {
 			if r, err := discoverRegistry(cfg, *configPath); err == nil {
 				registry = r
 				hasConfig = true
@@ -909,39 +925,16 @@ func runSystemSkills(args []string) int {
 		}
 	}
 
-	fmt.Println("# Ductile Gateway: Skills")
-	fmt.Println()
-
-	// --- CLI Skills (always present) ---
-	fmt.Println("## CLI Commands")
-	fmt.Println("Use `--json` for structured output. Use `--dry-run` before mutations.")
-	fmt.Println()
-	fmt.Println("### config")
-	fmt.Println("- `config check`: Validate syntax, policy, and integrity.")
-	fmt.Println("- `config lock`: Authorize current state (re-generate hashes).")
-	fmt.Println("- `config show [entity]`: View resolved configuration.")
-	fmt.Println("- `config get <path>`: Read a specific config value.")
-	fmt.Println("- `config set <path>=<val>`: Update config (use `--dry-run` first, then `--apply`).")
-	fmt.Println()
-	fmt.Println("### system")
-	fmt.Println("- `system status`: Check gateway health and PID lock.")
-	fmt.Println("- `system reset <plugin>`: Reset a tripped circuit breaker.")
-	fmt.Println("- `system watch`: Real-time diagnostic TUI.")
-	fmt.Println("- `system skills [--config <dir>]`: This command. Re-run with config to see plugins and pipelines.")
-	fmt.Println()
-	fmt.Println("### job")
-	fmt.Println("- `job inspect <job_id>`: Retrieve logs, baggage, and workspace artifacts for a job.")
-	fmt.Println()
-
 	if !hasConfig {
-		fmt.Println("---")
-		fmt.Println()
-		fmt.Println("_No config loaded. Plugin and pipeline capabilities are not shown._")
-		fmt.Println()
-		fmt.Println("**Next step:** Run `ductile skills --config <config-dir>` to see the full capability manifest,")
-		fmt.Println("or set `DUCTILE_CONFIG_DIR` to make config auto-discoverable.")
+		fmt.Print(skillsCoreMode)
 		return 0
 	}
+
+	// Full manifest output.
+	fmt.Println("# Ductile Gateway: LLM Operator Skill Manifest")
+	fmt.Println()
+	fmt.Print(skillsCLICommands)
+	fmt.Println()
 
 	// --- Plugin Skills ---
 	plugins := registry.All()
@@ -952,23 +945,42 @@ func runSystemSkills(args []string) int {
 	sort.Strings(pNames)
 
 	fmt.Println("## Plugins")
-	fmt.Println("Invoke atomically via `POST /plugin/{name}/{command}` (bypasses pipeline routing).")
 	fmt.Println()
 
 	for _, name := range pNames {
 		p := plugins[name]
 		fmt.Printf("### %s\n", p.Name)
 		if p.Description != "" {
-			fmt.Printf("%s\n\n", p.Description)
-		}
-		for _, cmd := range p.Commands {
-			tier := "WRITE"
-			if cmd.Type == plugin.CommandTypeRead {
-				tier = "READ"
-			}
-			fmt.Printf("- `%s` [%s]: %s\n", cmd.Name, tier, cmd.Description)
+			fmt.Println()
+			fmt.Println(p.Description)
 		}
 		fmt.Println()
+		for _, cmd := range p.Commands {
+			mutatesState := cmd.Type == plugin.CommandTypeWrite
+			idempotent := !mutatesState
+			if cmd.Idempotent != nil {
+				idempotent = *cmd.Idempotent
+			}
+			retrySafe := !mutatesState
+			if cmd.RetrySafe != nil {
+				retrySafe = *cmd.RetrySafe
+			}
+			fmt.Printf("#### %s.%s\n", p.Name, cmd.Name)
+			fmt.Printf("- **invocation:** `POST /plugin/%s/%s`\n", p.Name, cmd.Name)
+			fmt.Printf("- **mutates_state:** %v\n", mutatesState)
+			fmt.Printf("- **idempotent:** %v\n", idempotent)
+			fmt.Printf("- **retry_safe:** %v\n", retrySafe)
+			if cmd.Description != "" {
+				fmt.Printf("- **description:** %s\n", cmd.Description)
+			}
+			if s := renderSchema(cmd.InputSchema); s != "" {
+				fmt.Printf("- **input_schema:** `%s`\n", s)
+			}
+			if s := renderSchema(cmd.OutputSchema); s != "" {
+				fmt.Printf("- **output_schema:** `%s`\n", s)
+			}
+			fmt.Println()
+		}
 	}
 
 	// --- Pipeline Skills ---
@@ -977,20 +989,22 @@ func runSystemSkills(args []string) int {
 		if r, ok := routerEngine.(*router.Router); ok {
 			pipelines := r.PipelineSummary()
 			if len(pipelines) > 0 {
+				sort.Slice(pipelines, func(i, j int) bool {
+					return pipelines[i].Name < pipelines[j].Name
+				})
 				fmt.Println("## Pipelines")
-				fmt.Println("Invoke via `POST /pipeline/{name}`. Pipelines compose plugins with event routing.")
 				fmt.Println()
 				for _, p := range pipelines {
-					mode := "ASYNC"
+					mode := "asynchronous"
 					if p.ExecutionMode == "synchronous" {
-						mode = "SYNC"
+						mode = "synchronous"
 					}
-					fmt.Printf("### %s\n", p.Name)
-					fmt.Printf("- **Endpoint:** `POST /pipeline/%s`\n", p.Name)
-					fmt.Printf("- **Trigger:** `%s`\n", p.Trigger)
-					fmt.Printf("- **Mode:** %s\n", mode)
+					fmt.Printf("#### %s\n", p.Name)
+					fmt.Printf("- **invocation:** `POST /pipeline/%s`\n", p.Name)
+					fmt.Printf("- **trigger:** `%s`\n", p.Trigger)
+					fmt.Printf("- **execution_mode:** %s\n", mode)
 					if p.Timeout > 0 {
-						fmt.Printf("- **Timeout:** %.0fs\n", p.Timeout.Seconds())
+						fmt.Printf("- **timeout:** %s\n", p.Timeout)
 					}
 					fmt.Println()
 				}
@@ -1003,6 +1017,43 @@ func runSystemSkills(args []string) int {
 	fmt.Println("**Next steps:** Use `job inspect <id>` to trace any execution. Use `system status` to verify health.")
 
 	return 0
+}
+
+// renderSchema formats a plugin command's raw schema for manifest display.
+// Compact map {prop: "type"} → "{key: type, ...}" (sorted keys).
+// Full JSON schema (has "type" key) → compact JSON.
+// nil → "" (omit field).
+func renderSchema(schema any) string {
+	if schema == nil {
+		return ""
+	}
+	m, ok := schema.(map[string]any)
+	if !ok {
+		b, err := json.Marshal(schema)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+	// Full JSON schema: has a "type" key at the top level.
+	if _, hasType := m["type"]; hasType {
+		b, err := json.Marshal(schema)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+	// Compact map {prop: "type"} — render sorted.
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s: %v", k, m[k]))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
 func runWatch(args []string) int {

@@ -31,6 +31,8 @@ type Command struct {
 	Description  string      `yaml:"description,omitempty"`
 	InputSchema  any         `yaml:"input_schema,omitempty"`
 	OutputSchema any         `yaml:"output_schema,omitempty"`
+	Idempotent   *bool       `yaml:"idempotent,omitempty"`
+	RetrySafe    *bool       `yaml:"retry_safe,omitempty"`
 }
 
 // GetFullInputSchema returns the expanded JSON Schema for the input.

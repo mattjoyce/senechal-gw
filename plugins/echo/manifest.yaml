@@ -9,6 +9,8 @@ commands:
   - name: poll
     type: write
     description: "Emits echo.poll events and updates the internal last_run timestamp."
+    idempotent: false
+    retry_safe: false
     input_schema:
       message: string
     output_schema:
@@ -17,6 +19,8 @@ commands:
   - name: health
     type: read
     description: "Returns the current health status and plugin version."
+    idempotent: true
+    retry_safe: true
 config_keys:
   required: []
   optional: [message, mode]

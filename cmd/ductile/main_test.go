@@ -429,6 +429,120 @@ func TestRunSystemSkillsWithConfigEmitsLiveManifest(t *testing.T) {
 	}
 }
 
+func writeConfigDirFixtureWithPlugin(t *testing.T, dir string) {
+	t.Helper()
+
+	pluginsDir := filepath.Join(dir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+service:
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ` + filepath.Join(dir, "state.db") + `
+plugins_dir: ` + pluginsDir + `
+plugins: {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write an echo-style plugin with a write command (has semantic anchors).
+	pluginDir := filepath.Join(pluginsDir, "echo")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: echo
+version: "1.0.0"
+protocol: 2
+entrypoint: run.sh
+description: "Test echo plugin."
+commands:
+  - name: poll
+    type: write
+    description: "Emit events."
+    idempotent: false
+    retry_safe: false
+  - name: health
+    type: read
+    description: "Health check."
+    idempotent: true
+    retry_safe: true
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunSystemSkillsPluginCommandHasSemanticAnchors(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixtureWithPlugin(t, tmpDir)
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
+	}
+	for _, want := range []string{
+		"mutates_state:",
+		"idempotent:",
+		"retry_safe:",
+		"POST /plugin/",
+		"invocation:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q: %s", want, stdout)
+		}
+	}
+}
+
+func TestRunSystemSkillsOutputIsDeterministic(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixtureWithPlugin(t, tmpDir)
+
+	_, stdout1, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	_, stdout2, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if stdout1 != stdout2 {
+		t.Fatalf("runSystemSkills() output is not deterministic:\nrun1=%s\nrun2=%s", stdout1, stdout2)
+	}
+}
+
+func TestRunSystemSkillsRFCAlignmentPresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("DUCTILE_CONFIG_DIR", tmpDir)
+
+	// Core mode: RFC-004 must be present.
+	_, coreStdout, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills(nil)
+	})
+	if !strings.Contains(coreStdout, "RFC-004") {
+		t.Fatalf("core-mode stdout missing RFC-004: %s", coreStdout)
+	}
+
+	// Full manifest: RFC-004 must be present.
+	writeConfigDirFixtureWithPlugin(t, tmpDir)
+	_, fullStdout, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if !strings.Contains(fullStdout, "RFC-004") {
+		t.Fatalf("full-manifest stdout missing RFC-004: %s", fullStdout)
+	}
+}
+
 func writeConfigDirFixture(t *testing.T, dir string) {
 	t.Helper()
 
