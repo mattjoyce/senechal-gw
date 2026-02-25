@@ -1,6 +1,6 @@
 ---
 id: 124
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [improvement, scheduler, ops]
@@ -104,3 +104,4 @@ this feature, both must be collapsed into a single `poll` call.
 - 2026-02-22: Clarified that `handle` is not schedulable, added schedule payload support for command-specific input, and pinned defaults/edge-case behavior to reduce implementation ambiguity. (by @assistant)
 - 2026-02-22: Locked decisions to reject mixed `schedule`/`schedules`, require explicit schedule IDs, and use dedupe key `plugin:command:schedule_id`; left schedule-state persistence as the remaining design choice. (by @assistant)
 - 2026-02-22: Finalized schedule-entry state persistence to SQLite for durable pause/invalid behavior across restarts. (by @assistant)
+- 2026-02-24: Marked done after confirming arbitrary scheduled commands, per-command scheduler guards, and schedule identity/dedupe behavior are implemented. Deferred payload-vs-input-schema validation to follow-up work. (by @assistant)

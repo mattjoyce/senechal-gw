@@ -1,6 +1,6 @@
 ---
 id: 106
-status: todo
+status: archive
 priority: Normal
 blocked_by: []
 assignee: "@gemini"
@@ -27,3 +27,4 @@ When I update the YAML configuration files, I want the gateway to pick up the ch
 
 ## Narrative
 - 2026-02-16: Created card #106 to address the need for live configuration reloading as requested by the user. (by @gemini)
+- 2026-02-25: Archived as superseded by card #121 ("Config Reload Without Restart"), which covers the same SIGHUP/no-restart goal with updated operational context and acceptance criteria. (by @assistant)

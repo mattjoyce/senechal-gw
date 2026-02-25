@@ -1,6 +1,6 @@
 ---
 id: 75
-status: todo
+status: done
 priority: High
 tags: [testing, ci-cd, quality, review, strategy]
 ---
@@ -511,3 +511,4 @@ smoke-test:
 ## Narrative
 
 - 2026-02-12: Conducted comprehensive testing strategy review. Found 27 test files with 65% average coverage - good unit test foundation. However, CRITICAL gap: no CI/CD pipeline means tests only run manually. Devs can push code without running tests. Additional gaps: CLI coverage only 9.6%, no plugin tests, no automated E2E testing. Many bugs I found (schedule validation, field priority, CLI flags) should've been caught by automated tests in CI. Recommendation: implement GitHub Actions CI/CD as highest priority. This will shift my role from catching basic unit test issues to higher-value exploratory and system testing. Created detailed implementation plan with 5 phases: CI/CD, pre-commit hooks, CLI tests, plugin tests, E2E automation. (by @test-admin)
+- 2026-02-25: Marked done because this card is a completed review artifact (analysis + recommendations delivered). Follow-on implementation remains tracked by separate improvement cards. (by @assistant)

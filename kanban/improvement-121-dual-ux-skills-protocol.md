@@ -1,6 +1,6 @@
 # Improvement 121: Dual-UX Skills Protocol (--skills)
 
-**Status:** TODO  
+**Status:** ARCHIVE  
 **Owner:** Gemini  
 **Context:** RFC-004, RFC-005, LX (LLM Experience)
 
@@ -24,3 +24,6 @@ Refactor the `ductile` CLI to support a "Dual-UX" interface. Transform the CLI f
 
 ## 4. Why This is Novel (The "Alpha")
 While MCP (Model Context Protocol) provides plumbing to tools, Ductile provides a **Reasoning Environment**. By baking `--skills` into the CLI hierarchy, we ensure that an LLM can surgically discover the "governance" of the system (how to change it safely) rather than just "calling a function."
+
+## Narrative
+- 2026-02-25: Archived as a duplicate of card #122, which tracks the same Dual-UX `--skills` scope and remains the canonical work item. (by @assistant)
