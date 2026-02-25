@@ -890,23 +890,33 @@ func runSystemSkills(args []string) int {
 		return 1
 	}
 
+	explicitConfig := strings.TrimSpace(*configPath) != ""
+
 	if *configPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
-			return 1
+			printCoreSkillsQuickstart("No config detected.")
+			return 0
 		}
 		*configPath = discovered
 	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
+		if !explicitConfig {
+			printCoreSkillsQuickstart("Config found but unreadable.")
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		return 1
 	}
 
 	registry, err := discoverRegistry(cfg, *configPath)
 	if err != nil {
+		if !explicitConfig {
+			printCoreSkillsQuickstart("Config loaded, but plugin discovery failed.")
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
 		return 1
 	}
@@ -991,6 +1001,27 @@ func runSystemSkills(args []string) int {
 	}
 
 	return 0
+}
+
+func printCoreSkillsQuickstart(reason string) {
+	fmt.Println("# Ductile Gateway: AI Operator Guide (Core Mode)")
+	fmt.Println()
+	if strings.TrimSpace(reason) != "" {
+		fmt.Printf("_%s_\n\n", reason)
+	}
+	fmt.Println("No live config context was available, so this is a token-frugal baseline.")
+	fmt.Println()
+	fmt.Println("## Quick Loop")
+	fmt.Println("1. `ductile system status --json`")
+	fmt.Println("2. `ductile config check --json`")
+	fmt.Println("3. `ductile config show --json` or `ductile config get <path> --json`")
+	fmt.Println("4. `ductile config set <path>=<value> --dry-run` then `--apply`")
+	fmt.Println("5. `ductile config lock`")
+	fmt.Println("6. `ductile job inspect <job_id> --json`")
+	fmt.Println()
+	fmt.Println("## Extended Capabilities")
+	fmt.Println("- Pass `--config <path>` or set `DUCTILE_CONFIG_DIR`.")
+	fmt.Println("- With config, this command also exports discovered plugin and pipeline skills.")
 }
 
 func runWatch(args []string) int {

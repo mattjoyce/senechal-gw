@@ -375,6 +375,60 @@ plugins:
 	}
 }
 
+func TestRunSystemSkillsFallsBackWithoutUsableAutoConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("DUCTILE_CONFIG_DIR", tmpDir)
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills(nil)
+	})
+	if code != 0 {
+		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "AI Operator Guide (Core Mode)") {
+		t.Fatalf("stdout missing core fallback header: %s", stdout)
+	}
+	if !strings.Contains(stdout, "token-frugal baseline") {
+		t.Fatalf("stdout missing fallback guidance: %s", stdout)
+	}
+	if !strings.Contains(stdout, "`ductile config check --json`") {
+		t.Fatalf("stdout missing quick-loop command: %s", stdout)
+	}
+}
+
+func TestRunSystemSkillsExplicitConfigLoadFailureReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	missingConfigPath := filepath.Join(tmpDir, "missing-config.yaml")
+
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", missingConfigPath})
+	})
+	if code == 0 {
+		t.Fatalf("runSystemSkills() should fail for explicit invalid config, stderr: %s", stderr)
+	}
+	if !strings.Contains(stderr, "Failed to load config:") {
+		t.Fatalf("stderr missing explicit load failure: %s", stderr)
+	}
+}
+
+func TestRunSystemSkillsWithConfigEmitsLiveManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "LLM Operator Skill Manifest") {
+		t.Fatalf("stdout missing live manifest header: %s", stdout)
+	}
+	if strings.Contains(stdout, "AI Operator Guide (Core Mode)") {
+		t.Fatalf("stdout should not fall back in configured mode: %s", stdout)
+	}
+}
+
 func writeConfigDirFixture(t *testing.T, dir string) {
 	t.Helper()
 
