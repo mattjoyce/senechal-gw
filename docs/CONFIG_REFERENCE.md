@@ -1,7 +1,7 @@
 # Ductile: Configuration Specification
 
 **Version:** 1.1 (Tiered Directory Model)  
-**Date:** 2026-02-12  
+**Date:** 2026-02-25  
 **Status:** Approved  
 
 This document defines the configuration structure, integrity verification, and runtime compilation behavior for Ductile.
@@ -108,7 +108,13 @@ state:
   path: ./data/state.db
 ```
 
-`plugin_roots` is the preferred multi-root setting. Legacy `plugins_dir` is still supported as a fallback for backward compatibility.
+`plugin_roots` is the preferred multi-root setting.
+
+Discovery behavior:
+- `plugin_roots` takes precedence over `plugins_dir`.
+- If `plugin_roots` is empty, `plugins_dir` is used as a single fallback root.
+- Duplicate roots are ignored after first occurrence.
+- Roots are scanned in order; if duplicate plugin names exist across roots, the first discovered plugin is kept and later duplicates are ignored.
 
 ### 4.2 plugins/*.yaml (Plugin definitions)
 ```yaml
@@ -165,9 +171,9 @@ api:
       - token: admin_token
         scopes: ["*"]
       - token: readonly_token
-        scopes: ["read:*"]
-      - token: github_token
-        scopes: ["github-handler:rw", "read:jobs"]
+        scopes: ["plugin:ro", "jobs:ro", "events:ro"]
+      - token: operator_token
+        scopes: ["plugin:rw", "jobs:rw", "events:ro"]
 ```
 
 ### 5.3 Coexistence and Migration
@@ -178,12 +184,11 @@ api:
   3. Remove the `api_key` field.
 
 ### 5.4 Token Scopes
-Scopes can be manifest-driven or granular:
+Scopes are explicit:
 - `*`: Full admin access.
-- `read:*`: Access to all GET endpoints.
-- `{plugin}:ro`: Read-only access to a plugin (mapped to `read` commands in manifest).
-- `{plugin}:rw`: Read-write access to a plugin (mapped to `read` and `write` commands).
-- `trigger:{plugin}:{command}`: Specific permission to trigger a command.
+- `plugin:ro`, `plugin:rw`: Plugin and pipeline trigger access.
+- `jobs:ro`, `jobs:rw`: Job read/write access.
+- `events:ro`, `events:rw`: Event stream access.
 
 ---
 

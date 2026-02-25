@@ -57,7 +57,26 @@ By default, pipelines are asynchronous (fire-and-forget). For interactive use ca
 *   **Timeout Handling:** If the pipeline exceeds the `timeout`, the API returns `202 Accepted` with a `job_id`, allowing the client to poll later.
 *   **Result Aggregation:** The final JSON response contains an array of results from *every* step in the execution tree.
 
-### 2.3 Reusable Middleware (`call`)
+### 2.3 Trigger Path & EventContext Lineage
+
+How a run is started affects where the first `event_context` row comes from:
+
+- `POST /pipeline/{name}`:
+  - Resolves pipeline entry dispatches first.
+  - Creates a root `event_context` for each entry dispatch.
+  - For `execution_mode: synchronous`, fan-out entry pipelines require `?async=true`.
+- `POST /plugin/{plugin}/{command}`:
+  - Bypasses router and enqueues one direct plugin job.
+  - No root `event_context` is created at enqueue time.
+- `POST /trigger/{plugin}/{command}` (deprecated):
+  - Enqueues the plugin command.
+  - If `{plugin}.{command}` matches a pipeline trigger, it creates root context and may use synchronous waiting semantics.
+
+During routed execution, each child dispatch gets a new `event_context` row with parent lineage. Updates are shallow-merged into accumulated context, and `origin_*` keys are immutable across the chain.
+
+Plugins receive this accumulated control-plane state in request `context`.
+
+### 2.4 Reusable Middleware (`call`)
 You can call one pipeline from another to promote logic reuse.
 
 ```yaml
@@ -74,7 +93,7 @@ You can call one pipeline from another to promote logic reuse.
       - call: standard-summarization  # Inherits baggage and workspace
 ```
 
-### 2.4 Branching (`split`)
+### 2.5 Branching (`split`)
 Use `split` to trigger multiple parallel paths.
 
 ```yaml

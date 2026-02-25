@@ -588,49 +588,24 @@ api:
     api_key: ${API_KEY}  # Bearer token for authentication
 ```
 
-### 9.2 POST /trigger/{plugin}/{command}
+### 9.2 Primary Trigger Endpoints
 
-Enqueues a job for the specified plugin and command. Returns immediately with a job ID (fire-and-forget, asynchronous execution).
+The API exposes two first-class trigger paths:
 
-**Request:**
-- URL params: `{plugin}` - plugin name, `{command}` - command name (e.g., "poll")
-- Header: `Authorization: Bearer <api_key>`
-- Body: Optional JSON payload (passed to plugin as `config` override or additional parameters)
+- `POST /plugin/{plugin}/{command}`: direct plugin execution (no pipeline routing), returns `202 Accepted`.
+- `POST /pipeline/{pipeline}`: explicit pipeline orchestration, returns `202 Accepted` by default and `200 OK` for synchronous pipelines.
 
-**Response (202 Accepted):**
-```json
-{
-  "job_id": "uuid-v4",
-  "status": "queued",
-  "plugin": "plugin_name",
-  "command": "command_name"
-}
-```
+Compatibility endpoint:
+- `POST /trigger/{plugin}/{command}` is deprecated and ambiguous. It may execute with pipeline semantics when `{plugin}.{command}` matches a pipeline trigger.
 
-**Synchronous Pipelines:**
-If a triggered event matches a pipeline with `execution_mode: synchronous`, the API handler blocks until the entire pipeline tree completes or the `timeout` is reached.
-- On success: Returns `200 OK` with aggregated results.
-- On timeout: Returns `202 Accepted` with the root `job_id`.
-
-**Error Responses:**
-- `401 Unauthorized` - Missing or invalid API key
-- `400 Bad Request` - Plugin not found or command not supported
-- `500 Internal Server Error` - Failed to enqueue job
-
-**Example:**
-```bash
-curl -X POST http://localhost:8080/trigger/echo/poll \
-  -H "Authorization: Bearer my-api-key-123" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
+See `docs/API_REFERENCE.md` for full examples and response schemas.
 
 ### 9.3 GET /job/{job_id}
 
 Retrieves the status and results of a previously triggered job.
 
 **Request:**
-- URL param: `{job_id}` - UUID returned from POST /trigger
+- URL param: `{job_id}` - UUID returned from one of the POST trigger endpoints
 - Header: `Authorization: Bearer <api_key>`
 
 **Response (200 OK - queued):**
@@ -678,7 +653,7 @@ Retrieves the status and results of a previously triggered job.
 
 ### 9.4 Authentication & Authorization (Sprint 3+)
 
-**Bearer token authentication** with **manifest-driven scopes** for fine-grained authorization.
+**Bearer token authentication** with scoped permissions.
 
 **Token registry** (`tokens.yaml`):
 - Multiple tokens with individual scope definitions
@@ -686,19 +661,11 @@ Retrieves the status and results of a previously triggered job.
 - BLAKE3 hash ensures scope file integrity
 - Environment variable references for keys (never plaintext)
 
-**Scope syntax:**
-- **Manifest-driven:** `{plugin}:ro|rw` - Expands based on plugin manifest command types
-- **Granular:** `{action}:{resource}:{command}` - Direct permission specification
-- **Explicit deny:** `{plugin}:deny:{command}` - Overrides grants
-
-**Scope types:**
-- `read:*` - All GET endpoints (jobs, events, healthz, plugins, queue)
-- `trigger:{plugin}:{command}` - POST /trigger permissions
-- `admin:*` - Admin operations (reload, reset)
-- `{plugin}:ro` - Read-only plugin commands (type: read in manifest)
-- `{plugin}:rw` - All plugin commands (read + write)
-- `{plugin}:allow:{command}` - Specific command
-- `{plugin}:deny:{command}` - Explicit denial (precedence over grants)
+**Scope types (current):**
+- `plugin:ro`, `plugin:rw` - Plugin and pipeline trigger permissions
+- `jobs:ro`, `jobs:rw` - Job read/write permissions
+- `events:ro`, `events:rw` - Event stream permissions
+- `*` - Full admin access
 
 **Example tokens.yaml:**
 ```yaml
@@ -730,7 +697,7 @@ tokens:
 1. Extract bearer token from `Authorization` header
 2. Lookup token in registry
 3. Load and verify scope file (BLAKE3 hash check)
-4. Expand manifest-driven scopes using plugin registry
+4. Normalize implied read-from-write scopes
 5. Check if requested action matches any granted scope
 6. Return 403 if denied, proceed if allowed
 
@@ -753,7 +720,7 @@ To prevent HTTP worker exhaustion, synchronous pipelines are governed by a semap
 
 ### 9.6 Use Cases
 
-- **LLM Tool Calling:** LLM agents can curl /trigger to execute actions (e.g., "check my calendar", "sync Withings data")
+- **LLM Tool Calling:** LLM agents can call `/plugin` for atomic actions and `/pipeline` for orchestrated workflows
 - **External Automation:** Scripts, cron jobs, or other services can trigger plugins programmatically
 - **Result Polling:** External systems can poll /job/{id} to wait for async plugin execution completion
 - **Manual Testing:** Developers can trigger plugins via curl without waiting for scheduler
@@ -965,6 +932,8 @@ For the complete configuration specification, including file formats, merge logi
 ### 13.2 Key Principles
 
 - **Directory-Based Modularity:** Configuration is split into `config.yaml`, `webhooks.yaml`, `tokens.yaml`, and modular directories for `plugins/` and `pipelines/`.
+- **Multi-Root Plugin Discovery:** `plugin_roots` is preferred and takes precedence over `plugins_dir`; roots are scanned in order and first match wins on duplicate plugin names.
+- **Pipeline Discovery Flow:** Pipelines are loaded from both `pipelines/*.yaml` (alphabetical) and optional top-level `pipelines.yaml`.
 - **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
 - **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
@@ -1031,7 +1000,7 @@ ductile/
 |-------|--------|-------|--------|
 | 1. Skeleton | 0 | Go scaffold, CLI, config loader, SQLite state, plugin discovery | ✅ Complete |
 | 2. Core Loop | 1 | Work queue, heartbeat scheduler with fuzzy intervals, dispatch loop, plugin protocol, crash recovery | ✅ Complete |
-| 3. API Triggers | 2 | HTTP server with chi router, POST /trigger and GET /job endpoints, Bearer token auth, job result storage | ✅ Complete |
+| 3. API Triggers | 2 | HTTP server with chi router, POST /plugin and POST /pipeline (plus legacy /trigger), GET /job, Bearer token auth, job result storage | ✅ Complete |
 | 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | ✅ Complete |
 | 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | ✅ Complete |
 | 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |

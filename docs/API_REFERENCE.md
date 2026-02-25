@@ -15,17 +15,21 @@ Authorization: Bearer <your_token>
 
 Ductile supports two authentication modes:
 1. **Legacy API Key**: A single `api_key` configured in `api.auth`.
-2. **Scoped Tokens**: A list of `tokens` with specific scopes (e.g., `read:*`, `plugin:rw`).
+2. **Scoped Tokens**: A list of `tokens` with explicit scopes (e.g., `plugin:rw`, `jobs:ro`, `events:ro`).
 
 ---
 
 ## Endpoints
 
-### 1. Manual Plugin Execution
+### 1. Direct Plugin Execution
 
-Trigger a plugin command immediately. This enqueues a job in the work queue.
+Execute one plugin command directly. This **bypasses pipeline routing** and enqueues exactly one job.
 
-**Endpoint**: `POST /trigger/{plugin}/{command}`
+**Endpoint**: `POST /plugin/{plugin}/{command}`
+
+**Required scopes**:
+- `plugin:ro` for manifest `read` commands
+- `plugin:rw` (or `*`) for manifest `write` commands
 
 **Request Body**:
 ```json
@@ -38,12 +42,10 @@ Trigger a plugin command immediately. This enqueues a job in the work queue.
 ```
 
 **Fields**:
-- `payload` (Object, required): The JSON object that will be passed to the plugin. If the command is `handle`, this payload is automatically wrapped in an `api.trigger` event envelope.
+- `payload` (Object, optional): JSON object passed to the command.
+- For `handle`, the server wraps payload into an `api.trigger` event envelope before enqueue.
 
-**Query Parameters**:
-- `async` (Boolean, optional): If `true`, forces the request to return immediately even if a synchronous pipeline is matched.
-
-**Response (Default / Async - 202 Accepted)**:
+**Response (202 Accepted)**:
 ```json
 {
   "job_id": "uuid-v4",
@@ -53,8 +55,53 @@ Trigger a plugin command immediately. This enqueues a job in the work queue.
 }
 ```
 
-**Response (Synchronous Pipeline - 200 OK)**:
-If the trigger matches a pipeline configured with `execution_mode: synchronous`, the API will block and return the full execution tree.
+**Example (curl)**:
+```bash
+curl -X POST http://localhost:8080/plugin/echo/poll \
+  -H "Authorization: Bearer test_token" \
+  -H "Content-Type: application/json" \
+  -d '{"payload":{"message":"Hello API"}}'
+```
+
+---
+
+### 2. Explicit Pipeline Execution
+
+Trigger a named pipeline directly.
+
+**Endpoint**: `POST /pipeline/{pipeline}`
+
+**Required scopes**:
+- `plugin:rw` (or `*`)
+
+**Request Body**:
+```json
+{
+  "payload": {
+    "url": "https://example.com/article"
+  }
+}
+```
+
+**Query Parameters**:
+- `async` (Boolean, optional): If `true`, force asynchronous response.
+
+**Behavior**:
+- Pipeline entry dispatches are resolved first.
+- `execution_mode: synchronous` waits for completion unless `?async=true`.
+- Synchronous mode with multiple entry dispatches returns `400`; use `?async=true` for fan-out entry pipelines.
+
+**Response (Async default - 202 Accepted)**:
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "queued",
+  "plugin": "pipeline",
+  "command": "pipeline_name"
+}
+```
+
+**Response (Synchronous success - 200 OK)**:
 ```json
 {
   "job_id": "uuid-v4",
@@ -68,40 +115,49 @@ If the trigger matches a pipeline configured with `execution_mode: synchronous`,
       "command": "command_name",
       "status": "succeeded",
       "result": { "status": "ok" }
-    },
-    {
-      "job_id": "child-uuid",
-      "plugin": "notifier",
-      "command": "handle",
-      "status": "succeeded",
-      "result": { "status": "ok" }
     }
   ]
 }
 ```
 
 **Response (Timeout - 202 Accepted)**:
-If a synchronous pipeline exceeds its `timeout` (or the system `max_sync_timeout`), it returns partial status.
 ```json
 {
   "job_id": "uuid-v4",
   "status": "running",
   "timeout_exceeded": true,
-  "message": "Pipeline still running after timeout. Check /job/uuid-v4"
+  "message": "Pipeline still running after timeout."
 }
 ```
 
 **Example (curl)**:
 ```bash
-curl -X POST http://localhost:8080/trigger/echo/poll 
-  -H "Authorization: Bearer test_token" 
-  -H "Content-Type: application/json" 
-  -d '{"payload": {"message": "Hello API"}}'
+curl -X POST http://localhost:8080/pipeline/url-to-fabric \
+  -H "Authorization: Bearer test_token" \
+  -H "Content-Type: application/json" \
+  -d '{"payload":{"url":"https://example.com"}}'
 ```
 
 ---
 
-### 2. Job Status and Results
+### 3. Legacy Trigger (Deprecated)
+
+Compatibility endpoint retained for older clients.
+
+**Endpoint**: `POST /trigger/{plugin}/{command}` (**deprecated**)
+
+**Deprecation Header**:
+- `X-Ductile-Deprecation: The /trigger endpoint is ambiguous and will be removed in a future version. Use /plugin or /pipeline instead.`
+
+**Current behavior**:
+- Enqueues the specified plugin command.
+- If a pipeline trigger matches `{plugin}.{command}`, the request may execute with pipeline semantics (including synchronous waiting unless `?async=true`).
+
+Use this only for migration windows; new integrations should use `/plugin` or `/pipeline`.
+
+---
+
+### 4. Job Status and Results
 
 Retrieve the current status and execution results of a job.
 
@@ -139,7 +195,7 @@ Retrieve the current status and execution results of a job.
 
 ---
 
-### 3. Jobs List
+### 5. Jobs List
 
 List jobs with optional filtering. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
 
@@ -176,7 +232,7 @@ Results are sorted by `created_at` descending (most recent first).
 
 ---
 
-### 4. System Health
+### 6. System Health
 
 Unauthenticated endpoint for health checks. Typically used by monitoring tools or load balancers.
 
@@ -194,7 +250,7 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
 
 ---
 
-### 5. OpenAPI Discovery
+### 7. OpenAPI Discovery
 
 Unauthenticated endpoints for agent-driven capability discovery. Two-tier design:
 - **`/plugins`** — lightweight catalog for initial discovery (semantic signaling, minimal tokens)
@@ -278,7 +334,7 @@ Returns `404` if the plugin is not found.
 
 ---
 
-### 6. Plugin Discovery
+### 8. Plugin Discovery
 
 List available plugins and retrieve their metadata/schemas. The list endpoints are unauthenticated to support lightweight agent discovery.
 
@@ -301,6 +357,8 @@ List available plugins and retrieve their metadata/schemas. The list endpoints a
 
 #### Get Plugin Details
 **Endpoint**: `GET /plugin/{name}`
+
+Requires `plugin:ro`, `plugin:rw`, or `*` scope.
 
 **Response (200 OK)**:
 ```json
@@ -327,7 +385,7 @@ List available plugins and retrieve their metadata/schemas. The list endpoints a
 
 ---
 
-### 7. Skills Index
+### 9. Skills Index
 
 Unified, operator-facing capability index across both atomic plugin commands and named pipelines.
 

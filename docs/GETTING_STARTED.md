@@ -28,16 +28,20 @@ Ductile is written in Go and requires version **1.25.4** or newer.
 After building the binary, you can run the included `echo` plugin to verify the system.
 
 ### Step 1: Verify Plugin Discovery
-Ductile expects a `plugins/` directory. Check that the echo manifest is present:
+Ductile discovers plugins from `plugin_roots` (preferred) or legacy `plugins_dir`.
+For this repo, the local `plugins/` directory includes `echo`:
 ```bash
 ls -F plugins/echo/manifest.yaml
 ```
 
 ### Step 2: Configure the Plugin
-The `config.yaml` file in the root defines how plugins run. The `echo` plugin is enabled by default to run every 5 minutes.
+The `config.yaml` file defines plugin discovery roots and runtime behavior.
 
 ```yaml
 # config.yaml excerpt
+plugin_roots:
+  - ./plugins
+
 plugins:
   echo:
     enabled: true
@@ -46,6 +50,24 @@ plugins:
       jitter: 30s
     config:
       message: "Hello from Ductile!"
+```
+
+### Step 2b: Add an External Plugin Root (Optional)
+You can mount additional plugin volumes and add them to `plugin_roots` in priority order:
+
+```yaml
+plugin_roots:
+  - ./plugins
+  - /opt/ductile/plugins-private
+```
+
+Container example:
+```bash
+docker run --rm \
+  -v "$PWD/config:/config" \
+  -v "$PWD/plugins:/app/plugins" \
+  -v "/srv/ductile-private-plugins:/opt/ductile/plugins-private:ro" \
+  ductile:latest ./ductile system start --config /config
 ```
 
 ### Step 3: Start the Gateway
