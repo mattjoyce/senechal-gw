@@ -494,11 +494,12 @@ func TestRunSystemSkillsPluginCommandHasSemanticAnchors(t *testing.T) {
 		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
 	}
 	for _, want := range []string{
-		"mutates_state:",
-		"idempotent:",
-		"retry_safe:",
-		"POST /plugin/",
-		"invocation:",
+		"tier=WRITE",
+		"mut=1",
+		"idem=0",
+		"retry=0",
+		"m=POST",
+		"p=/plugin/",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout missing %q: %s", want, stdout)
@@ -521,25 +522,25 @@ func TestRunSystemSkillsOutputIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestRunSystemSkillsRFCAlignmentPresent(t *testing.T) {
+func TestRunSystemSkillsOperatorGuidancePresent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("DUCTILE_CONFIG_DIR", tmpDir)
 
-	// Core mode: RFC-004 must be present.
+	// Core mode: guidance must be present.
 	_, coreStdout, _ := captureOutputWithExitCode(t, func() int {
 		return runSystemSkills(nil)
 	})
-	if !strings.Contains(coreStdout, "RFC-004") {
-		t.Fatalf("core-mode stdout missing RFC-004: %s", coreStdout)
+	if !strings.Contains(coreStdout, "progressive disclosure") {
+		t.Fatalf("core-mode stdout missing progressive disclosure guidance: %s", coreStdout)
 	}
 
-	// Full manifest: RFC-004 must be present.
+	// Full manifest: guidance must be present.
 	writeConfigDirFixtureWithPlugin(t, tmpDir)
 	_, fullStdout, _ := captureOutputWithExitCode(t, func() int {
 		return runSystemSkills([]string{"--config", tmpDir})
 	})
-	if !strings.Contains(fullStdout, "RFC-004") {
-		t.Fatalf("full-manifest stdout missing RFC-004: %s", fullStdout)
+	if !strings.Contains(fullStdout, "Operator guidance: use `--json`") {
+		t.Fatalf("full-manifest stdout missing operator guidance: %s", fullStdout)
 	}
 }
 

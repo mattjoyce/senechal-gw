@@ -5,9 +5,9 @@
 
 ---
 
-## RFC-004 Alignment
+## Operator Alignment
 
-This guide follows the RFC-004 progressive-disclosure design: start with the minimal
+This guide follows progressive disclosure: start with the minimal
 viable context, then pull the full capability manifest only when you need to invoke
 plugins or pipelines.
 

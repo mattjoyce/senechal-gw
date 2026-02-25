@@ -946,6 +946,8 @@ func runSystemSkills(args []string) int {
 
 	fmt.Println("## Plugins")
 	fmt.Println()
+	fmt.Println("Format: `<plugin>.<command> m=<HTTP> p=<path> tier=<READ|WRITE> mut=<0|1> idem=<0|1> retry=<0|1> [in=<schema>] [out=<schema>] [d=<desc>]`")
+	fmt.Println()
 
 	for _, name := range pNames {
 		p := plugins[name]
@@ -965,22 +967,24 @@ func runSystemSkills(args []string) int {
 			if cmd.RetrySafe != nil {
 				retrySafe = *cmd.RetrySafe
 			}
-			fmt.Printf("#### %s.%s\n", p.Name, cmd.Name)
-			fmt.Printf("- **invocation:** `POST /plugin/%s/%s`\n", p.Name, cmd.Name)
-			fmt.Printf("- **mutates_state:** %v\n", mutatesState)
-			fmt.Printf("- **idempotent:** %v\n", idempotent)
-			fmt.Printf("- **retry_safe:** %v\n", retrySafe)
-			if cmd.Description != "" {
-				fmt.Printf("- **description:** %s\n", cmd.Description)
+			tier := "READ"
+			if mutatesState {
+				tier = "WRITE"
 			}
+			fmt.Printf("- %s.%s m=POST p=/plugin/%s/%s tier=%s mut=%d idem=%d retry=%d",
+				p.Name, cmd.Name, p.Name, cmd.Name, tier, boolToInt(mutatesState), boolToInt(idempotent), boolToInt(retrySafe))
 			if s := renderSchema(cmd.InputSchema); s != "" {
-				fmt.Printf("- **input_schema:** `%s`\n", s)
+				fmt.Printf(" in=%q", s)
 			}
 			if s := renderSchema(cmd.OutputSchema); s != "" {
-				fmt.Printf("- **output_schema:** `%s`\n", s)
+				fmt.Printf(" out=%q", s)
+			}
+			if cmd.Description != "" {
+				fmt.Printf(" d=%q", cmd.Description)
 			}
 			fmt.Println()
 		}
+		fmt.Println()
 	}
 
 	// --- Pipeline Skills ---
@@ -994,17 +998,16 @@ func runSystemSkills(args []string) int {
 				})
 				fmt.Println("## Pipelines")
 				fmt.Println()
+				fmt.Println("Format: `<pipeline> m=<HTTP> p=<path> trigger=<trigger> mode=<sync|async> [timeout=<duration>]`")
+				fmt.Println()
 				for _, p := range pipelines {
-					mode := "asynchronous"
+					mode := "async"
 					if p.ExecutionMode == "synchronous" {
-						mode = "synchronous"
+						mode = "sync"
 					}
-					fmt.Printf("#### %s\n", p.Name)
-					fmt.Printf("- **invocation:** `POST /pipeline/%s`\n", p.Name)
-					fmt.Printf("- **trigger:** `%s`\n", p.Trigger)
-					fmt.Printf("- **execution_mode:** %s\n", mode)
+					fmt.Printf("- %s m=POST p=/pipeline/%s trigger=%q mode=%s", p.Name, p.Name, p.Trigger, mode)
 					if p.Timeout > 0 {
-						fmt.Printf("- **timeout:** %s\n", p.Timeout)
+						fmt.Printf(" timeout=%s", p.Timeout)
 					}
 					fmt.Println()
 				}
@@ -1054,6 +1057,13 @@ func renderSchema(schema any) string {
 		parts = append(parts, fmt.Sprintf("%s: %v", k, m[k]))
 	}
 	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func runWatch(args []string) int {
