@@ -76,7 +76,7 @@ func runCLI(cliArgs []string) int {
 	case "trigger":
 		printTriggerHelp()
 		return 0
-	case "skill":
+	case "skills":
 		return runSystemSkills(args)
 
 	// --- ROOT ALIASES (Backward Compatibility) ---
@@ -282,7 +282,7 @@ Manual Triggering:
   trigger           Show instructions for triggering plugins via API
 
 Capability Export:
-  skill             Export live capability registry as LLM-readable Markdown
+  skills            Export live capability registry as LLM-readable Markdown
 
 General:
   --version         Show version information
@@ -890,62 +890,60 @@ func runSystemSkills(args []string) int {
 		return 1
 	}
 
-	explicitConfig := strings.TrimSpace(*configPath) != ""
-
+	// Try to auto-discover config if not specified; failure is non-fatal.
 	if *configPath == "" {
-		discovered, err := config.DiscoverConfigDir()
-		if err != nil {
-			printCoreSkillsQuickstart("No config detected.")
-			return 0
+		if discovered, err := config.DiscoverConfigDir(); err == nil {
+			*configPath = discovered
 		}
-		*configPath = discovered
 	}
 
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		if !explicitConfig {
-			printCoreSkillsQuickstart("Config found but unreadable.")
-			return 0
+	// Attempt to load config and registry; silently degrade if unavailable.
+	var registry *plugin.Registry
+	hasConfig := false
+	if *configPath != "" {
+		if cfg, err := config.Load(*configPath); err == nil {
+			if r, err := discoverRegistry(cfg, *configPath); err == nil {
+				registry = r
+				hasConfig = true
+			}
 		}
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		return 1
 	}
 
-	registry, err := discoverRegistry(cfg, *configPath)
-	if err != nil {
-		if !explicitConfig {
-			printCoreSkillsQuickstart("Config loaded, but plugin discovery failed.")
-			return 0
-		}
-		fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
-		return 1
-	}
-
-	fmt.Println("# Ductile Gateway: LLM Operator Skill Manifest")
-	fmt.Println()
-	fmt.Println("This manifest describes the capabilities of the current Ductile instance.")
+	fmt.Println("# Ductile Gateway: Skills")
 	fmt.Println()
 
-	fmt.Println("## 1. Core CLI Skills")
-	fmt.Println("Use these via direct CLI execution. Prefer `--json` for structured data.")
+	// --- CLI Skills (always present) ---
+	fmt.Println("## CLI Commands")
+	fmt.Println("Use `--json` for structured output. Use `--dry-run` before mutations.")
 	fmt.Println()
 	fmt.Println("### config")
 	fmt.Println("- `config check`: Validate syntax, policy, and integrity.")
 	fmt.Println("- `config lock`: Authorize current state (re-generate hashes).")
 	fmt.Println("- `config show [entity]`: View resolved configuration.")
-	fmt.Println("- `config get <path>`: Read specific config values.")
-	fmt.Println("- `config set <path>=<val>`: Update config (use `--dry-run` first).")
+	fmt.Println("- `config get <path>`: Read a specific config value.")
+	fmt.Println("- `config set <path>=<val>`: Update config (use `--dry-run` first, then `--apply`).")
 	fmt.Println()
 	fmt.Println("### system")
 	fmt.Println("- `system status`: Check gateway health and PID lock.")
 	fmt.Println("- `system reset <plugin>`: Reset a tripped circuit breaker.")
 	fmt.Println("- `system watch`: Real-time diagnostic TUI.")
+	fmt.Println("- `system skills [--config <dir>]`: This command. Re-run with config to see plugins and pipelines.")
 	fmt.Println()
 	fmt.Println("### job")
-	fmt.Println("- `job inspect <job_id>`: Retrieve logs and lineage for a job.")
+	fmt.Println("- `job inspect <job_id>`: Retrieve logs, baggage, and workspace artifacts for a job.")
 	fmt.Println()
 
-	// Plugins
+	if !hasConfig {
+		fmt.Println("---")
+		fmt.Println()
+		fmt.Println("_No config loaded. Plugin and pipeline capabilities are not shown._")
+		fmt.Println()
+		fmt.Println("**Next step:** Run `ductile skills --config <config-dir>` to see the full capability manifest,")
+		fmt.Println("or set `DUCTILE_CONFIG_DIR` to make config auto-discoverable.")
+		return 0
+	}
+
+	// --- Plugin Skills ---
 	plugins := registry.All()
 	var pNames []string
 	for name := range plugins {
@@ -953,75 +951,58 @@ func runSystemSkills(args []string) int {
 	}
 	sort.Strings(pNames)
 
-	fmt.Println("## 2. Atomic Plugin Skills")
-	fmt.Println("Invoke these directly via `POST /plugin/{plugin}/{command}`.")
-	fmt.Println("Bypasses automated pipeline routing.")
+	fmt.Println("## Plugins")
+	fmt.Println("Invoke atomically via `POST /plugin/{name}/{command}` (bypasses pipeline routing).")
 	fmt.Println()
 
 	for _, name := range pNames {
 		p := plugins[name]
 		fmt.Printf("### %s\n", p.Name)
 		if p.Description != "" {
-			fmt.Printf("**Description:** %s\n\n", p.Description)
+			fmt.Printf("%s\n\n", p.Description)
 		}
-		fmt.Println("**Actions:**")
 		for _, cmd := range p.Commands {
 			tier := "WRITE"
 			if cmd.Type == plugin.CommandTypeRead {
 				tier = "READ"
 			}
-			fmt.Printf("- `%s`: [%s] %s\n", cmd.Name, tier, cmd.Description)
+			fmt.Printf("- `%s` [%s]: %s\n", cmd.Name, tier, cmd.Description)
 		}
 		fmt.Println()
 	}
 
-	// Pipelines
+	// --- Pipeline Skills ---
 	routerEngine, err := router.LoadFromConfigDir(*configPath, registry, log.WithComponent("skills-export"))
 	if err == nil {
 		if r, ok := routerEngine.(*router.Router); ok {
 			pipelines := r.PipelineSummary()
 			if len(pipelines) > 0 {
-				fmt.Println("## 3. Orchestrated Pipeline Skills")
-				fmt.Println("High-level workflows triggered by direct API calls.")
-				fmt.Println("Invoke these via `POST /pipeline/{name}`.")
+				fmt.Println("## Pipelines")
+				fmt.Println("Invoke via `POST /pipeline/{name}`. Pipelines compose plugins with event routing.")
 				fmt.Println()
 				for _, p := range pipelines {
 					mode := "ASYNC"
 					if p.ExecutionMode == "synchronous" {
-						mode = "SYNC (Blocks for result)"
+						mode = "SYNC"
 					}
 					fmt.Printf("### %s\n", p.Name)
-					fmt.Printf("- **Endpoint:** `/pipeline/%s`\n", p.Name)
-					fmt.Printf("- **Trigger Event:** `%s`\n", p.Trigger)
+					fmt.Printf("- **Endpoint:** `POST /pipeline/%s`\n", p.Name)
+					fmt.Printf("- **Trigger:** `%s`\n", p.Trigger)
 					fmt.Printf("- **Mode:** %s\n", mode)
+					if p.Timeout > 0 {
+						fmt.Printf("- **Timeout:** %.0fs\n", p.Timeout.Seconds())
+					}
 					fmt.Println()
 				}
 			}
 		}
 	}
 
-	return 0
-}
+	fmt.Println("---")
+	fmt.Println()
+	fmt.Println("**Next steps:** Use `job inspect <id>` to trace any execution. Use `system status` to verify health.")
 
-func printCoreSkillsQuickstart(reason string) {
-	fmt.Println("# Ductile Gateway: AI Operator Guide (Core Mode)")
-	fmt.Println()
-	if strings.TrimSpace(reason) != "" {
-		fmt.Printf("_%s_\n\n", reason)
-	}
-	fmt.Println("No live config context was available, so this is a token-frugal baseline.")
-	fmt.Println()
-	fmt.Println("## Quick Loop")
-	fmt.Println("1. `ductile system status --json`")
-	fmt.Println("2. `ductile config check --json`")
-	fmt.Println("3. `ductile config show --json` or `ductile config get <path> --json`")
-	fmt.Println("4. `ductile config set <path>=<value> --dry-run` then `--apply`")
-	fmt.Println("5. `ductile config lock`")
-	fmt.Println("6. `ductile job inspect <job_id> --json`")
-	fmt.Println()
-	fmt.Println("## Extended Capabilities")
-	fmt.Println("- Pass `--config <path>` or set `DUCTILE_CONFIG_DIR`.")
-	fmt.Println("- With config, this command also exports discovered plugin and pipeline skills.")
+	return 0
 }
 
 func runWatch(args []string) int {
@@ -1112,14 +1093,19 @@ func runStart(args []string) int {
 		return 1
 	}
 
+	configSource := "explicit"
 	if *configPath == "" {
+		if os.Getenv("DUCTILE_CONFIG_DIR") != "" {
+			configSource = "env:DUCTILE_CONFIG_DIR"
+		} else {
+			configSource = "auto-discovered"
+		}
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "no config found: %v\nHint: create ~/.config/ductile/config.yaml or use --config\n", err)
 			return 1
 		}
 		*configPath = discovered
-		fmt.Fprintf(os.Stderr, "Using discovered config: %s\n", *configPath)
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -1130,6 +1116,37 @@ func runStart(args []string) int {
 
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
+
+	// Preflight: report which config files were loaded
+	{
+		logger.Info("config loaded", "path", *configPath, "source", configSource)
+
+		configDir := *configPath
+		if info, err := os.Stat(*configPath); err == nil && !info.IsDir() {
+			configDir = filepath.Dir(*configPath)
+		}
+
+		var sourceFiles []string
+		for f := range cfg.SourceFiles {
+			sourceFiles = append(sourceFiles, f)
+		}
+		sort.Strings(sourceFiles)
+		for _, f := range sourceFiles {
+			rel, err := filepath.Rel(configDir, f)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				rel = f
+			}
+			logger.Info("config file", "file", rel)
+		}
+
+		enabledPlugins := 0
+		for _, p := range cfg.Plugins {
+			if p.Enabled {
+				enabledPlugins++
+			}
+		}
+		logger.Info("config summary", "plugins_configured", enabledPlugins, "api_listen", cfg.API.Listen)
+	}
 
 	// Strict mode enforcement
 	if cfg.Service.StrictMode {
