@@ -19,6 +19,22 @@ import (
 	"github.com/mattjoyce/ductile/internal/router"
 )
 
+// handleRoot handles GET / — unauthenticated discovery index for humans and agents.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, RootResponse{
+		Name:          "Ductile Gateway",
+		Description:   "Integration gateway for triggering plugins and pipelines.",
+		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
+		Discovery: map[string]string{
+			"health":    "/healthz",
+			"skills":    "/skills",
+			"plugins":   "/plugins",
+			"openapi":   "/openapi.json",
+			"ai_plugin": "/.well-known/ai-plugin.json",
+		},
+	})
+}
+
 // handleHealthz handles GET /healthz (no auth).
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	depth, err := s.queue.Depth(r.Context())

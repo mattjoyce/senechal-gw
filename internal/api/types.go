@@ -81,6 +81,14 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// RootResponse is returned by GET / — a human/agent-readable index of the gateway.
+type RootResponse struct {
+	Name          string            `json:"name"`
+	Description   string            `json:"description"`
+	UptimeSeconds int64             `json:"uptime_seconds"`
+	Discovery     map[string]string `json:"discovery"`
+}
+
 // HealthzResponse is returned by GET /healthz.
 type HealthzResponse struct {
 	Status        string `json:"status"`

@@ -145,6 +145,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 	// Routes
 	// Unauthenticated discovery endpoints.
+	r.Get("/", s.handleRoot)
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/plugins", s.handleListPlugins)
 	r.Get("/skills", s.handleListSkills)

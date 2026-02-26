@@ -141,6 +141,37 @@ func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
 }
 
+func TestHandleRoot_NoAuth(t *testing.T) {
+	server := newTestServer(&mockQueue{}, &mockRegistry{})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var resp RootResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Name != "Ductile Gateway" {
+		t.Errorf("expected name %q, got %q", "Ductile Gateway", resp.Name)
+	}
+	if resp.Description == "" {
+		t.Error("expected non-empty description")
+	}
+	if resp.UptimeSeconds < 0 {
+		t.Error("expected non-negative uptime_seconds")
+	}
+	for _, key := range []string{"health", "skills", "plugins", "openapi", "ai_plugin"} {
+		if resp.Discovery[key] == "" {
+			t.Errorf("expected discovery[%q] to be set", key)
+		}
+	}
+}
+
 func TestHandleHealthz_NoAuth(t *testing.T) {
 	q := &mockQueue{
 		depthFunc: func(ctx context.Context) (int, error) { return 7, nil },
