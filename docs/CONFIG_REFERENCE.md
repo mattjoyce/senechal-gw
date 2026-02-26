@@ -137,6 +137,8 @@ webhooks:
     signature_header: X-Hub-Signature-256
 ```
 
+See [WEBHOOKS.md](WEBHOOKS.md) for full configuration details, include-mode caveats, and signing examples.
+
 ### 4.4 tokens.yaml (High Security)
 ```yaml
 tokens:

@@ -65,6 +65,12 @@ Deep dive into the engine, the Governance Hybrid model, and the Pipeline DSL.
 ### [Configuration Reference](docs/CONFIG_REFERENCE.md)
 Strict technical specification for YAML structure and integrity verification.
 
+### [Webhooks](docs/WEBHOOKS.md)
+Webhook listener configuration, signing, and include-mode notes.
+
+### [Cookbook](docs/COOKBOOK.md)
+Practical patterns for wiring plugins together.
+
 ---
 
 ## Key Features

@@ -729,6 +729,8 @@ To prevent HTTP worker exhaustion, synchronous pipelines are governed by a semap
 
 ## 10. Webhooks
 
+For operator setup and example requests, see [WEBHOOKS.md](WEBHOOKS.md).
+
 ### 10.1 Listener
 
 ```yaml
