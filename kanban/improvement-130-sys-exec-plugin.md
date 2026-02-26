@@ -1,6 +1,6 @@
 ---
 id: 130
-status: todo
+status: doing
 priority: Normal
 blocked_by: []
 tags: [improvement, plugin, sys-exec, shell, infrastructure]
@@ -68,14 +68,14 @@ config_keys:
 
 ## Acceptance Criteria
 
-- [ ] `sys_exec` plugin implemented with `handle` and `health` commands
-- [ ] `command` is required config; plugin refuses to start without it
-- [ ] Payload fields available as `DUCTILE_PAYLOAD_{KEY}` env vars (uppercased)
-- [ ] stdout/stderr captured and returned in logs and event payload
-- [ ] Non-zero exit returns `status: error` with stderr as error message
-- [ ] `health` command validates `command` is set
-- [ ] No shell interpolation of payload fields into command string
-- [ ] Manifest includes `config_keys.required: [command]`
+- [x] `sys_exec` plugin implemented with `handle` and `health` commands
+- [x] `command` is required config; plugin refuses to start without it
+- [x] Payload fields available as `DUCTILE_PAYLOAD_{KEY}` env vars (uppercased)
+- [x] stdout/stderr captured and returned in logs and event payload
+- [x] Non-zero exit returns `status: error` with stderr as error message
+- [x] `health` command validates `command` is set
+- [x] No shell interpolation of payload fields into command string
+- [x] Manifest includes `config_keys.required: [command]`
 - [ ] Works as the Astro refresh step in card #129 pipeline
 
 ## Example Config (Astro Refresh)
@@ -93,3 +93,5 @@ plugins:
 ## Narrative
 
 - 2026-02-26: Created as a prerequisite for card #129 (Discord → YouTube → Astro RSS). Identified during planning as the right abstraction for running shell commands in pipelines rather than building a dedicated Astro plugin. Security model: command from signed config only, payload as env vars, no interpolation. (by @assistant)
+- 2026-02-26: Moved to doing. Confirmed `plugins/sys_exec/` does not exist yet; starting with a design hardening pass focused on copy/rename ergonomics, command execution safety, env shaping, output bounds, and retry semantics before implementation. (by @assistant)
+- 2026-02-26: Implemented `plugins/sys_exec` with copier-oriented comments in both `manifest.yaml` and `run.py`. Added protocol-v2 behavior for `handle` and `health`, required `config.command`, payload-to-env mapping (`DUCTILE_PAYLOAD_*`), bounded stdout/stderr capture, configurable retry-on-exit-codes, and completion event emission. Added e2e tests (`internal/e2e/sys_exec_plugin_test.go`) for success, non-zero exit, retry policy, and health validation. Full `go test ./...` passes. Remaining card item is end-to-end validation in the card #129 Astro pipeline wiring. (by @assistant)
