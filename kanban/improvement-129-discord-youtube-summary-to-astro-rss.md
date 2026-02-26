@@ -105,6 +105,7 @@ Internal routed event:
 6. Publish pipeline runs Astro refresh command.
 7. RSS reflects new summary entry.
 
+
 ## Proposed Implementation Notes
 
 - Reuse existing cards/features where possible:
