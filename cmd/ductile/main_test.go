@@ -927,6 +927,35 @@ func TestRunConfigGetAndSetSupportConfigDirFlag(t *testing.T) {
 	}
 }
 
+func TestRunConfigShow(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	t.Run("show full config yaml", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runConfigShow([]string{"--config-dir", tmpDir})
+		})
+		if code != 0 {
+			t.Fatalf("runConfigShow() code = %d, stderr: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "service:") {
+			t.Fatalf("stdout missing service section: %s", stdout)
+		}
+	})
+
+	t.Run("show specific field json", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runConfigShow([]string{"--config-dir", tmpDir, "--json", "service.log_level"})
+		})
+		if code != 0 {
+			t.Fatalf("runConfigShow() code = %d, stderr: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "\"info\"") {
+			t.Fatalf("stdout missing log_level value: %s", stdout)
+		}
+	})
+}
+
 func TestRunSystemStatusJSONHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")
@@ -1123,6 +1152,70 @@ func TestValidateScheduledCommands(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), `unsupported command "missing"`) {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestRunJobInspect(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configYAML := `
+service:
+  name: test-gw
+state:
+  path: ` + dbPath + `
+plugins: {}
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := queue.New(db)
+	jobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	t.Run("inspect human output", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runInspect([]string{"--config", configPath, jobID})
+		})
+		if code != 0 {
+			t.Fatalf("runInspect() code = %d, stderr: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "Lineage Report") || !strings.Contains(stdout, jobID) {
+			t.Fatalf("stdout missing report headers or job ID: %s", stdout)
+		}
+	})
+
+	t.Run("inspect json output", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runInspect([]string{"--config", configPath, jobID, "--json"})
+		})
+		if code != 0 {
+			t.Fatalf("runInspect() code = %d, stderr: %s", code, stderr)
+		}
+		var report struct {
+			JobID string `json:"job_id"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Fatalf("failed to parse JSON report: %v\noutput=%s", err, stdout)
+		}
+		if report.JobID != jobID {
+			t.Fatalf("job_id mismatch: got %s, want %s", report.JobID, jobID)
 		}
 	})
 }

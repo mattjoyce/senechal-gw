@@ -470,18 +470,21 @@ func runConfigSet(args []string) int {
 	fs.BoolVar(&apply, "apply", false, "Apply changes")
 
 	var kvPair string
-	var remainingArgs []string
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && strings.Contains(arg, "=") && kvPair == "" {
-			kvPair = arg
-		} else {
-			remainingArgs = append(remainingArgs, arg)
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
 		}
-	}
-
-	if err := fs.Parse(remainingArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
+		if fs.NArg() > 0 {
+			arg0 := fs.Arg(0)
+			if kvPair == "" && strings.Contains(arg0, "=") {
+				kvPair = arg0
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
 	if kvPair == "" {
@@ -550,24 +553,39 @@ func runConfigSet(args []string) int {
 // ... (skipping to action implementations)
 
 func runConfigShow(args []string) int {
+	var configPath, configDir string
+	var jsonOut bool
+
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	configDir := fs.String("config-dir", "", "Path to configuration directory")
-	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
-		return 1
+	fs.StringVar(&configPath, "config", "", "Path to configuration file or directory")
+	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
+	fs.BoolVar(&jsonOut, "json", false, "Output in structured JSON format")
+
+	var entity string
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
+		}
+		if fs.NArg() > 0 {
+			if entity == "" {
+				entity = fs.Arg(0)
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
-	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
+	cfg, err := loadConfigForToolWithDir(configPath, configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
 	}
 
 	var result any = cfg
-	if fs.NArg() > 0 {
-		entity := fs.Arg(0)
+	if entity != "" {
 		res, err := cfg.GetPath(entity)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -576,7 +594,7 @@ func runConfigShow(args []string) int {
 		result = res
 	}
 
-	if *jsonOut {
+	if jsonOut {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(data))
 	} else {
@@ -587,22 +605,37 @@ func runConfigShow(args []string) int {
 }
 
 func runConfigGet(args []string) int {
+	var configPath, configDir string
+	var jsonOut bool
+
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	configDir := fs.String("config-dir", "", "Path to configuration directory")
-	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
-		return 1
+	fs.StringVar(&configPath, "config", "", "Path to configuration file or directory")
+	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
+	fs.BoolVar(&jsonOut, "json", false, "Output in structured JSON format")
+
+	var path string
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
+		}
+		if fs.NArg() > 0 {
+			if path == "" {
+				path = fs.Arg(0)
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
-	if fs.NArg() != 1 {
+	if path == "" {
 		fmt.Fprintf(os.Stderr, "Usage: ductile config get <path> [--json]\n")
 		return 1
 	}
-	path := fs.Arg(0)
 
-	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
+	cfg, err := loadConfigForToolWithDir(configPath, configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
@@ -614,7 +647,7 @@ func runConfigGet(args []string) int {
 		return 1
 	}
 
-	if *jsonOut {
+	if jsonOut {
 		data, _ := json.MarshalIndent(val, "", "  ")
 		fmt.Println(string(data))
 	} else {
@@ -1657,30 +1690,30 @@ func renderSystemStatusHuman(report systemStatusReport) {
 }
 
 func runInspect(args []string) int {
-	// Custom flag parsing because we want to support flags AFTER the job ID
-	// like 'ductile job inspect <id> --json'
+	// Custom flag parsing because we want to support flags intermixed with the job ID
+	// like 'ductile job inspect <id> --json' or 'ductile job inspect --json <id>'
 	var configPath string
 	var jsonOut bool
 
-	// Create a new flag set but don't parse everything at once
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
 	fs.BoolVar(&jsonOut, "json", false, "Output report in JSON")
 
-	// Filter out positional jobID and then parse remaining flags
 	var jobID string
-	var remainingArgs []string
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && jobID == "" {
-			jobID = arg
-		} else {
-			remainingArgs = append(remainingArgs, arg)
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
 		}
-	}
-
-	if err := fs.Parse(remainingArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
+		if fs.NArg() > 0 {
+			if jobID == "" {
+				jobID = fs.Arg(0)
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
 	if jobID == "" {
