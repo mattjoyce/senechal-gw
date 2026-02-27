@@ -261,7 +261,47 @@ If you need more control (descriptions, constraints), you can provide a full JSO
 
 ---
 
-## 7. Security & Isolation
+## 7. Built-in Plugin: `if` Classifier
+
+The `if` plugin is a general-purpose field classifier. It evaluates an ordered list of checks against a payload field and emits the **first** matching event type with the payload unchanged.
+
+### Config (per instance)
+
+```yaml
+plugins:
+  check_youtube:
+    enabled: true
+    config:
+      field: text
+      checks:
+        - contains: "youtu.be"
+          emit: youtube.url.detected
+        - contains: "youtube.com"
+          emit: youtube.url.detected
+        - startswith: "http"
+          emit: web.url.detected
+        - default: text.received
+```
+
+### Supported checks (v1)
+
+- `contains`, `startswith`, `endswith`, `equals` (case-insensitive)
+- `regex` (Python `re.fullmatch` against the field value)
+- `default` (always matches if reached)
+
+### Semantics
+
+- Checks are evaluated in order; first match wins.
+- Missing fields are treated as empty strings.
+- No match + no default → `status: error` with `retry: false`.
+
+### Instance naming
+
+Ductile currently uses manifest names as plugin names. To create multiple instances, copy the plugin directory and give each manifest a unique `name` (for example `check_youtube`).
+
+---
+
+## 8. Security & Isolation
 
 -   **Allowed Paths:** Plugins should only read/write within their provided `workspace_dir` or explicitly configured paths.
 -   **Execution:** Plugins run as the same OS user as the gateway. Use filesystem permissions to limit their scope.

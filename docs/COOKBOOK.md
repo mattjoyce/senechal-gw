@@ -106,3 +106,59 @@ curl -sS -X POST http://127.0.0.1:8091/webhook/astro-rebuild-staging \
 - `emit_mode: aggregate` emits a single event with lists of created/modified/deleted files.
 - `min_stable_age` helps avoid partial writes being detected as changes.
 - Use a longer rebuild timeout if the container build is slow.
+
+---
+
+## Pattern: Route YouTube vs Web URLs
+
+**Use case:** Use the `if` classifier to emit different event types based on URL content.
+
+### 1) Configure the classifier instance
+
+```yaml
+# ~/.config/ductile/plugins.yaml
+plugins:
+  check_youtube:
+    enabled: true
+    timeout: 30s
+    max_attempts: 1
+    config:
+      field: text
+      checks:
+        - contains: "youtu.be"
+          emit: youtube.url.detected
+        - contains: "youtube.com"
+          emit: youtube.url.detected
+        - startswith: "http"
+          emit: web.url.detected
+        - default: text.received
+```
+
+### 2) Use it in a pipeline
+
+```yaml
+# ~/.config/ductile/pipelines.yaml
+pipelines:
+  - name: ai-dispatch
+    on: discord.ai.command
+    steps:
+      - id: classify
+        uses: check_youtube
+
+  - name: youtube-wisdom
+    on: youtube.url.detected
+    steps:
+      - uses: youtube_transcript
+      - uses: fabric
+      - uses: file_handler
+
+  - name: web-summarize
+    on: web.url.detected
+    steps:
+      - uses: fabric
+```
+
+### Notes
+
+- `default` is a final fallback; omit it if you want no-match to error.
+- The plugin passes the payload through unchanged.

@@ -1,0 +1,18 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: check_youtube
+# Copy of plugins/if (instance-specific manifest name). Keep in sync.
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Classify URL payloads to route YouTube vs web content."
+commands:
+  - name: handle
+    type: write
+    description: "Evaluate configured checks and emit the first matching event type."
+  - name: health
+    type: read
+    description: "Validate plugin configuration."
+config_keys:
+  required: [field, checks]
+  optional: []
