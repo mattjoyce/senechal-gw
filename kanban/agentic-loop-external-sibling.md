@@ -1,6 +1,6 @@
 ---
 id: 105
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [architecture, agent, external-service, protocol, api, scheduler]
@@ -271,3 +271,4 @@ Phase 4: Operator UX
 ## Narrative
 
 - 2026-02-16: Created card #105 to replace internal AgenticLoop plugin direction with an external Ductile-aware sibling service. Captured decisions, API contract, reliability/security requirements, and phased implementation guidance. (by Codex)
+- 2026-02-27: Marked done. AgenticLoop implemented as a separate sibling project (`../AgenticLoop`), following the external service architecture defined here — Ductile remains the bounded execution engine, AgenticLoop handles long-running cognition and calls Ductile APIs as tools. (by @assistant)
