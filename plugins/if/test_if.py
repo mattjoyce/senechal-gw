@@ -107,6 +107,17 @@ class IfClassifierTests(unittest.TestCase):
         )
         self.assertEqual(resp["events"][0]["type"], "ok")
 
+    def test_dedupe_key_passthrough(self):
+        resp = run_plugin(
+            {
+                "protocol": 2,
+                "command": "handle",
+                "config": {"field": "text", "checks": [{"contains": "x", "emit": "hit"}]},
+                "event": {"payload": {"text": "x"}, "dedupe_key": "discord:summary:123"},
+            }
+        )
+        self.assertEqual(resp["events"][0]["dedupe_key"], "discord:summary:123")
+
     def test_health_invalid(self):
         resp = run_plugin({"protocol": 2, "command": "health", "config": {}})
         self.assertEqual(resp["status"], "error")

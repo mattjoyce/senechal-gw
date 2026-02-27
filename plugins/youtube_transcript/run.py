@@ -420,6 +420,10 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
         "source_format": source_format,
     }
 
+    for field in ["prompt", "pattern", "output_dir", "output_path", "filename", "request_id", "request_source"]:
+        if field in payload:
+            out_payload[field] = payload[field]
+
     return {
         "status": "ok",
         "events": [{"type": "youtube.transcript", "payload": out_payload}],

@@ -146,6 +146,7 @@ def handle_command(config: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, A
     field = str(config.get("field", ""))
     checks = config.get("checks", [])
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    input_dedupe_key = event.get("dedupe_key")
 
     value = resolve_field_value(event, field)
 
@@ -157,8 +158,11 @@ def handle_command(config: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, A
 
         try:
             if match_condition(value, cond_type, cond_value):
+                output_event = {"type": emit, "payload": payload}
+                if input_dedupe_key:
+                    output_event["dedupe_key"] = input_dedupe_key
                 return ok_response(
-                    events=[{"type": emit, "payload": payload}],
+                    events=[output_event],
                     logs=[{"level": "info", "message": f"matched {cond_type} -> {emit}"}],
                 )
         except re.error as exc:
