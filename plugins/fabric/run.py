@@ -10,6 +10,14 @@ import sys
 from datetime import datetime, timezone
 
 
+def pick(payload, context, key, default=None):
+    if isinstance(payload, dict) and key in payload and payload[key] not in (None, ""):
+        return payload[key]
+    if isinstance(context, dict) and key in context and context[key] not in (None, ""):
+        return context[key]
+    return default
+
+
 def poll_command(config, state):
     """Poll command - for scheduled execution (not implemented yet)"""
     return {
@@ -23,23 +31,23 @@ def poll_command(config, state):
     }
 
 
-def handle_command(config, state, event):
+def handle_command(config, state, event, context):
     """Handle command - processes events with fabric patterns"""
     payload = event.get("payload", {})
 
-    # Extract input parameters
-    text = payload.get("text")
-    url = payload.get("url")
-    youtube_url = payload.get("youtube_url")
+    # Extract input parameters (payload first, context fallback)
+    text = pick(payload, context, "text")
+    url = pick(payload, context, "url")
+    youtube_url = pick(payload, context, "youtube_url")
 
     # Only use default pattern if pattern not explicitly provided AND not in prompt-only mode
     # Prompt-only mode: prompt provided without text/url/youtube_url and without explicit pattern
-    pattern = payload.get("pattern")
-    if pattern is None and not (payload.get("prompt") and not any([text, url, youtube_url])):
+    pattern = pick(payload, context, "pattern")
+    if pattern is None and not (pick(payload, context, "prompt") and not any([text, url, youtube_url])):
         pattern = config.get("FABRIC_DEFAULT_PATTERN")
 
-    prompt = payload.get("prompt") or config.get("FABRIC_DEFAULT_PROMPT")
-    model = payload.get("model") or config.get("FABRIC_DEFAULT_MODEL")
+    prompt = pick(payload, context, "prompt") or config.get("FABRIC_DEFAULT_PROMPT")
+    model = pick(payload, context, "model") or config.get("FABRIC_DEFAULT_MODEL")
     fabric_bin = config.get("FABRIC_BIN_PATH", "fabric")
 
     # Validate input: need at least one of text, url, youtube_url, or prompt
@@ -117,8 +125,9 @@ def handle_command(config, state, event):
     # Propagate pipeline context fields for downstream steps
     # (e.g., output_dir, output_path, filename from upstream plugins)
     for field in ["output_dir", "output_path", "filename", "file_path"]:
-        if field in payload:
-            event_payload[field] = payload[field]
+        value = pick(payload, context, field)
+        if value is not None and value != "":
+            event_payload[field] = value
 
     return {
         "status": "ok",
@@ -222,11 +231,12 @@ def main():
     config = request.get("config", {})
     state = request.get("state", {})
     event = request.get("event", {})
+    context = request.get("context", {})
 
     if command == "poll":
         response = poll_command(config, state)
     elif command == "handle":
-        response = handle_command(config, state, event)
+        response = handle_command(config, state, event, context)
     elif command == "health":
         response = health_command(config)
     else:

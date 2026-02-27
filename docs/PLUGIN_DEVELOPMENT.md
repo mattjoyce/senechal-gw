@@ -184,6 +184,15 @@ for field in ["pattern", "prompt", "model", "output_dir", "output_path", "filena
 
 Simply emit your event with standard fields (`text`, `result`, `source_url`, `source_type`) and the dispatcher handles propagation.
 
+### Baggage (Context) Fallback
+
+Every event payload is shallow-merged into the persistent **context** ledger. Downstream plugins receive this accumulated baggage in `request.context`. If a field may be produced by an upstream step, prefer:
+
+1. Read from `event.payload` (step-specific input).
+2. Fall back to `request.context` for accumulated values.
+
+This makes pipelines resilient when intermediate plugins emit narrower payloads.
+
 ### Example Event Payload
 
 ```python
