@@ -1,66 +1,50 @@
-# Ductile Glossary: The Integration Codex
+# Ductile Glossary
 
-Ductile is a **lightweight, open-source integration engine for the agentic era.** To operate it effectively, whether you are a human architect or an LLM Operator, you must understand the **"Integration Sphere"**—the functional foundation upon which all agentic affordances are built.
-
-This glossary provides a **robust compound semantic grounding**, bridging traditional systems engineering with the unique requirements of LLM-native execution.
+Key terms used throughout Ductile's documentation and configuration.
 
 ---
 
-## Core Integration Primitives (The Human View)
+## Gateway
 
-These terms represent the "Functional Reality" of the engine. They are grounded in the mechanics of how data and execution move through the system.
+The `ductile` binary — the central runtime that manages plugins, schedules work, routes events, and maintains the execution ledger.
 
-### **Gateway**
-The central integration host and runtime (the `ductile` binary). It manages the lifecycle of connectors, the orchestration of events, and the integrity of the execution ledger.
+## Plugin
 
-### **Plugin (Connector)**
-A polyglot adapter that bridges Ductile to an external system (e.g., an API, a database, or a shell environment). Connectors are the source of all functional capabilities.
+A polyglot adapter that connects Ductile to an external system (an API, a database, a shell command). Written in any language; communicates via JSON over stdin/stdout. Also called a **Connector**.
 
-### **Command (Operation)**
-A discrete, low-level action provided by a Connector. 
-- **`poll` (Discovery):** A proactive integration pattern where Ductile pulls data from a source on a schedule.
-- **`handle` (Reactive):** A reactive integration pattern where Ductile processes an incoming event.
-- **`health` (Diagnostic):** A verification pattern to ensure a Connector's prerequisites are met.
+## Command
 
-### **Pipeline (Orchestration)**
-A defined sequence of operations triggered by an event. Orchestrations define how data flows between multiple connectors to achieve a complex functional goal.
+A discrete operation provided by a plugin. The four standard commands are:
 
-### **Event**
-A typed packet of data (e.g., `file.changed` or `webhook.received`) that signals a state change and triggers a routing decision within the Gateway.
+- **`poll`** — proactive; Ductile calls the plugin on a schedule to pull data.
+- **`handle`** — reactive; the plugin processes an incoming event.
+- **`health`** — diagnostic; verifies the plugin's prerequisites are met.
+- **`init`** — one-time setup; runs when a plugin is first registered.
 
-### **Job**
-The unit of work. Every time a Command is executed, an immutable **Job** record is created in the ledger, capturing the input, output, logs, and status.
+## Pipeline
 
----
+A configured sequence of steps triggered by an event. Pipelines define how data flows between multiple plugins to complete a workflow.
 
-## Agentic Era Extensions (The LX View)
+## Event
 
-These terms represent the **"Abstraction Layer"** designed for the LLM Operator. They map the core integration primitives to the reasoning requirements of an agent.
+A typed packet of data (e.g., `file.changed`, `webhook.received`) that signals something happened and triggers routing within the gateway.
 
-### **Skill (Affordance)**
-An LLM-facing projection of a core **Command**. While a human sees a "poll operation," an LLM sees a "Discovery Skill." This is the **LX (LLM Experience)** layer of the engine.
+## Job
 
-### **Baggage (Working Memory)**
-Stateful metadata (JSON) that persists across a multi-hop Pipeline. It allows the LLM to maintain "context" (like a user ID or a goal) as it moves through disparate integration steps.
+The unit of execution. Every command invocation creates an immutable Job record capturing input, output, logs, and status.
 
-### **Execution Ledger (The Paper Trail)**
-The persistent history of all Jobs and transitions. For an LLM, the ledger is a searchable record of past actions, providing the "Lineage" needed to reason about the current state of the world.
+## Baggage
 
-### **Workspace (Audit Trail)**
-An isolated file system directory created for a specific Job. It ensures that an LLM's side effects are bounded and verifiable by a human operator.
+Stateful metadata (JSON) that persists across the hops of a multi-step pipeline. Allows context — a user ID, a source URL, intermediate results — to travel with the execution rather than being re-fetched at each step.
 
-### **Inference Frugality**
-A design principle focused on reducing "inference friction." By providing a self-describing environment (`--skills`), Ductile ensures the LLM can execute perfectly on the first try, saving tokens and increasing reliability.
+## Execution Ledger
 
----
+The persistent history of all jobs and pipeline transitions, stored in SQLite. Used for inspection, debugging, and lineage tracing.
 
-## Summary Mapping
+## Workspace
 
-| Integration Sphere (Functional) | Agentic Era (LX Abstraction) | Why it matters |
-| :--- | :--- | :--- |
-| **Connector** | **Capability Source** | Where the power comes from. |
-| **Operation** | **Skill** | What the agent can actually *do*. |
-| **Orchestration** | **Reasoning Chain** | How the agent achieves complex goals. |
-| **Baggage** | **Working Memory** | How the agent stays on track. |
-| **Ledger** | **Experience/Memory** | How the agent learns from the past. |
-| **Workspace** | **Action Sandbox** | Where the agent safely "touches" the world. |
+An isolated directory created per job for file-based side effects — downloaded content, generated files, intermediate artifacts. Scoped to the job and retained for inspection.
+
+## Skill
+
+The machine-readable description of a plugin's capabilities, exported via `ductile system skills` or `GET /skills`. Useful for tooling and automated orchestration.

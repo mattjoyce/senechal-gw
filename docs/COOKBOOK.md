@@ -164,11 +164,6 @@ pipelines:
 
 ---
 
-## Why these patterns matter
+## Adding your own patterns
 
-Ductile is a **"lightweight, open-source integration engine for the agentic era."** These patterns demonstrate its core functional goals:
-- **Useful:** Solves real automation pain points.
-- **Quick to Deploy:** YAML-based config, no heavy infra.
-- **Extensible:** Mix and match polyglot connectors.
-
-By grounding these recipes in the **"Integration Sphere,"** we provide the **"robust compound semantic grounding"** needed for humans to build reliable systems that can then be operated or optimized by LLMs.
+Each recipe follows the same structure: configure a plugin, define a pipeline, wire the events. If you have a working integration worth sharing, add it here.
