@@ -20,10 +20,11 @@ When operators need to route events based on payload content, they need clear do
 
 ## Acceptance Criteria
 
-- [ ] `docs/PLUGIN_DEVELOPMENT.md` documents `if` config, checks, and semantics.
+- [ ] `docs/PLUGIN_DEVELOPMENT.md` documents `switch` config, checks, and semantics.
 - [ ] `docs/COOKBOOK.md` includes a practical routing example.
 - [ ] Instance naming / copy caveat documented.
 
 ## Narrative
 
 - 2026-02-27: Card created for documenting the `switch` classifier plugin. (by @assistant)
+- 2026-02-28: Plugin renamed from `if` to `switch` (better reflects multi-way dispatch semantics). Test file renamed to `test_switch.py`, all 11 tests passing. Docs card title/criteria updated to match. (by @assistant)
