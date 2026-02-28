@@ -406,6 +406,7 @@ plugins:
 
 - `config` — from `config.yaml`, interpolated with env vars, read-only. Contains credentials, endpoints — things the operator sets.
   - Config paths (config dir, includes, backups) are local operator-controlled inputs; Ductile does not accept untrusted remote file paths.
+  - `service.allow_symlinks` controls whether symlinks are permitted in config/plugin paths (warnings are always emitted when symlinks are detected).
 - `state` — single JSON blob per plugin in SQLite. Plugins read it, return `state_updates`, core applies shallow merge (top-level keys replaced, not deep-merged).
 
 ```sql

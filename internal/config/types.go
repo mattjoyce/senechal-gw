@@ -35,6 +35,7 @@ type ServiceConfig struct {
 	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
 	JobLogRetention time.Duration `yaml:"job_log_retention"`
 	StrictMode      bool          `yaml:"strict_mode"`
+	AllowSymlinks   bool          `yaml:"allow_symlinks"`
 }
 
 // StateConfig defines state storage settings.
@@ -351,6 +352,7 @@ func Defaults() *Config {
 			LogFormat:       "json",
 			DedupeTTL:       24 * time.Hour,
 			JobLogRetention: 30 * 24 * time.Hour,
+			AllowSymlinks:   false,
 		},
 		State: StateConfig{
 			Path: "./data/state.db",

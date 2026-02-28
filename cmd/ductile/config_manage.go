@@ -873,6 +873,21 @@ func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
 	if err != nil {
 		return nil, 1, err
 	}
+	configPaths, err := config.CollectConfigPaths(configPath, cfg)
+	if err != nil {
+		return nil, 1, err
+	}
+	symlinkWarnings, err := config.DetectSymlinks(configPaths)
+	if err != nil {
+		return nil, 1, err
+	}
+	for _, warning := range symlinkWarnings {
+		fmt.Fprintf(os.Stderr, "WARN: symlink detected (path=%s resolved=%s)\n", warning.Path, warning.Resolved)
+	}
+	if len(symlinkWarnings) > 0 && !cfg.Service.AllowSymlinks {
+		return nil, 1, fmt.Errorf("symlinks detected in config paths but not allowed")
+	}
+
 	registry, err := discoverRegistry(cfg, configPath)
 	if err != nil {
 		return nil, 1, err
@@ -892,7 +907,11 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 	if err != nil {
 		return nil, err
 	}
-	return plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {})
+	return plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
+		if level == "warn" {
+			fmt.Fprintf(os.Stderr, "WARN: %s %v\n", msg, args)
+		}
+	}, plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks})
 }
 
 func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {
@@ -1982,7 +2001,14 @@ func runConfigRestore(args []string) int {
 		fmt.Fprintf(os.Stderr, "Resolve config failed: %v\n", err)
 		return 1
 	}
-	if err := restoreConfigBackup(resolvedDir, archivePath); err != nil {
+	allowSymlinks := false
+	if cfg, loadErr := config.Load(resolvedPath); loadErr == nil {
+		allowSymlinks = cfg.Service.AllowSymlinks
+	} else {
+		fmt.Fprintf(os.Stderr, "WARN: unable to load config for symlink policy, defaulting to allow_symlinks=false: %v\n", loadErr)
+	}
+
+	if err := restoreConfigBackup(resolvedDir, archivePath, allowSymlinks); err != nil {
 		fmt.Fprintf(os.Stderr, "Restore failed: %v\n", err)
 		return 1
 	}
@@ -2249,7 +2275,7 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 	return included, nil
 }
 
-func restoreConfigBackup(configDir, archivePath string) error {
+func restoreConfigBackup(configDir, archivePath string, allowSymlinks bool) error {
 	// #nosec G304 -- archive path is operator-controlled local input.
 	file, err := os.Open(archivePath)
 	if err != nil {
@@ -2327,6 +2353,29 @@ func restoreConfigBackup(configDir, archivePath string) error {
 			}
 			if limitReader.N != 0 {
 				return fmt.Errorf("archive entry %s truncated", header.Name)
+			}
+		case tar.TypeSymlink:
+			if !allowSymlinks {
+				return fmt.Errorf("symlink entry not allowed: %s", header.Name)
+			}
+			fmt.Fprintf(os.Stderr, "WARN: symlink entry detected in archive: %s -> %s\n", header.Name, header.Linkname)
+			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+				return err
+			}
+			if err := os.Symlink(header.Linkname, dest); err != nil {
+				return err
+			}
+		case tar.TypeLink:
+			if !allowSymlinks {
+				return fmt.Errorf("hardlink entry not allowed: %s", header.Name)
+			}
+			fmt.Fprintf(os.Stderr, "WARN: hardlink entry detected in archive: %s -> %s\n", header.Name, header.Linkname)
+			linkTarget := filepath.Join(configDir, filepath.Clean(header.Linkname))
+			if !strings.HasPrefix(linkTarget, filepath.Clean(configDir)+string(os.PathSeparator)) && filepath.Clean(linkTarget) != filepath.Clean(configDir) {
+				return fmt.Errorf("invalid hardlink target: %s", header.Linkname)
+			}
+			if err := os.Link(linkTarget, dest); err != nil {
+				return err
 			}
 		default:
 			return fmt.Errorf("unsupported archive entry type %q for %s", header.Typeflag, header.Name)

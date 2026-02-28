@@ -1214,12 +1214,30 @@ func runStart(args []string) int {
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
 
+	configPaths, err := config.CollectConfigPaths(*configPath, cfg)
+	if err != nil {
+		logger.Error("config symlink scan failed", "error", err)
+		return 1
+	}
+	symlinkWarnings, err := config.DetectSymlinks(configPaths)
+	if err != nil {
+		logger.Error("config symlink scan failed", "error", err)
+		return 1
+	}
+	for _, warning := range symlinkWarnings {
+		logger.Warn("symlink detected", "path", warning.Path, "resolved", warning.Resolved)
+	}
+	if len(symlinkWarnings) > 0 && !cfg.Service.AllowSymlinks {
+		logger.Error("symlinks detected in config paths but not allowed", "count", len(symlinkWarnings))
+		return 1
+	}
+
 	pluginRoots, err := resolvePluginRoots(cfg, *configPath)
 	if err != nil {
 		logger.Error("plugin root resolution failed", "error", err)
 		return 1
 	}
-	registry, err := plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {
+	registry, err := plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
 		switch level {
 		case "debug":
 			logger.Debug(msg, args...)
@@ -1230,7 +1248,7 @@ func runStart(args []string) int {
 		case "error":
 			logger.Error(msg, args...)
 		}
-	})
+	}, plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks})
 	if err != nil {
 		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
 		return 1
