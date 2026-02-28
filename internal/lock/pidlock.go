@@ -37,21 +37,25 @@ func AcquirePIDLock(lockPath string) (*PIDLock, error) {
 	}
 
 	if err := f.Truncate(0); err != nil {
+		// #nosec G115 -- syscall.Flock requires int fd; Go runtime runs on 64-bit platforms we support.
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 		return nil, fmt.Errorf("truncate lock file: %w", err)
 	}
 	if _, err := f.Seek(0, 0); err != nil {
+		// #nosec G115 -- syscall.Flock requires int fd; Go runtime runs on 64-bit platforms we support.
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 		return nil, fmt.Errorf("seek lock file: %w", err)
 	}
 	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
+		// #nosec G115 -- syscall.Flock requires int fd; Go runtime runs on 64-bit platforms we support.
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 		return nil, fmt.Errorf("write pid: %w", err)
 	}
 	if err := f.Sync(); err != nil {
+		// #nosec G115 -- syscall.Flock requires int fd; Go runtime runs on 64-bit platforms we support.
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
 		return nil, fmt.Errorf("sync lock file: %w", err)
@@ -66,6 +70,7 @@ func (l *PIDLock) Release() error {
 	if l == nil || l.f == nil {
 		return nil
 	}
+	// #nosec G115 -- syscall.Flock requires int fd; Go runtime runs on 64-bit platforms we support.
 	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
 	err := l.f.Close()
 	l.f = nil

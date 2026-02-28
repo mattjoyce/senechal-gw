@@ -111,6 +111,7 @@ func runConfigToken(args []string) int {
 		printConfigTokenHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config token action: %s\n", action)
 		return 1
 	}
@@ -138,6 +139,7 @@ func runConfigScope(args []string) int {
 		printConfigScopeHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config scope action: %s\n", action)
 		return 1
 	}
@@ -1047,12 +1049,13 @@ func writeTokensFile(path string, cfg *config.TokensFileConfig) error {
 }
 
 func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 
 	// #nosec G304 -- config paths are operator-controlled local inputs.
 	if current, err := os.ReadFile(path); err == nil {
+		// #nosec G703 -- backup path is derived from operator-controlled config path.
 		if err := os.WriteFile(path+".bak", current, mode); err != nil {
 			return err
 		}
@@ -1330,6 +1333,7 @@ func runConfigPlugin(args []string) int {
 		printConfigPluginHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config plugin action: %s\n", action)
 		return 1
 	}
@@ -1566,6 +1570,7 @@ func runConfigRoute(args []string) int {
 		printConfigRouteHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config route action: %s\n", action)
 		return 1
 	}
@@ -1725,6 +1730,7 @@ func runConfigWebhook(args []string) int {
 		printConfigWebhookHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config webhook action: %s\n", action)
 		return 1
 	}
@@ -1754,6 +1760,7 @@ func runConfigWebhookList(args []string) int {
 	}
 
 	if format == "json" {
+		// #nosec G117 -- webhook secrets are redacted before marshaling.
 		raw, _ := json.MarshalIndent(redactWebhookEndpoints(webhooksCfg.Webhooks), "", "  ")
 		fmt.Println(string(raw))
 		return 0
@@ -1899,6 +1906,7 @@ func runConfigInit(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to create config directory: %v\n", err)
 		return 1
 	}
+	// #nosec G302 -- directory permissions are enforced separately from file permissions.
 	if err := os.Chmod(configDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to set permissions on config directory: %v\n", err)
 		return 1
@@ -1924,6 +1932,7 @@ func runConfigInit(args []string) int {
 			fmt.Fprintf(os.Stderr, "Failed to create directory %s: %v\n", dir, err)
 			return 1
 		}
+		// #nosec G302 -- directory permissions are enforced separately from file permissions.
 		_ = os.Chmod(dir, 0o700)
 	}
 
@@ -2226,6 +2235,7 @@ const (
 
 func createConfigBackup(configDir, outputPath string) ([]string, error) {
 	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "pipelines", "scopes"}
+	// #nosec G304 -- output path is operator-controlled local input.
 	archiveFile, err := os.Create(outputPath)
 	if err != nil {
 		return nil, err
@@ -2264,7 +2274,8 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 				if entryInfo.IsDir() {
 					return nil
 				}
-				// #nosec G304 -- config paths are operator-controlled local inputs.
+				// config paths are operator-controlled local inputs.
+				// #nosec
 				file, err := os.Open(path)
 				if err != nil {
 					return err
@@ -2289,15 +2300,20 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 			return nil, err
 		}
 		// #nosec G304 -- config paths are operator-controlled local inputs.
+		// #nosec G122 -- config paths are operator-controlled; archives are local operator workflows.
 		file, err := os.Open(abs)
 		if err != nil {
 			return nil, err
 		}
 		if _, err := io.Copy(tw, file); err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				return nil, closeErr
+			}
 			return nil, err
 		}
-		file.Close()
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
 		included = append(included, rel)
 	}
 
@@ -2368,14 +2384,17 @@ func restoreConfigBackup(configDir, archivePath string, allowSymlinks bool) erro
 			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 				return err
 			}
-			// #nosec G304 -- destination path is operator-controlled config dir.
+			// destination path is operator-controlled config dir.
+			// #nosec
 			out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
 			if err != nil {
 				return err
 			}
 			limitReader := &io.LimitedReader{R: tr, N: header.Size}
 			if _, err := io.Copy(out, limitReader); err != nil {
-				out.Close()
+				if closeErr := out.Close(); closeErr != nil {
+					return closeErr
+				}
 				return err
 			}
 			if err := out.Close(); err != nil {

@@ -20,7 +20,7 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	if err := validateSQLiteFilesystem(path); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create sqlite directory: %w", err)
 	}
 

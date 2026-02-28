@@ -20,6 +20,7 @@ func detectFilesystemType(path string) (string, error) {
 		return "", fmt.Errorf("statfs %q: %w", path, err)
 	}
 
+	// #nosec G115 -- statfs type is platform-specific; safe cast for magic comparison.
 	switch uint64(stat.Type) {
 	case linuxNFSMagic:
 		return "nfs", nil
@@ -30,6 +31,7 @@ func detectFilesystemType(path string) (string, error) {
 	case linuxSMB2Magic:
 		return "smb2", nil
 	default:
+		// #nosec G115 -- statfs type is platform-specific; safe cast for reporting.
 		return fmt.Sprintf("0x%x", uint64(stat.Type)), nil
 	}
 }

@@ -383,6 +383,7 @@ func runSystemNoun(args []string) int {
 		printSystemNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown system action: %s\n", action)
 		return 1
 	}
@@ -453,6 +454,7 @@ func runConfigNoun(args []string) int {
 		printConfigNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config action: %s\n", action)
 		return 1
 	}
@@ -749,6 +751,7 @@ func runJobNoun(args []string) int {
 		printJobNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown job action: %s\n", action)
 		return 1
 	}
@@ -787,6 +790,7 @@ func runPluginNoun(args []string) int {
 		printPluginNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown plugin action: %s\n", action)
 		return 1
 	}

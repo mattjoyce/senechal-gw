@@ -549,7 +549,9 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Error("failed to write trigger response", "error", err)
+	}
 }
 
 // handleGetJob handles GET /job/{jobID}

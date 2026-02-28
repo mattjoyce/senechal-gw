@@ -527,6 +527,7 @@ func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int
 	jitter := time.Duration(0)
 	maxJitter := base / 4
 	if maxJitter > 0 {
+		// #nosec G404 -- jitter is non-cryptographic scheduling noise.
 		jitter = time.Duration(rand.Int63n(int64(maxJitter) + 1))
 	}
 
