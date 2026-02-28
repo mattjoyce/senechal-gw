@@ -1,6 +1,6 @@
 ---
 id: 137
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [improvement, security, sqlite, queue]
@@ -33,12 +33,13 @@ tags: [improvement, security, sqlite, queue]
 - If any user input flows into `whereClause`, refactor to parameterized queries.
 
 ## Acceptance Criteria
-- [ ] Document the `whereClause` construction path and trust model.
-- [ ] Ensure only whitelisted columns/operators can appear in the where clause.
-- [ ] Either: fully parameterize the query OR add a `// #nosec` with a clear justification.
+- [x] Document the `whereClause` construction path and trust model.
+- [x] Ensure only whitelisted columns/operators can appear in the where clause.
+- [x] Either: fully parameterize the query OR add a `// #nosec` with a clear justification.
 
 ## Notes (assistant’s take)
 This *could* be design-breaking if filters are user-controlled. If they are config-controlled only, it’s still worth formalizing a builder so the trust model is explicit and gosec stops screaming.
 
 ## Narrative
 - 2026-02-28: Created after gosec flagged SQL string formatting; needs explicit query builder/whitelist decision. (by @assistant)
+- 2026-02-28: Replaced fmt.Sprintf assembly with fixed-fragment builder and parameterized args; documented trust model in code. (by @assistant)

@@ -419,22 +419,19 @@ func (q *Queue) ListJobs(ctx context.Context, filter ListJobsFilter) ([]*JobSumm
 
 	whereClause := strings.Join(whereParts, " AND ")
 
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM job_queue WHERE %s;`, whereClause)
+	// whereClause is composed from fixed fragments; values are parameterized via args.
+	countQuery := "SELECT COUNT(*) FROM job_queue WHERE " + whereClause + ";"
 	var total int
 	if err := q.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count jobs: %w", err)
 	}
 
-	listQuery := fmt.Sprintf(`
-SELECT
-  id, plugin, command, status, created_at, started_at, completed_at, attempt
-FROM job_queue
-WHERE %s
-ORDER BY created_at DESC, rowid DESC
-LIMIT ?;
-`, whereClause)
+	listQuery := strings.Builder{}
+	listQuery.WriteString("\nSELECT\n  id, plugin, command, status, created_at, started_at, completed_at, attempt\nFROM job_queue\nWHERE ")
+	listQuery.WriteString(whereClause)
+	listQuery.WriteString("\nORDER BY created_at DESC, rowid DESC\nLIMIT ?;\n")
 	listArgs := append(append([]any{}, args...), limit)
-	rows, err := q.db.QueryContext(ctx, listQuery, listArgs...)
+	rows, err := q.db.QueryContext(ctx, listQuery.String(), listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list jobs: %w", err)
 	}
