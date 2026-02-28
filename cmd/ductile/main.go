@@ -106,6 +106,7 @@ func runCLI(cliArgs []string) int {
 		return 0
 
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
 		return 1

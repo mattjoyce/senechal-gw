@@ -30,6 +30,7 @@ func AcquirePIDLock(lockPath string) (*PIDLock, error) {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 
+	// #nosec G115 -- syscall.Flock requires int fd; Go runtime runs on 64-bit platforms we support.
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("acquire lock: %w", err)

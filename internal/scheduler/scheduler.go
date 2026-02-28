@@ -648,8 +648,8 @@ func calculateJitteredInterval(baseInterval time.Duration, jitter time.Duration)
 	if jitter <= 0 {
 		return baseInterval
 	}
-	// Generate a random duration between 0 and jitter
-	// Using rand.Int63n for a positive random number up to jitter.Nanoseconds()
+	// Generate a random duration between 0 and jitter.
+	// #nosec G404 -- jitter is non-cryptographic scheduling noise.
 	randomJitter := time.Duration(rand.Int63n(jitter.Nanoseconds()))
 	return baseInterval + randomJitter
 }

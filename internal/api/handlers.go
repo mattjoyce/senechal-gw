@@ -581,7 +581,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Error("failed to write job response", "error", err)
+	}
 }
 
 // handleListJobs handles GET /jobs.
