@@ -38,6 +38,9 @@ rg "dispatch loop|protocol|dedupe_key"
 
 - Go unit tests live next to code as `*_test.go` (table-driven tests preferred).
 - For end-to-end validation, follow/extend `kanban/echo-plugin-e2e-runbook.md`.
+- Run security scans with gosec when touching config/IO paths:
+  - `gosec -fmt json -out gosec.json -no-fail ./...`
+  - Keep reports local unless a card or review requests committing them.
 - Avoid committing local state: SQLite files under `data/` are ignored.
 
 ## Commit & Pull Request Guidelines
