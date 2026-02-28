@@ -936,7 +936,7 @@ For the complete configuration specification, including file formats, merge logi
 ### 13.2 Key Principles
 
 - **Directory-Based Modularity:** Configuration is split into `config.yaml`, `webhooks.yaml`, `tokens.yaml`, and modular directories for `plugins/` and `pipelines/`.
-- **Multi-Root Plugin Discovery:** `plugin_roots` is preferred and takes precedence over `plugins_dir`; roots are scanned in order and first match wins on duplicate plugin names.
+- **Multi-Root Plugin Discovery:** `plugin_roots` is the source of truth; roots are scanned in order and first match wins on duplicate plugin names.
 - **Pipeline Discovery Flow:** Pipelines are loaded from both `pipelines/*.yaml` (alphabetical) and optional top-level `pipelines.yaml`.
 - **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
 - **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).

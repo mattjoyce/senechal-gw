@@ -16,8 +16,8 @@ func validConfig() *config.Config {
 			TickInterval: 60 * time.Second,
 			LogLevel:     "info",
 		},
-		State:      config.StateConfig{Path: "/tmp/test.db"},
-		PluginsDir: "./plugins",
+		State:       config.StateConfig{Path: "/tmp/test.db"},
+		PluginRoots: []string{"./plugins"},
 		Plugins: map[string]config.PluginConf{
 			"echo": {
 				Enabled: true,
@@ -57,10 +57,10 @@ func TestValidate_ValidConfig(t *testing.T) {
 	}
 }
 
-func TestValidate_MissingPluginsDir(t *testing.T) {
+func TestValidate_MissingPluginRoots(t *testing.T) {
 	t.Parallel()
 	cfg := validConfig()
-	cfg.PluginsDir = ""
+	cfg.PluginRoots = nil
 	d := New(cfg, registryWith(echoPlugin()))
 	r := d.Validate()
 	if r.Valid {

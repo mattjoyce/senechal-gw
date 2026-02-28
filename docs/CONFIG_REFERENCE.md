@@ -108,11 +108,9 @@ state:
   path: ./data/state.db
 ```
 
-`plugin_roots` is the preferred multi-root setting.
+`plugin_roots` is the multi-root setting.
 
 Discovery behavior:
-- `plugin_roots` takes precedence over `plugins_dir`.
-- If `plugin_roots` is empty, `plugins_dir` is used as a single fallback root.
 - Duplicate roots are ignored after first occurrence.
 - Roots are scanned in order; if duplicate plugin names exist across roots, the first discovered plugin is kept and later duplicates are ignored.
 

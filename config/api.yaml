@@ -1,0 +1,10 @@
+# Example API configuration
+api:
+  enabled: true
+  listen: "127.0.0.1:8081"
+  auth:
+    tokens:
+      - token: "REPLACE_WITH_ADMIN_TOKEN"
+        scopes: ["*"]
+      - token: "REPLACE_WITH_READONLY_TOKEN"
+        scopes: ["plugin:ro", "job:ro", "state:ro"]

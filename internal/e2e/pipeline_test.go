@@ -119,7 +119,7 @@ except Exception as e:
 	}
 
 	cfg := config.Defaults()
-	cfg.PluginsDir = pluginsDir
+	cfg.PluginRoots = []string{pluginsDir}
 	for _, p := range []string{"trigger", "processor", "notifier"} {
 		cfg.Plugins[p] = config.PluginConf{Enabled: true}
 	}

@@ -1,0 +1,8 @@
+# Example webhooks configuration
+webhooks:
+  endpoints:
+    - name: example_handler
+      path: /webhook/example
+      plugin: sys_exec
+      secret: "REPLACE_WITH_WEBHOOK_SECRET"
+      signature_header: X-Ductile-Signature-256

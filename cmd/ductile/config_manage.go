@@ -956,7 +956,7 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {
 	roots := cfg.EffectivePluginRoots()
 	if len(roots) == 0 {
-		return nil, fmt.Errorf("plugin_roots or plugins_dir is required")
+		return nil, fmt.Errorf("plugin_roots is required")
 	}
 
 	baseDir := configPath
@@ -1953,7 +1953,8 @@ state:
 api:
   enabled: false
   listen: "127.0.0.1:8080"
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins: {}
 `
 	if err := writeIfNeeded(filepath.Join(configDir, "config.yaml"), configYAML, 0o600); err != nil {

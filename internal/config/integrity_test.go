@@ -143,7 +143,7 @@ func TestVerifyIntegrityNoManifestNoHighSecurity(t *testing.T) {
 
 func setupIntegrityDir(t *testing.T, dir string) {
 	t.Helper()
-	writeTestFile(t, filepath.Join(dir, "config.yaml"), "service:\n  name: test\n  tick_interval: 60s\nstate:\n  path: ./test.db\nplugins_dir: ./plugins\n")
+	writeTestFile(t, filepath.Join(dir, "config.yaml"), "service:\n  name: test\n  tick_interval: 60s\nstate:\n  path: ./test.db\nplugin_roots:\n  - ./plugins\n")
 	writeTestFile(t, filepath.Join(dir, "tokens.yaml"), "tokens:\n  - name: admin\n    key: secret123\n")
 	os.MkdirAll(filepath.Join(dir, "plugins"), 0755)
 	writeTestFile(t, filepath.Join(dir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: true\n    schedule:\n      every: 5m\n")

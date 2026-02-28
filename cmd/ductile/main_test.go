@@ -288,6 +288,8 @@ func TestRunConfigSetApplyRejectsInvalidConfigAndRollsBack(t *testing.T) {
 	configYAML := `
 service:
   name: test-gw
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
@@ -324,6 +326,8 @@ func TestRunSystemResetResetsCircuitBreaker(t *testing.T) {
 	configYAML := `
 state:
   path: ` + dbPath + `
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: false
@@ -443,7 +447,8 @@ service:
   log_level: info
 state:
   path: ` + filepath.Join(dir, "state.db") + `
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins: {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -558,7 +563,8 @@ service:
   log_level: info
 state:
   path: ` + filepath.Join(dir, "state.db") + `
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins: {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -703,7 +709,8 @@ service:
   log_level: info
 state:
   path: ` + filepath.Join(dir, "state.db") + `
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins:
   withings:
     enabled: false
@@ -976,7 +983,8 @@ service:
   log_level: info
 state:
   path: ` + dbPath + `
-plugins_dir: ` + filepath.Join(tmpDir, "plugins") + `
+plugin_roots:
+  - ` + filepath.Join(tmpDir, "plugins") + `
 plugins: {}
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
@@ -1049,7 +1057,8 @@ service:
   log_level: info
 state:
   path: ` + dbPath + `
-plugins_dir: ` + filepath.Join(tmpDir, "plugins") + `
+plugin_roots:
+  - ` + filepath.Join(tmpDir, "plugins") + `
 plugins: {}
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
@@ -1166,6 +1175,8 @@ service:
   name: test-gw
 state:
   path: ` + dbPath + `
+plugin_roots:
+  - ./plugins
 plugins: {}
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {

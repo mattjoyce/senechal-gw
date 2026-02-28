@@ -52,7 +52,7 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 	hub := events.NewHub(128)
 
 	cfg := config.Defaults()
-	cfg.PluginsDir = pluginsDir
+	cfg.PluginRoots = []string{pluginsDir}
 
 	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
 
@@ -741,7 +741,7 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 	}
 
 	cfg := config.Defaults()
-	cfg.PluginsDir = pluginsDir
+	cfg.PluginRoots = []string{pluginsDir}
 	cfg.Plugins["plugin-a"] = config.PluginConf{
 		Enabled: true,
 		Timeouts: &config.TimeoutsConfig{

@@ -23,7 +23,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
@@ -38,9 +39,6 @@ plugins:
 				}
 				if cfg.State.Path != "./test.db" {
 					t.Error("state.path not parsed")
-				}
-				if cfg.PluginsDir != "./plugins" {
-					t.Error("plugins_dir not parsed")
 				}
 				echo, ok := cfg.Plugins["echo"]
 				if !ok {
@@ -59,13 +57,12 @@ plugins:
 			},
 		},
 		{
-			name: "plugin_roots parsed and preferred over plugins_dir",
+			name: "plugin_roots parsed",
 			yaml: `
 service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
 plugin_roots:
   - ./external-plugins
   - /opt/ductile-plugins
@@ -107,7 +104,8 @@ service:
   tick_interval: 30s
 state:
   path: ${DB_PATH}
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -143,7 +141,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -163,7 +162,8 @@ service:
   log_level: invalid
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `,
 			wantErr: true,
 		},
@@ -174,7 +174,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -197,7 +198,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -212,7 +214,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -228,7 +231,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -248,7 +252,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -265,7 +270,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -282,7 +288,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -309,7 +316,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -325,7 +333,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: false
@@ -345,7 +354,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -366,7 +376,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -387,7 +398,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -408,7 +420,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -564,8 +577,8 @@ func TestValidate(t *testing.T) {
 					TickInterval: 60 * time.Second,
 					LogLevel:     "info",
 				},
-				State:      StateConfig{Path: "./test.db"},
-				PluginsDir: "./plugins",
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
 				Plugins: map[string]PluginConf{
 					"test": {
 						Enabled: true,
@@ -580,9 +593,9 @@ func TestValidate(t *testing.T) {
 		{
 			name: "negative tick interval",
 			cfg: &Config{
-				Service:    ServiceConfig{TickInterval: -1},
-				State:      StateConfig{Path: "./test.db"},
-				PluginsDir: "./plugins",
+				Service:     ServiceConfig{TickInterval: -1},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
 			},
 			wantErr: true,
 		},
@@ -593,22 +606,22 @@ func TestValidate(t *testing.T) {
 					TickInterval: 60 * time.Second,
 					LogLevel:     "trace",
 				},
-				State:      StateConfig{Path: "./test.db"},
-				PluginsDir: "./plugins",
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing state path",
 			cfg: &Config{
-				Service:    ServiceConfig{TickInterval: 60 * time.Second, LogLevel: "info"},
-				State:      StateConfig{},
-				PluginsDir: "./plugins",
+				Service:     ServiceConfig{TickInterval: 60 * time.Second, LogLevel: "info"},
+				State:       StateConfig{},
+				PluginRoots: []string{"./plugins"},
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing plugins dir",
+			name: "missing plugin_roots",
 			cfg: &Config{
 				Service: ServiceConfig{TickInterval: 60 * time.Second, LogLevel: "info"},
 				State:   StateConfig{Path: "./test.db"},
@@ -642,7 +655,8 @@ service:
   log_level: info
 state:
   path: /var/lib/ductile/state.db
-plugins_dir: /usr/local/lib/ductile/plugins
+plugin_roots:
+  - /usr/local/lib/ductile/plugins
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
@@ -693,7 +707,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -742,7 +757,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `, pluginsPath)
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -791,7 +807,8 @@ state:
 	configYAML := `
 include:
   - a.yaml
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -843,7 +860,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
@@ -1003,7 +1021,8 @@ include:
 
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
@@ -1044,7 +1063,8 @@ service:
   log_level: info
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true

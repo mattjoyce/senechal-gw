@@ -105,6 +105,8 @@ func TestSetPath(t *testing.T) {
 	initialYAML := `
 service:
   name: old-name
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
@@ -147,6 +149,8 @@ func TestSetPathRollbackOnValidationFailure(t *testing.T) {
 	initialYAML := `
 service:
   name: test-gw
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true

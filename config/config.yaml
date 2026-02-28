@@ -1,0 +1,26 @@
+# Ductile example config (NOT USED BY DEFAULT)
+# Copy this folder to ~/.config/ductile/ (or $XDG_CONFIG_HOME/ductile/)
+# and edit values for your environment.
+
+log_level: info
+
+service:
+  strict_mode: true
+
+state:
+  # Keep state alongside the other ductile config files
+  path: "~/.config/ductile/ductile.db"
+
+plugin_roots:
+  - "~/.config/ductile/plugins"
+  - "./plugins"
+
+webhooks:
+  listen: "127.0.0.1:8091"
+
+# Split the rest of the configuration into focused files.
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml
+  - webhooks.yaml

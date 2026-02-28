@@ -15,7 +15,6 @@ type Config struct {
 	State       StateConfig           `yaml:"state"`
 	Database    StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
 	API         APIConfig             `yaml:"api,omitempty"`
-	PluginsDir  string                `yaml:"plugins_dir"`
 	PluginRoots []string              `yaml:"plugin_roots,omitempty"`
 	Plugins     map[string]PluginConf `yaml:"plugins"`
 	Routes      []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
@@ -365,20 +364,14 @@ func Defaults() *Config {
 				APIKey: "",
 			},
 		},
-		PluginsDir: "./plugins",
 		Plugins:    make(map[string]PluginConf),
 	}
 }
 
 // EffectivePluginRoots returns deduplicated plugin roots in priority order.
-// plugin_roots takes precedence over plugins_dir. Empty values are ignored.
 func (c *Config) EffectivePluginRoots() []string {
-	roots := make([]string, 0, len(c.PluginRoots)+1)
-	if len(c.PluginRoots) > 0 {
-		roots = append(roots, c.PluginRoots...)
-	} else if c.PluginsDir != "" {
-		roots = append(roots, c.PluginsDir)
-	}
+	roots := make([]string, 0, len(c.PluginRoots))
+	roots = append(roots, c.PluginRoots...)
 
 	seen := make(map[string]struct{}, len(roots))
 	out := make([]string, 0, len(roots))

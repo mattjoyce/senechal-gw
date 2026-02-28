@@ -339,10 +339,7 @@ func deepMergeConfig(dst, src *Config) error {
 		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
 	}
 
-	// Merge plugins_dir
-	if src.PluginsDir != "" {
-		dst.PluginsDir = src.PluginsDir
-	}
+	// Merge plugin_roots
 	if len(src.PluginRoots) > 0 {
 		dst.PluginRoots = append(dst.PluginRoots, src.PluginRoots...)
 	}
@@ -473,11 +470,6 @@ func applyConfigDefaults(cfg *Config) *Config {
 		cfg.API.MaxSyncTimeout = 5 * time.Minute
 	}
 
-	// Apply plugins_dir default if not set
-	if cfg.PluginsDir == "" {
-		cfg.PluginsDir = defaults.PluginsDir
-	}
-
 	return cfg
 }
 
@@ -517,7 +509,7 @@ func validate(cfg *Config) error {
 
 	// Plugin roots validation
 	if len(cfg.EffectivePluginRoots()) == 0 {
-		return fmt.Errorf("plugin_roots or plugins_dir is required")
+		return fmt.Errorf("plugin_roots is required")
 	}
 
 	// API auth validation

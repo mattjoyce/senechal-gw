@@ -1,0 +1,19 @@
+# Example pipelines configuration
+pipelines:
+  - name: youtube-wisdom
+    on: youtube.url.detected
+    steps:
+      - id: transcript
+        uses: youtube_transcript
+      - id: summarize
+        uses: fabric
+      - id: write
+        uses: file_handler
+
+  - name: web-summarize
+    on: web.url.detected
+    steps:
+      - id: summarize
+        uses: fabric
+      - id: write
+        uses: file_handler

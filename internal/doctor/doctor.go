@@ -67,7 +67,7 @@ func (d *Doctor) addWarning(r *Result, category, field, msg string) {
 // validateServiceConfig checks required service fields.
 func (d *Doctor) validateServiceConfig(r *Result) {
 	if len(d.cfg.EffectivePluginRoots()) == 0 {
-		d.addError(r, "service", "plugin_roots", "plugin_roots or plugins_dir is required")
+		d.addError(r, "service", "plugin_roots", "plugin_roots is required")
 	}
 	if d.cfg.State.Path == "" {
 		d.addError(r, "service", "state.path", "state.path is required")

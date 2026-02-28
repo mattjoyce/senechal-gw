@@ -15,7 +15,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `)
 	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
 	writeTestFile(t, filepath.Join(tmpDir, "plugins", "echo.yaml"), `
@@ -62,7 +63,8 @@ service:
   name: test-gw
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `)
 
 	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
@@ -160,7 +162,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `)
 
 	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
@@ -227,7 +230,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `)
 	writeTestFile(t, filepath.Join(tmpDir, "tokens.yaml"), `
 tokens:
@@ -265,7 +269,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `)
 	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
 	writeTestFile(t, filepath.Join(tmpDir, "plugins", "echo.yaml"), `
