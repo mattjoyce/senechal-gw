@@ -24,6 +24,13 @@ Add a `SIGHUP`-triggered config reload (or a `POST /admin/reload` API endpoint) 
 2. Updates in-memory state (token list, plugin registry, pipeline routes)
 3. Does **not** restart the HTTP server or drop SSE connections
 
+### Implementation Sketch
+
+- **Signal path (primary):** add a SIGHUP handler in the main process that attempts a reload and swaps the live config snapshot on success.
+- **CLI helper:** `ductile system reload` reads the PID lock (`<state_db_dir>/<state_db_basename>.pid`) and sends SIGHUP.
+- **Shell equivalent:** `kill -HUP $(cat <state_db_dir>/<state_db_basename>.pid)`
+- **API (optional):** `POST /admin/reload` behind `admin` scope to trigger the same reload logic.
+
 ## Acceptance Criteria
 
 - [ ] `docker kill --signal=SIGHUP ductile` reloads config without restarting
