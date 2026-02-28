@@ -23,7 +23,7 @@ import (
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, RootResponse{
 		Name:          "Ductile Gateway",
-		Description:   "Integration gateway for triggering plugins and pipelines.",
+		Description:   "Lightweight, open-source integration engine for the agentic era.",
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
 		Discovery: map[string]string{
 			"health":    "/healthz",
@@ -685,7 +685,7 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListSkills handles GET /skills.
-// It returns a unified skills index with atomic plugin skills and orchestrated pipeline skills.
+// It returns a unified capability index (the Connector Catalog) with atomic plugin operations and orchestrated pipelines.
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 	plugins := s.registry.All()
 	var pNames []string

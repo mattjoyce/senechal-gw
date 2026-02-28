@@ -3,83 +3,38 @@
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Ductile is an LLM Boundary Layer Affordance.**
+**Ductile is a lightweight, open-source integration engine for the agentic era.**
 
-It sits between model intent and real-world side effects, turning "do this" into safe, bounded, and observable execution.
-
-In practical terms: Ductile is the control plane that gives an LLM useful affordances for operations without giving it unconstrained access to your systems.
+It sits in the **"Integration Sphere,"** grounding high-level model intent into safe, functional, and observable system side effects.
 
 ---
 
-## What This Means
+## What is Ductile?
 
-An LLM is good at intent and synthesis, but weak at execution safety.
+Ductile is a governed execution gateway designed to be operated by both humans and LLM Operators. It provides the functional **affordances** (Skills) that an agent needs to be useful, while maintaining **robust compound semantic grounding** that a human systems engineer can trust.
 
-Ductile provides the missing layer:
+### Core Philosophy: The Managed Integration Gateway
 
-- **Bounded capability surface:** plugin manifests, command types, and scoped auth tokens.
-- **Safe execution semantics:** queued jobs, retries, backoff, poll guards, and circuit breakers.
-- **Governed routing:** explicit pipeline/event transitions instead of ad-hoc tool chaining.
-- **Operator controls:** dry-run paths, config integrity checks, and reset/diagnostic utilities.
-- **Auditability:** event context lineage, structured logs, job history, and real-time event streams.
-
-## What Ductile Is (and Is Not)
-
-- **Is:** a governed execution boundary for LLM and human operators.
-- **Is:** a reliability-first integration runtime with clear operational controls.
-- **Is not:** a general autonomous agent framework.
-- **Is not:** a direct "LLM-to-external-system" bypass.
-
-## Architecture (Mental Model)
-
-```text
-LLM/Human Intent
-      |
-      v
- Ductile Boundary Layer
-  - Auth + scopes
-  - Policy + routing
-  - Queue + retries + circuit breakers
-  - Event context + audit trail
-      |
-      v
-Polyglot Plugins -> External APIs/Systems
-```
-
-## Documentation Index
-
-We have reorganized our documentation into role-based manuals to improve clarity for both humans and LLM operators.
-
-### [Getting Started](docs/GETTING_STARTED.md)
-The absolute first stop. Installation, basic usage, and core CLI principles.
-
-### [Operator Guide](docs/OPERATOR_GUIDE.md)
-The manual for running the system. Monitoring (TUI), system maintenance, and API control.
-
-### [Plugin Development](docs/PLUGIN_DEVELOPMENT.md)
-A guide for developers building new capabilities (Skills) using Protocol v2.
-
-### [Architecture & Pipelines](docs/ARCHITECTURE.md)
-Deep dive into the engine, the Governance Hybrid model, and the Pipeline DSL.
-
-### [Configuration Reference](docs/CONFIG_REFERENCE.md)
-Strict technical specification for YAML structure and integrity verification.
-
-### [Webhooks](docs/WEBHOOKS.md)
-Webhook listener configuration, signing, and include-mode notes.
-
-### [Cookbook](docs/COOKBOOK.md)
-Practical patterns for wiring plugins together.
+- **Lightweight & Quick to Deploy:** A single-binary Go runtime with SQLite persistence. No complex infrastructure required.
+- **Polyglot Extensibility:** Build connectors in any language. If it can read `stdin` and write `stdout`, it's a Ductile plugin.
+- **Agentic Readiness (LX):** Self-describing via the `--skills` protocol, governable via RFC-004 (Config Lock), and built for "Inference Frugality."
+- **Reliability First:** Built-in retries, circuit breakers, and stateful **Baggage** for tracing complex multi-hop orchestrations.
+- **Audit-First:** Every action produces an immutable record in the **Execution Ledger**, complete with workspace artifacts and lineage.
 
 ---
 
-## Key Features
+## Key Concepts (The Integration Codex)
 
-- **Polyglot Plugins:** Write logic in any language. If it can read `stdin` and write `stdout`, it's a plugin.
-- **Reliability First:** Crash recovery, retries with exponential backoff, and circuit breakers.
-- **Governance Hybrid:** Automatic metadata ("Baggage") accumulation and zero-copy workspace cloning.
-- **Security by Design:** BLAKE3-based integrity verification and scoped Bearer tokens.
-- **Real-Time Monitoring:** SSE event stream and a built-in "btop-style" TUI dashboard.
+| Term | Integration Role (Core) | Agentic Context (LX) |
+| :--- | :--- | :--- |
+| **Gateway** | The runtime engine (Ductile). | The "Nervous System" of the host. |
+| **Plugin** | A **Connector** to an external system. | The source of new capabilities. |
+| **Command** | A discrete **Operation** (poll, handle). | The specific **Skill** exposed to the LLM. |
+| **Pipeline** | A multi-hop **Orchestration**. | A governed, complex reasoning chain. |
+| **Baggage** | **Stateful Metadata** (Tracing). | The LLM's "Working Memory". |
+| **Workspace** | **Isolated Execution** environment. | The "Paper Trail" for auditing. |
+
+---
 
 ## Quick Start
 
@@ -90,9 +45,18 @@ go build -o ductile ./cmd/ductile
 # Start the gateway
 ./ductile system start
 
-# Launch the monitor/watch UI (in another terminal)
-./ductile system monitor --api-key "your-token"
+# Launch the monitor TUI (in another terminal)
+./ductile system watch
 ```
 
+## Documentation Index
+
+- [**Getting Started**](docs/GETTING_STARTED.md) — Installation and basic usage.
+- [**The Glossary**](docs/GLOSSARY.md) — Nomenclature of the Integration Codex.
+- [**Cookbook**](docs/COOKBOOK.md) — Common patterns (Discord, YouTube, Astro).
+- [**Core Mechanics**](docs/ARCHITECTURE.md) — Deep dive into the Integration Sphere.
+- [**Operator Guide**](docs/OPERATOR_GUIDE.md) — Monitoring and maintenance.
+- [**Plugin Development**](docs/PLUGIN_DEVELOPMENT.md) — Building new Connectors.
+
 ## License
-MIT. See [LICENSE](LICENSE) for details. (Note: Project is in MVP stage).
+MIT. See [LICENSE](LICENSE) for details.

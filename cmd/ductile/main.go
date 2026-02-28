@@ -247,7 +247,7 @@ func validateScheduledCommands(cfg *config.Config, registry *plugin.Registry) er
 }
 
 func printUsage() {
-	fmt.Print(`ductile - Lightweight YAML-configured integration gateway
+	fmt.Print(`ductile - Lightweight, open-source integration engine for the agentic era.
 
 Usage:
   ductile <noun> <action> [flags]
@@ -256,14 +256,14 @@ Core Resources (Nouns):
   system    Gateway lifecycle and health
   config    System configuration and integrity
   job       Execution instances and lineage
-  plugin    Capability discovery and management
+  plugin    Capability discovery and management (Connectors)
 
 System Commands:
-  system start      Start the gateway service in foreground
+  system start      Start the integration gateway in foreground
   system status     Show global gateway health
-  system reset      Reset a plugin poll circuit breaker
+  system reset      Reset a plugin/connector circuit breaker
   system watch      Real-time diagnostic monitoring TUI
-  system skills     Export capability registry as LLM-readable Markdown
+  system skills     Export capability registry (Skills) as LLM-readable Markdown
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
@@ -282,13 +282,13 @@ Job Commands:
   job inspect <id>  Show lineage, baggage, and workspace artifacts
 
 Plugin Commands:
-  plugin list       Show discovered plugins (planned)
+  plugin list       Show discovered plugins/connectors
   plugin run <name> Manual execution (planned)
 
 Manual Triggering:
   trigger           Show instructions for triggering plugins via API
 
-Capability Export:
+Capability Discovery (Skills):
   skills            Export live capability registry as LLM-readable Markdown
 
 General:
