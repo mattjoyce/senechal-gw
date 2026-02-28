@@ -83,22 +83,40 @@ func (d *Doctor) validatePluginRefs(r *Result) {
 		if !pc.Enabled {
 			continue
 		}
-		if _, ok := d.registry.Get(name); !ok {
-			d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s", name),
-				fmt.Sprintf("plugin %q in config but not found in configured plugin roots", name))
+
+		lookupName := name
+		uses := strings.TrimSpace(pc.Uses)
+		if uses != "" {
+			if uses == name {
+				d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s.uses", name),
+					fmt.Sprintf("plugin %q: uses must reference a different base plugin", name))
+				continue
+			}
+			lookupName = uses
+		}
+
+		p, ok := d.registry.Get(lookupName)
+		if !ok {
+			field := fmt.Sprintf("plugins.%s", name)
+			if uses != "" {
+				field = fmt.Sprintf("plugins.%s.uses", name)
+			}
+			d.addError(r, "plugin_refs", field,
+				fmt.Sprintf("plugin %q in config but not found in configured plugin roots", lookupName))
+			continue
 		}
 
 		// Check required config keys
-		if p, ok := d.registry.Get(name); ok && p.ConfigKeys != nil {
+		if p.ConfigKeys != nil {
 			for _, key := range p.ConfigKeys.Required {
 				if pc.Config == nil {
 					d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s.config", name),
-						fmt.Sprintf("plugin %q requires config key %q", name, key))
+						fmt.Sprintf("plugin %q requires config key %q", lookupName, key))
 					continue
 				}
 				if _, exists := pc.Config[key]; !exists {
 					d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s.config.%s", name, key),
-						fmt.Sprintf("plugin %q requires config key %q", name, key))
+						fmt.Sprintf("plugin %q requires config key %q", lookupName, key))
 				}
 			}
 		}

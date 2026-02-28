@@ -939,11 +939,18 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 	if err != nil {
 		return nil, err
 	}
-	return plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
+	registry, err := plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
 		if level == "warn" {
 			fmt.Fprintf(os.Stderr, "WARN: %s %v\n", msg, args)
 		}
 	}, plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := plugin.ApplyAliases(registry, cfg.Plugins); err != nil {
+		return nil, err
+	}
+	return registry, nil
 }
 
 func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {
