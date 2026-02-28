@@ -1,14 +1,16 @@
-# Cookbook
+# Ductile Cookbook: Integration Patterns
 
-Practical patterns for wiring Ductile plugins together.
+Practical recipes for wiring Ductile **Connectors** and **Orchestrations** to solve real-world problems.
 
-## Pattern: Rebuild Astro Staging When Summaries Change
+---
 
-**Use case:** Trigger a site rebuild whenever a new AI-generated summary markdown file appears.
+## Pattern: Automated Astro Staging Rebuild (Watch -> Trigger)
 
-### 1) Watch the summaries folder
+**Use case:** Rebuild your Astro staging site automatically whenever new AI-generated summaries are added to a specific folder.
 
-Configure `folder_watch` to scan the summaries directory on a schedule and emit an event when files change.
+### 1) Configure the `folder_watch` Connector
+
+Set up a **Proactive Operation** (`poll`) to scan your content directory.
 
 ```yaml
 # ~/.config/ductile/plugins.yaml
@@ -17,50 +19,31 @@ plugins:
     enabled: true
     schedule:
       every: 1m
-    timeout: 30s
-    max_attempts: 1
     config:
       watches:
         - id: astro_summaries
-          root: /mnt/Projects/matt_joyce/site/src/content/summaries
+          root: /home/matt/site/src/content/summaries
           event_type: astro.summaries.changed
           recursive: true
           include_globs: ["**/*.md"]
           emit_mode: aggregate
-          emit_initial: false
-          min_stable_age: 1s
 ```
 
-### 2) Pipeline: route the event to a rebuild step
+### 2) Define the Rebuild Orchestration (Pipeline)
 
-Use the pipeline DSL to trigger `astro_rebuild_staging` when the folder watcher emits the event.
+Create a **Pipeline** to respond to the `astro.summaries.changed` event.
 
 ```yaml
 # ~/.config/ductile/pipelines.yaml
 pipelines:
-  - name: astro-rebuild-staging-on-summary-change
+  - name: astro-rebuild-on-change
     on: astro.summaries.changed
     steps:
       - id: rebuild_staging
-        uses: astro_rebuild_staging
+        uses: astro_rebuild_staging  # A sys_exec connector clone
 ```
 
-### 3) Ensure includes
-
-If you use include-mode config, add `pipelines.yaml`:
-
-```yaml
-# ~/.config/ductile/config.yaml
-include:
-  - api.yaml
-  - plugins.yaml
-  - pipelines.yaml
-  - webhooks.yaml
-```
-
-### 4) Rebuild plugin configuration
-
-The rebuild plugin can be a `sys_exec` clone with a fixed command:
+### 3) Configure the Rebuild Connector
 
 ```yaml
 # ~/.config/ductile/plugins.yaml
@@ -68,41 +51,62 @@ plugins:
   astro_rebuild_staging:
     enabled: true
     timeout: 15m
-    max_attempts: 1
     config:
       command: "docker compose -f /home/matt/admin/docker-compose.yml up -d --build"
       working_dir: "/home/matt/admin"
-      timeout_seconds: 900
 ```
 
-### 5) (Optional) Trigger via webhook
+---
 
-If you also want a manual rebuild trigger, you can wire `astro_rebuild_staging` to a webhook endpoint and call it directly.
+## Pattern: Discord Notifications for YouTube Transcripts
+
+**Use case:** When a YouTube transcript is fetched, send a summary directly to a Discord channel.
+
+### 1) The YouTube Fetcher (Proactive)
 
 ```yaml
-# ~/.config/ductile/webhooks.yaml
-webhooks:
-  endpoints:
-    - name: astro_rebuild_staging
-      path: /webhook/astro-rebuild-staging
-      plugin: astro_rebuild_staging
-      secret: "<shared secret>"
-      signature_header: X-Ductile-Signature-256
+# ~/.config/ductile/plugins.yaml
+plugins:
+  youtube_transcript:
+    enabled: true
+    config:
+      video_id: "dQw4w9WgXcQ"
+      emit_event: youtube.transcript.ready
 ```
 
-```bash
-payload='{"payload":{"reason":"manual rebuild"}}'
-sig=$(printf '%s' "$payload" | \
-  openssl dgst -sha256 -hmac '<secret>' -hex | awk '{print $2}')
+### 2) The Notification Orchestration
 
-curl -sS -X POST http://127.0.0.1:8091/webhook/astro-rebuild-staging \
-  -H "Content-Type: application/json" \
-  -H "X-Ductile-Signature-256: sha256=$sig" \
-  -d "$payload"
+This pipeline uses **Baggage** to carry the `video_id` or a `channel_id` from the original trigger through to the final notification step.
+
+```yaml
+# ~/.config/ductile/pipelines.yaml
+pipelines:
+  - name: notify-discord-on-transcript
+    on: youtube.transcript.ready
+    steps:
+      - id: summarize
+        uses: fabric  # AI Analysis step
+      - id: notify
+        uses: sys_exec # Calls a discord webhook curl command
 ```
 
-### Notes
+### 3) Using Baggage in the Notification Step
 
-- `emit_mode: aggregate` emits a single event with lists of created/modified/deleted files.
-- `min_stable_age` helps avoid partial writes being detected as changes.
-- Use a longer rebuild timeout if the container build is slow.
+The `sys_exec` connector can access **Baggage** fields (from the `context` JSON) to customize the notification message.
+
+```yaml
+# In the sys_exec call (Operation)
+config:
+  command: "curl -X POST -H 'Content-Type: application/json' -d '{\"content\": \"Summary: $DUCTILE_PAYLOAD_RESULT\"}' $DISCORD_WEBHOOK_URL"
+```
+
+---
+
+## Why these patterns matter
+
+Ductile is a **"lightweight, open-source integration engine for the agentic era."** These patterns demonstrate its core functional goals:
+- **Useful:** Solves real automation pain points.
+- **Quick to Deploy:** YAML-based config, no heavy infra.
+- **Extensible:** Mix and match polyglot connectors.
+
+By grounding these recipes in the **"Integration Sphere,"** we provide the **"robust compound semantic grounding"** needed for humans to build reliable systems that can then be operated or optimized by LLMs.
