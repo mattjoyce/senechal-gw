@@ -1,21 +1,21 @@
 ---
-id: 131
+id: 140
 status: doing
 priority: High
 blocked_by: []
 tags: [rfc, architecture, nomenclature, documentation, marketing]
 ---
 
-# RFC-131: Realign Project Identity as an Integration Engine
+# RFC-140: Realign Project Identity as an Integration Engine
 
 ## Goal
-Re-cast Ductile's core identity as a **"Lightweight Open source Integration engine for the agentic era"**. While the system provides robust LLM affordances (LX, RFC-004), its foundation must be grounded in the functional reality of an integration system, utilizing **"robust compound semantic grounding"** that is comprehensible to human operators. 
+Re-cast Ductile's core identity as a **"Lightweight Open source Integration engine for the agentic era"**. While the system provides robust LLM affordances (LX, RFC-004), its foundation must be grounded in the functional reality of an integration system, utilizing **"robust compound semantic grounding"** that is comprehensible to human operators.
 
 ## Situation
 The project direction has meandered slightly, leading to mixed abstractions. Terms like "Skill," "Affordance," and "LLM Boundary Layer" have leaked down into core engine concepts, causing semantic friction. As noted: **"The skills/llm is an abstraction away from the core function. That is a UX/LS issue."** We need to separate the underlying **"Integration sphere"** (the reality of the engine) from the Agentic Readiness layer (how LLMs interact with it).
 
 ## Proposed Action: Root and Branch Review
-Conduct a root and branch review of the codebase, configuration, and documentation to enforce a unified **Ductile Integration Codex**. 
+Conduct a root and branch review of the codebase, configuration, and documentation to enforce a unified **Ductile Integration Codex**.
 
 ### The Ductile Integration Codex (Proposed)
 
@@ -81,3 +81,4 @@ Reviewers are requested to critique the following artifacts to ensure they align
 - 2026-02-28: Created card to firmly ground the project identity in the "Integration Sphere". Formulated the "Ductile Integration Codex" to resolve semantic friction. (by @assistant)
 - 2026-02-28: Updated card to include GitHub/README positioning, hobbyist pain points, and promotion strategy. Embedded the user's specific phrases ("Lightweight Open source Integration engine for the agentic era", "Integration sphere", "robust compound semantic grounding", "Skill/llm is an abstraction") to ensure reviewer alignment. (by @assistant)
 - 2026-02-28: Completed "Root and Branch" realignment of README, Manifesto, CLI Help, and API Discovery. Drafted RFC-008 and added owner recommendations for protocol-level "Baggage" and capability-agnostic manifests. Ready for review. (by @assistant)
+- 2026-02-28: Renamed card from #131 to #140. (by @assistant)
