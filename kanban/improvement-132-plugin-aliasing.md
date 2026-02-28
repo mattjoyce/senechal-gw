@@ -31,12 +31,20 @@ plugins:
     config: { ... }
 ```
 
+## Implementation Sketch
+
+- **Config load:** keep `plugins.<instance>` as-is, but allow `uses` to reference a discovered manifest.
+- **Registry view:** expose *instance* names to the dispatcher/API/TUI; each instance points to a base manifest + instance config overrides.
+- **Manifest reuse:** base manifest is loaded once; instance config is merged on dispatch (same binary, different config).
+- **Optional guard:** if `plugins.<instance>.uses` is set, ignore/override `manifest.name` conflicts (instance name wins).
+
 ## Notes / Considerations
 
 - Dispatcher resolves instance name → base plugin manifest + instance config.
 - `doctor` validates `uses:` targets exist.
 - API/CLI/TUI list instance names (not just base manifests).
 - Decide whether auth scopes apply to instance names (recommended) vs base plugin names.
+- Migration: document replacing copied plugin folders (e.g., `check_youtube` → `switch` + `uses`).
 
 ## Acceptance Criteria
 
