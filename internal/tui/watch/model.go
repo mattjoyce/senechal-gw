@@ -6,8 +6,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
 )
+
+const defaultHeartbeatInterval = time.Minute
 
 // Model is the main BubbleTea model for the watch TUI.
 type Model struct {
@@ -18,16 +21,16 @@ type Model struct {
 	height int
 
 	// State
-	health    HealthState
-	pipelines map[string]*PipelineState
-	schedules map[string]*ScheduleState
-	jobs      map[string]*JobState
-	eventLog  []events.Event
-	lastTick  time.Time
+	health          HealthState
+	pipelineCatalog []PipelineCatalogEntry
+	pipelines       map[string]*PipelineState
+	schedules       map[string]*ScheduleState
+	jobs            map[string]*JobState
+	eventLog        []events.Event
 
 	// Live indicators
-	ticker  Ticker
-	spinner Spinner
+	heartbeat Heartbeat
+	spinner   Spinner
 
 	// UI state
 	theme            Theme
@@ -41,18 +44,20 @@ type Model struct {
 }
 
 // New creates a new watch TUI model.
-func New(apiURL, apiKey string) *Model {
+func New(apiURL, apiKey string, cfg *config.Config) *Model {
 	return &Model{
-		apiURL:    apiURL,
-		apiKey:    apiKey,
-		pipelines: make(map[string]*PipelineState),
-		schedules: make(map[string]*ScheduleState),
-		jobs:      make(map[string]*JobState),
-		eventLog:  make([]events.Event, 0),
-		hubEvents: make(chan events.Event, 100),
-		ticker:    NewTicker(),
-		spinner:   NewSpinner(),
-		theme:     NewDefaultTheme(),
+		apiURL:           apiURL,
+		apiKey:           apiKey,
+		pipelineCatalog:  buildPipelineCatalog(cfg),
+		pipelines:        make(map[string]*PipelineState),
+		schedules:        make(map[string]*ScheduleState),
+		jobs:             make(map[string]*JobState),
+		eventLog:         make([]events.Event, 0),
+		hubEvents:        make(chan events.Event, 100),
+		heartbeat:        NewHeartbeat(),
+		spinner:          NewSpinner(),
+		theme:            NewDefaultTheme(),
+		selectedPipeline: 0,
 	}
 }
 
@@ -77,7 +82,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedPipeline--
 			}
 		case "down", "j":
-			if m.selectedPipeline < len(m.pipelines)-1 {
+			items := buildPipelineList(m.pipelineCatalog, m.pipelines)
+			if m.selectedPipeline < len(items)-1 {
 				m.selectedPipeline++
 			}
 		}
@@ -87,12 +93,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tickMsg:
-		m.ticker.Tick()
 		m.spinner.Decay()
 		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 
 	case eventMsg:
 		e := events.Event(msg)
+
+		if e.Type == "scheduler.tick" {
+			m.heartbeat.OnTick()
+			m.health.Connected = true
+			m.lastError = ""
+			return m, receiveNextEvent(m.hubEvents)
+		}
 
 		// Update event log (newest first)
 		m.eventLog = append([]events.Event{e}, m.eventLog...)
@@ -102,11 +114,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update spinner
 		m.spinner.OnEvent()
-
-		// Track scheduler ticks
-		if e.Type == "scheduler.tick" {
-			m.lastTick = time.Now()
-		}
 
 		// Update pipeline/job state
 		updatePipelineState(m.pipelines, m.jobs, e)
@@ -123,6 +130,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.health.UptimeSeconds = msg.UptimeSeconds
 		m.health.QueueDepth = msg.QueueDepth
 		m.health.PluginsLoaded = msg.PluginsLoaded
+		m.health.ConfigPath = msg.ConfigPath
+		m.health.BinaryPath = msg.BinaryPath
+		m.health.Version = msg.Version
 		m.health.Connected = true
 		m.health.LastCheck = time.Now()
 		m.lastError = ""
@@ -160,10 +170,16 @@ func (m Model) View() string {
 		return "Initializing Overwatch..."
 	}
 
-	header := renderHeader(m.health, m.ticker, m.spinner, m.theme, m.width)
-	pipelines := renderPipelines(m.pipelines, m.selectedPipeline, m.theme, m.width)
+	items := buildPipelineList(m.pipelineCatalog, m.pipelines)
+	selected := m.selectedPipeline
+	if selected >= len(items) && len(items) > 0 {
+		selected = len(items) - 1
+	}
+
+	header := renderHeader(m.health, m.heartbeat, m.spinner, m.theme, m.width, defaultHeartbeatInterval, m.apiURL)
+	pipelines := renderPipelines(items, selected, m.theme, m.width)
+	details := renderPipelineDetails(items, selected, m.theme, m.width)
 	schedules := renderSchedules(m.schedules, m.theme, m.width)
-	eventStream := renderEventStream(m.eventLog, m.theme, m.width)
 
 	// Error bar
 	var errBar string
@@ -175,7 +191,20 @@ func (m Model) View() string {
 		Foreground(lipgloss.Color("241")).
 		Render(" [q] Quit • [↑/↓] Navigate Pipelines")
 
-	parts := []string{header, pipelines, schedules, eventStream}
+	availableHeight := m.height - 2
+	usedHeight := lipgloss.Height(header) + lipgloss.Height(pipelines) + lipgloss.Height(details) + lipgloss.Height(schedules) + lipgloss.Height(help)
+	if errBar != "" {
+		usedHeight += lipgloss.Height(errBar)
+	}
+
+	eventHeight := availableHeight - usedHeight
+	maxEvents := eventHeight - 3
+	if maxEvents < 1 {
+		maxEvents = 1
+	}
+	eventStream := renderEventStream(m.eventLog, m.theme, m.width, maxEvents)
+
+	parts := []string{header, pipelines, details, schedules, eventStream}
 	if errBar != "" {
 		parts = append(parts, errBar)
 	}

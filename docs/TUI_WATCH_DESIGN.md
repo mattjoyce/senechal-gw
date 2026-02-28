@@ -283,6 +283,7 @@ For running jobs with known timeouts:
 ### Health Endpoint (`/healthz`)
 - Polled every 5 seconds
 - Provides: status, uptime, queue_depth, plugins_loaded
+- Metadata: config_path, binary_path, version
 - Plus custom field: `sse_clients` (connection count)
 
 ### Jobs API (`/jobs/:id`)

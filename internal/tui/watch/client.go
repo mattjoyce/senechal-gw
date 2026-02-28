@@ -21,6 +21,9 @@ type healthMsg struct {
 	UptimeSeconds int64  `json:"uptime_seconds"`
 	QueueDepth    int    `json:"queue_depth"`
 	PluginsLoaded int    `json:"plugins_loaded"`
+	ConfigPath    string `json:"config_path"`
+	BinaryPath    string `json:"binary_path"`
+	Version       string `json:"version"`
 }
 
 type tickMsg time.Time

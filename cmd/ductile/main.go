@@ -1111,6 +1111,8 @@ func runWatch(args []string) int {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
 	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
 	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	configDir := fs.String("config-dir", "", "Path to configuration directory")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
@@ -1121,7 +1123,33 @@ func runWatch(args []string) int {
 		return 1
 	}
 
-	m := watch.New(*apiURL, *apiKey)
+	resolvedConfigPath := strings.TrimSpace(*configPath)
+	if strings.TrimSpace(*configDir) != "" {
+		resolvedConfigPath = strings.TrimSpace(*configDir)
+	}
+
+	var cfg *config.Config
+	if resolvedConfigPath == "" {
+		if discovered, err := config.DiscoverConfigDir(); err == nil {
+			resolvedConfigPath = discovered
+		}
+	}
+
+	if resolvedConfigPath != "" {
+		loaded, err := config.Load(resolvedConfigPath)
+		if err != nil {
+			if *configPath != "" || *configDir != "" {
+				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "Warning: unable to load config from %s: %v\n", resolvedConfigPath, err)
+			resolvedConfigPath = ""
+		} else {
+			cfg = loaded
+		}
+	}
+
+	m := watch.New(*apiURL, *apiKey, cfg)
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
@@ -1137,8 +1165,10 @@ func printSystemWatchHelp() {
 	fmt.Println("Shows gateway health, active pipelines, and event stream.")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  --api-url URL    Gateway API URL (default: http://localhost:8080)")
-	fmt.Println("  --api-key KEY    API Bearer Token (or DUCTILE_API_KEY env var)")
+	fmt.Println("  --api-url URL      Gateway API URL (default: http://localhost:8080)")
+	fmt.Println("  --api-key KEY      API Bearer Token (or DUCTILE_API_KEY env var)")
+	fmt.Println("  --config PATH      Path to configuration file or directory")
+	fmt.Println("  --config-dir PATH  Path to configuration directory")
 	fmt.Println()
 	fmt.Println("Keybindings:")
 	fmt.Println("  q, Ctrl+C        Quit")
@@ -1435,12 +1465,20 @@ func runStart(args []string) int {
 				Scopes: t.Scopes,
 			})
 		}
+		binaryPath := ""
+		if execPath, err := os.Executable(); err == nil {
+			binaryPath = execPath
+		}
+
 		apiConfig := api.Config{
 			Listen:            cfg.API.Listen,
 			APIKey:            cfg.API.Auth.APIKey,
 			Tokens:            tokens,
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
+			ConfigPath:        *configPath,
+			BinaryPath:        binaryPath,
+			Version:           version,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
 		go func() {

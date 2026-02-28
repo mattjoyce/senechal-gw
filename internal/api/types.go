@@ -97,7 +97,10 @@ type HealthzResponse struct {
 	PluginsLoaded int    `json:"plugins_loaded"`
 	// PluginsCircuitOpen is reserved for circuit breaker observability.
 	// MVP: always 0 until circuit breaker state is plumbed into the API server.
-	PluginsCircuitOpen int `json:"plugins_circuit_open"`
+	PluginsCircuitOpen int    `json:"plugins_circuit_open"`
+	ConfigPath         string `json:"config_path,omitempty"`
+	BinaryPath         string `json:"binary_path,omitempty"`
+	Version            string `json:"version,omitempty"`
 }
 
 // PluginListResponse is returned by GET /plugins.

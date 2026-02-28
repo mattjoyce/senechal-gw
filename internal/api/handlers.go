@@ -50,6 +50,9 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		QueueDepth:         depth,
 		PluginsLoaded:      len(s.registry.All()),
 		PluginsCircuitOpen: 0,
+		ConfigPath:         strings.TrimSpace(s.config.ConfigPath),
+		BinaryPath:         strings.TrimSpace(s.config.BinaryPath),
+		Version:            strings.TrimSpace(s.config.Version),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

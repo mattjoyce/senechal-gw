@@ -60,6 +60,9 @@ type Config struct {
 	Tokens            []auth.TokenConfig
 	MaxConcurrentSync int
 	MaxSyncTimeout    time.Duration
+	ConfigPath        string
+	BinaryPath        string
+	Version           string
 }
 
 // Server represents the HTTP API server

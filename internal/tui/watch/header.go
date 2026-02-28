@@ -14,11 +14,14 @@ type HealthState struct {
 	UptimeSeconds int64
 	QueueDepth    int
 	PluginsLoaded int
+	ConfigPath    string
+	BinaryPath    string
+	Version       string
 	Connected     bool
 	LastCheck     time.Time
 }
 
-func renderHeader(health HealthState, ticker Ticker, spinner Spinner, theme Theme, width int) string {
+func renderHeader(health HealthState, heartbeat Heartbeat, spinner Spinner, theme Theme, width int, tickInterval time.Duration, apiURL string) string {
 	innerWidth := width - 4
 
 	// Status
@@ -43,10 +46,10 @@ func renderHeader(health HealthState, ticker Ticker, spinner Spinner, theme Them
 		lastEventStr = fmt.Sprintf("%s ago", ago)
 	}
 
-	// Title line with ticker and clock
-	tickerStr := theme.Highlight.Render(ticker.Current())
+	// Title line with heartbeat and clock
+	heartbeatStr := heartbeat.Render(theme, time.Now(), tickInterval)
 	clock := theme.Dim.Render(time.Now().Format("15:04:05"))
-	titleText := fmt.Sprintf(" DUCTILE WATCH %s", tickerStr)
+	titleText := fmt.Sprintf(" %s DUCTILE WATCH", heartbeatStr)
 
 	// Calculate padding between title and clock
 	titleWidth := lipgloss.Width(titleText)
@@ -54,13 +57,20 @@ func renderHeader(health HealthState, ticker Ticker, spinner Spinner, theme Them
 	pad := max(innerWidth-titleWidth-clockWidth-4, 1)
 	titleLine := titleText + strings.Repeat(" ", pad) + clock + " "
 
-	// Stats line
 	statsLine := fmt.Sprintf(" %s %s  ⏱ %s  Queue: %d  Plugins: %d",
 		statusIcon, statusText,
 		uptimeStr,
 		health.QueueDepth,
 		health.PluginsLoaded,
 	)
+
+	metaText := fmt.Sprintf("Config: %s  |  Bin: %s  |  Version: %s  |  API: %s",
+		valueOrDash(health.ConfigPath),
+		valueOrDash(health.BinaryPath),
+		valueOrDash(health.Version),
+		valueOrDash(apiURL),
+	)
+	metaLine := " " + theme.Dim.Render(truncateText(metaText, innerWidth-1))
 
 	// Activity line
 	activityLine := fmt.Sprintf(" Last event: %s %s",
@@ -71,6 +81,7 @@ func renderHeader(health HealthState, ticker Ticker, spinner Spinner, theme Them
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		titleLine,
 		statsLine,
+		metaLine,
 		activityLine,
 	)
 
@@ -85,4 +96,28 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
 	}
 	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+func truncateText(text string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if lipgloss.Width(text) <= max {
+		return text
+	}
+	if max <= 3 {
+		return string([]rune(text)[:max])
+	}
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	return string(runes[:max-3]) + "..."
+}
+
+func valueOrDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }

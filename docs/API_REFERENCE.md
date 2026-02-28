@@ -244,7 +244,10 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
   "status": "ok",
   "uptime_seconds": 3600,
   "queue_depth": 0,
-  "plugins_loaded": 5
+  "plugins_loaded": 5,
+  "config_path": "/etc/ductile",
+  "binary_path": "/usr/local/bin/ductile",
+  "version": "0.1.0-dev"
 }
 ```
 
