@@ -46,3 +46,6 @@ go.work.sum
 # OS
 .DS_Store
 Thumbs.db
+
+# Security scan reports
+gosec.json
