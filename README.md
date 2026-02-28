@@ -1,38 +1,24 @@
-# Ductile (ductile)
+# Ductile
 
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Ductile is a lightweight, open-source integration engine for the agentic era.**
+**Lightweight integration engine for small-scale automation.**
 
-It sits in the **"Integration Sphere,"** grounding high-level model intent into safe, functional, and observable system side effects.
+Full integration engines (n8n, Huginn, Node-RED) are too heavy for personal or homelab use. Cron jobs and personal APIs lack the features you actually want — event routing, pipelines, webhooks, retry logic. Ductile fills that gap.
 
----
-
-## What is Ductile?
-
-Ductile is a governed execution gateway designed to be operated by both humans and LLM Operators. It provides the functional **affordances** (Skills) that an agent needs to be useful, while maintaining **robust compound semantic grounding** that a human systems engineer can trust.
-
-### Core Philosophy: The Managed Integration Gateway
-
-- **Lightweight & Quick to Deploy:** A single-binary Go runtime with SQLite persistence. No complex infrastructure required.
-- **Polyglot Extensibility:** Build connectors in any language. If it can read `stdin` and write `stdout`, it's a Ductile plugin.
-- **Agentic Readiness (LX):** Self-describing via the `--skills` protocol, governable via RFC-004 (Config Lock), and built for "Inference Frugality."
-- **Reliability First:** Built-in retries, circuit breakers, and stateful **Baggage** for tracing complex multi-hop orchestrations.
-- **Audit-First:** Every action produces an immutable record in the **Execution Ledger**, complete with workspace artifacts and lineage.
+A single Go binary orchestrates polyglot plugins via a simple JSON protocol. Write connectors in any language. Configure pipelines in YAML. No cluster, no managed services, no ops overhead.
 
 ---
 
-## Key Concepts (The Integration Codex)
+## Features
 
-| Term | Integration Role (Core) | Agentic Context (LX) |
-| :--- | :--- | :--- |
-| **Gateway** | The runtime engine (Ductile). | The "Nervous System" of the host. |
-| **Plugin** | A **Connector** to an external system. | The source of new capabilities. |
-| **Command** | A discrete **Operation** (poll, handle). | The specific **Skill** exposed to the LLM. |
-| **Pipeline** | A multi-hop **Orchestration**. | A governed, complex reasoning chain. |
-| **Baggage** | **Stateful Metadata** (Tracing). | The LLM's "Working Memory". |
-| **Workspace** | **Isolated Execution** environment. | The "Paper Trail" for auditing. |
+- **Polyglot plugins** — any language, any script. If it reads `stdin` and writes `stdout`, it works.
+- **Event routing & pipelines** — chain connectors, fan out events, build multi-hop workflows.
+- **Scheduler** — fuzzy intervals, jitter, circuit breakers for unattended operation.
+- **Webhooks** — inbound HMAC-verified endpoints.
+- **Reliable by default** — SQLite-backed queue, crash recovery, at-least-once delivery.
+- **LLM-operable** — self-describing via `--skills`, API-driven for agentic workflows.
 
 ---
 
@@ -52,9 +38,9 @@ go build -o ductile ./cmd/ductile
 ## Documentation Index
 
 - [**Getting Started**](docs/GETTING_STARTED.md) — Installation and basic usage.
-- [**The Glossary**](docs/GLOSSARY.md) — Nomenclature of the Integration Codex.
+- [**The Glossary**](docs/GLOSSARY.md) — Key terms and concepts.
 - [**Cookbook**](docs/COOKBOOK.md) — Common patterns (Discord, YouTube, Astro).
-- [**Core Mechanics**](docs/ARCHITECTURE.md) — Deep dive into the Integration Sphere.
+- [**Core Mechanics**](docs/ARCHITECTURE.md) — Architecture and design decisions.
 - [**Operator Guide**](docs/OPERATOR_GUIDE.md) — Monitoring and maintenance.
 - [**Plugin Development**](docs/PLUGIN_DEVELOPMENT.md) — Building new Connectors.
 
