@@ -1,6 +1,6 @@
 ---
 id: 138
-status: todo
+status: done
 priority: Normal
 blocked_by: []
 tags: [improvement, security, permissions, config]
@@ -44,12 +44,13 @@ Gosec flags multiple cases where file/dir permissions are wider than recommended
 - Ensure CLI output does not print secrets unless explicitly requested (masking or redaction by default).
 
 ## Acceptance Criteria
-- [ ] Document and enforce default permissions for config/lock/workspace artifacts.
-- [ ] Update any `WriteFile/OpenFile/MkdirAll` calls that should be tighter.
-- [ ] Audit JSON output for secrets and add masking or require explicit `--show-secrets` if needed.
+- [x] Document and enforce default permissions for config/lock/workspace artifacts.
+- [x] Update any `WriteFile/OpenFile/MkdirAll` calls that should be tighter.
+- [x] Audit JSON output for secrets and add masking or require explicit `--show-secrets` if needed.
 
 ## Notes (assistant’s take)
 This isn’t design-breaking. It’s a baseline policy decision: single-user operator vs shared runtime. I’d default to least‑privilege (0600/0700) unless there’s a documented reason not to.
 
 ## Narrative
 - 2026-02-28: Created after gosec flagged permissions and secret marshaling; requires policy alignment rather than major design changes. (by @assistant)
+- 2026-02-28: Adopted single-user defaults (0700 dirs, 0600 files), tightened lock/workspace/config writes, and redacted secrets in CLI config outputs. (by @assistant)

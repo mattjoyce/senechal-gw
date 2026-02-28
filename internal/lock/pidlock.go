@@ -20,12 +20,12 @@ func AcquirePIDLock(lockPath string) (*PIDLock, error) {
 	if lockPath == "" {
 		return nil, fmt.Errorf("lock path is empty")
 	}
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return nil, fmt.Errorf("create lock directory: %w", err)
 	}
 
 	// #nosec G304 -- lock path is operator-controlled local input.
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}

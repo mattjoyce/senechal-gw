@@ -57,6 +57,36 @@ type tokenInspectJSONOutput struct {
 	ConfigTarget string   `json:"config_target"`
 }
 
+const redactedValue = "[redacted]"
+
+func redactTokenEntry(entry config.TokenEntry) config.TokenEntry {
+	entry.Key = redactedValue
+	return entry
+}
+
+func redactTokenEntries(entries []config.TokenEntry) []config.TokenEntry {
+	out := make([]config.TokenEntry, len(entries))
+	for i, entry := range entries {
+		out[i] = redactTokenEntry(entry)
+	}
+	return out
+}
+
+func redactWebhookEndpoint(entry config.WebhookEndpoint) config.WebhookEndpoint {
+	if entry.Secret != "" {
+		entry.Secret = redactedValue
+	}
+	return entry
+}
+
+func redactWebhookEndpoints(entries []config.WebhookEndpoint) []config.WebhookEndpoint {
+	out := make([]config.WebhookEndpoint, len(entries))
+	for i, entry := range entries {
+		out[i] = redactWebhookEndpoint(entry)
+	}
+	return out
+}
+
 func runConfigToken(args []string) int {
 	if len(args) == 0 || isHelpToken(args[0]) {
 		printConfigTokenHelp()
@@ -305,7 +335,7 @@ func runConfigTokenList(args []string) int {
 	}
 
 	if format == "json" {
-		out, _ := json.MarshalIndent(tokensCfg.Tokens, "", "  ")
+		out, _ := json.MarshalIndent(redactTokenEntries(tokensCfg.Tokens), "", "  ")
 		fmt.Println(string(out))
 		return 0
 	}
@@ -391,7 +421,7 @@ func runConfigTokenInspect(args []string) int {
 	if format == "json" {
 		out := tokenInspectJSONOutput{
 			Name:         entry.Name,
-			Key:          entry.Key,
+			Key:          redactedValue,
 			ScopesFile:   entry.ScopesFile,
 			ScopesHash:   entry.ScopesHash,
 			CurrentHash:  currentHash,
@@ -411,7 +441,7 @@ func runConfigTokenInspect(args []string) int {
 	if entry.CreatedAt != "" {
 		fmt.Printf("Created: %s\n", entry.CreatedAt)
 	}
-	fmt.Printf("Key: %s\n", entry.Key)
+	fmt.Printf("Key: %s\n", redactedValue)
 	if entry.ScopesFile != "" {
 		fmt.Printf("Scope file: %s\n", entry.ScopesFile)
 	}
@@ -1483,7 +1513,7 @@ func runConfigPluginSet(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to encode plugin file: %v\n", err)
 		return 1
 	}
-	if err := writeFileAtomicWithBackup(targetFile, raw, 0o644); err != nil {
+	if err := writeFileAtomicWithBackup(targetFile, raw, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write plugin file: %v\n", err)
 		return 1
 	}
@@ -1724,7 +1754,7 @@ func runConfigWebhookList(args []string) int {
 	}
 
 	if format == "json" {
-		raw, _ := json.MarshalIndent(webhooksCfg.Webhooks, "", "  ")
+		raw, _ := json.MarshalIndent(redactWebhookEndpoints(webhooksCfg.Webhooks), "", "  ")
 		fmt.Println(string(raw))
 		return 0
 	}
@@ -1744,7 +1774,7 @@ func runConfigWebhookList(args []string) int {
 		if hook.SecretRef != "" {
 			fmt.Printf("  SecretRef: %s\n", hook.SecretRef)
 		} else if hook.Secret != "" {
-			fmt.Printf("  Secret: %s\n", hook.Secret)
+			fmt.Printf("  Secret: %s\n", redactedValue)
 		}
 	}
 	return 0
@@ -1829,7 +1859,7 @@ func runConfigWebhookAdd(args []string) int {
 	}
 	if format == "json" {
 		out := map[string]any{
-			"webhook":    entry,
+			"webhook":    redactWebhookEndpoint(entry),
 			"updated":    webhooksFile,
 			"validation": validation,
 		}
@@ -2158,7 +2188,7 @@ func writeRoutesFile(path string, cfg *config.RoutesFileConfig) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicWithBackup(path, raw, 0o644)
+	return writeFileAtomicWithBackup(path, raw, 0o600)
 }
 
 func loadWebhooksFile(path string) (*config.WebhooksFileConfig, error) {

@@ -941,6 +941,8 @@ For the complete configuration specification, including file formats, merge logi
 - **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
 - **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
+- **Default Permissions:** Config directories and workspaces are created with `0700`. Config files and lock files default to `0600`; operators may relax permissions explicitly for shared environments.
+- **Secret Redaction:** CLI config inspection outputs redact token keys and webhook secrets; secrets are only shown at creation time.
 
 ## 14. Deployment
 

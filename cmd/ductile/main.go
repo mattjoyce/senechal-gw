@@ -707,7 +707,7 @@ func applyConfigSetFallback(configTarget, path, value string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomicWithBackup(configFile, updated, 0o644); err != nil {
+	if err := writeFileAtomicWithBackup(configFile, updated, 0o600); err != nil {
 		return err
 	}
 
@@ -716,7 +716,7 @@ func applyConfigSetFallback(configTarget, path, value string) error {
 		// #nosec G304 -- config paths are operator-controlled local inputs.
 		if backup, readErr := os.ReadFile(backupPath); readErr == nil {
 			// #nosec G703 -- config paths are operator-controlled local inputs.
-			_ = os.WriteFile(configFile, backup, 0o644)
+			_ = os.WriteFile(configFile, backup, 0o600)
 		}
 		return fmt.Errorf("validation failed: %w", err)
 	}

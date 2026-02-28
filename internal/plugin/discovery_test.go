@@ -461,7 +461,9 @@ func TestValidateTrust(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			entrypoint, pluginPath, pluginsDir := tt.setupFn(t)
 
-			err := validateTrust(entrypoint, pluginPath, pluginsDir)
+			logger := func(string, string, ...any) {}
+
+			err := validateTrust(entrypoint, pluginPath, pluginsDir, false, logger)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateTrust() error = %v, wantErr %v", err, tt.wantErr)
@@ -482,11 +484,13 @@ func TestValidateTrustInRoots(t *testing.T) {
 		t.Fatalf("write entrypoint: %v", err)
 	}
 
-	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA, rootB}); err != nil {
+	logger := func(string, string, ...any) {}
+
+	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA, rootB}, false, logger); err != nil {
 		t.Fatalf("validateTrustInRoots() error = %v, want nil", err)
 	}
 
-	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA}); err == nil {
+	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA}, false, logger); err == nil {
 		t.Fatal("validateTrustInRoots() expected error when rootB is not configured")
 	}
 }

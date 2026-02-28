@@ -232,7 +232,7 @@ func (c *Config) saveFile(path string, node *yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 func (c *Config) resolveTargetFile() string {
@@ -263,7 +263,7 @@ func (c *Config) persistWithValidation(targetFile string, candidate []byte) erro
 		return fmt.Errorf("failed to read original config file: %w", err)
 	}
 
-	mode := os.FileMode(0644)
+	mode := os.FileMode(0600)
 	if info, statErr := os.Stat(targetFile); statErr == nil {
 		mode = info.Mode().Perm()
 	}
