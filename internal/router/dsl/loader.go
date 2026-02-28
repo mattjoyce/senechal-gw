@@ -61,6 +61,7 @@ func LoadAndCompileDir(configDir string) (*Set, error) {
 
 // LoadFile parses one pipeline YAML file.
 func LoadFile(path string) (*FileSpec, error) {
+	// #nosec G304 -- pipeline files are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read pipeline file %q: %w", path, err)

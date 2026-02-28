@@ -145,6 +145,7 @@ func loadPlugin(name, pluginPath, pluginsDir string) (*Plugin, error) {
 	manifestPath := filepath.Join(pluginPath, manifestFilename)
 
 	// Read manifest file
+	// #nosec G304 -- plugin manifests are operator-controlled local inputs.
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)

@@ -971,6 +971,7 @@ func refreshConfigIntegrity(configDir string) error {
 }
 
 func loadTokensFile(path string) (*config.TokensFileConfig, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1001,6 +1002,7 @@ func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error
 		return err
 	}
 
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	if current, err := os.ReadFile(path); err == nil {
 		if err := os.WriteFile(path+".bak", current, mode); err != nil {
 			return err
@@ -1041,6 +1043,7 @@ func parseScopesInput(scopesArg, scopesFile string) ([]string, error) {
 	if scopesFile == "-" {
 		raw, err = ioReadAll(os.Stdin)
 	} else {
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		raw, err = os.ReadFile(scopesFile)
 	}
 	if err != nil {
@@ -1061,6 +1064,7 @@ func parseScopesInput(scopesArg, scopesFile string) ([]string, error) {
 }
 
 func loadScopeDoc(path string) (*scopeDoc, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2022,6 +2026,7 @@ func loadOrCreatePluginConfig(cfg *config.Config, configDir, name string) (strin
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err == nil {
 		for _, path := range files.Plugins {
+			// #nosec G304 -- config paths are operator-controlled local inputs.
 			raw, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return "", config.PluginConf{}, readErr
@@ -2104,6 +2109,7 @@ func containsRoute(routes []config.RouteConfig, target config.RouteConfig) bool 
 }
 
 func loadRoutesFile(path string) (*config.RoutesFileConfig, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2130,6 +2136,7 @@ func writeRoutesFile(path string, cfg *config.RoutesFileConfig) error {
 }
 
 func loadWebhooksFile(path string) (*config.WebhooksFileConfig, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2154,6 +2161,12 @@ func writeWebhooksFile(path string, cfg *config.WebhooksFileConfig) error {
 	}
 	return writeFileAtomicWithBackup(path, raw, 0o600)
 }
+
+const (
+	maxConfigBackupEntries  = 2048
+	maxConfigBackupBytes    = 50 << 20
+	maxConfigBackupFileSize = 10 << 20
+)
 
 func createConfigBackup(configDir, outputPath string) ([]string, error) {
 	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "pipelines", "scopes"}
@@ -2195,6 +2208,7 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 				if entryInfo.IsDir() {
 					return nil
 				}
+				// #nosec G304 -- config paths are operator-controlled local inputs.
 				file, err := os.Open(path)
 				if err != nil {
 					return err
@@ -2218,6 +2232,7 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 		if err := tw.WriteHeader(header); err != nil {
 			return nil, err
 		}
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		file, err := os.Open(abs)
 		if err != nil {
 			return nil, err
@@ -2235,6 +2250,7 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 }
 
 func restoreConfigBackup(configDir, archivePath string) error {
+	// #nosec G304 -- archive path is operator-controlled local input.
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -2251,6 +2267,8 @@ func restoreConfigBackup(configDir, archivePath string) error {
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+	var totalBytes int64
+	var totalEntries int
 
 	for {
 		header, err := tr.Next()
@@ -2260,6 +2278,22 @@ func restoreConfigBackup(configDir, archivePath string) error {
 		if err != nil {
 			return err
 		}
+
+		totalEntries++
+		if totalEntries > maxConfigBackupEntries {
+			return fmt.Errorf("archive contains too many entries (max %d)", maxConfigBackupEntries)
+		}
+		if header.Size < 0 {
+			return fmt.Errorf("invalid archive entry size for %s", header.Name)
+		}
+		if header.Size > maxConfigBackupFileSize {
+			return fmt.Errorf("archive entry %s exceeds max size (%d bytes)", header.Name, maxConfigBackupFileSize)
+		}
+		if totalBytes+header.Size > maxConfigBackupBytes {
+			return fmt.Errorf("archive exceeds max size (%d bytes)", maxConfigBackupBytes)
+		}
+		totalBytes += header.Size
+
 		cleanName := filepath.Clean(header.Name)
 		if strings.HasPrefix(cleanName, "..") {
 			return fmt.Errorf("invalid archive path: %s", header.Name)
@@ -2278,17 +2312,24 @@ func restoreConfigBackup(configDir, archivePath string) error {
 			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 				return err
 			}
+			// #nosec G304 -- destination path is operator-controlled config dir.
 			out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
+			limitReader := &io.LimitedReader{R: tr, N: header.Size}
+			if _, err := io.Copy(out, limitReader); err != nil {
 				out.Close()
 				return err
 			}
 			if err := out.Close(); err != nil {
 				return err
 			}
+			if limitReader.N != 0 {
+				return fmt.Errorf("archive entry %s truncated", header.Name)
+			}
+		default:
+			return fmt.Errorf("unsupported archive entry type %q for %s", header.Typeflag, header.Name)
 		}
 	}
 	return nil

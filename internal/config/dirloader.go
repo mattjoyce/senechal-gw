@@ -84,6 +84,7 @@ func LoadDir(configDir string) (*Config, []string, error) {
 
 // loadAndParseFile reads a YAML file, interpolates env vars, and parses it.
 func loadAndParseFile(path string) (*Config, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", path, err)
@@ -102,6 +103,7 @@ func graftPlugins(cfg *Config, files *ConfigFiles) error {
 		cfg.Plugins = make(map[string]PluginConf)
 	}
 	for _, path := range files.Plugins {
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %w", path, err)
@@ -120,6 +122,7 @@ func graftPlugins(cfg *Config, files *ConfigFiles) error {
 // graftPipelines appends pipeline entries from pipelines/*.yaml into cfg.
 func graftPipelines(cfg *Config, files *ConfigFiles) error {
 	for _, path := range files.Pipelines {
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %w", path, err)
@@ -137,6 +140,7 @@ func graftPipelines(cfg *Config, files *ConfigFiles) error {
 
 // graftRoutes appends routes from routes.yaml into cfg.
 func graftRoutes(cfg *Config, path string) error {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read routes.yaml: %w", err)
@@ -153,6 +157,7 @@ func graftRoutes(cfg *Config, path string) error {
 
 // graftWebhooks loads webhooks from webhooks.yaml into cfg.
 func graftWebhooks(cfg *Config, path string) error {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read webhooks.yaml: %w", err)
@@ -173,6 +178,7 @@ func graftWebhooks(cfg *Config, path string) error {
 
 // graftTokens loads token entries from tokens.yaml into cfg.
 func graftTokens(cfg *Config, path string) error {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("failed to read tokens.yaml: %w", err)

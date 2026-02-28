@@ -1,6 +1,6 @@
 ---
 id: 136
-status: todo
+status: done
 priority: High
 blocked_by: []
 tags: [improvement, security, filesystem, config]
@@ -53,12 +53,13 @@ Choose one of the two stances below and implement consistently:
    - Add size limits and file count limits when restoring archives (tar extraction guardrails).
 
 ## Acceptance Criteria
-- [ ] Decide trusted-input vs hardening model for config + archive paths.
-- [ ] For chosen model, update code and/or docs accordingly.
-- [ ] No unresolved G703/G304/G122/G110 findings without a documented justification.
+- [x] Decide trusted-input vs hardening model for config + archive paths.
+- [x] For chosen model, update code and/or docs accordingly.
+- [x] No unresolved G703/G304/G122/G110 findings without a documented justification.
 
 ## Notes (assistant’s take)
 I don’t think this is design-breaking, but it *is* policy-setting. If we ever allow remote config changes or user-provided archive uploads, the trusted-input stance becomes unsafe. If you want Ductile to be “operator-only,” document it loudly and suppress the findings. If you want it to be robust by default, we should treat this as a hardening milestone.
 
 ## Narrative
 - 2026-02-28: Created after gosec scan flagged path traversal, TOCTOU, and archive extraction risks. This needs an explicit trust model decision before code changes. (by @assistant)
+- 2026-02-28: Adopted trusted-input model for local config/paths, added explicit #nosec justifications, documented trust assumption in ARCHITECTURE.md, and added archive extraction limits. (by @assistant)

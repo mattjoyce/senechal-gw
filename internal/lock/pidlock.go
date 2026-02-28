@@ -24,6 +24,7 @@ func AcquirePIDLock(lockPath string) (*PIDLock, error) {
 		return nil, fmt.Errorf("create lock directory: %w", err)
 	}
 
+	// #nosec G304 -- lock path is operator-controlled local input.
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)

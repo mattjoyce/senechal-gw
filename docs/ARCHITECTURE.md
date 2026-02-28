@@ -405,6 +405,7 @@ plugins:
 **Config is static. State is dynamic.**
 
 - `config` — from `config.yaml`, interpolated with env vars, read-only. Contains credentials, endpoints — things the operator sets.
+  - Config paths (config dir, includes, backups) are local operator-controlled inputs; Ductile does not accept untrusted remote file paths.
 - `state` — single JSON blob per plugin in SQLite. Plugins read it, return `state_updates`, core applies shallow merge (top-level keys replaced, not deep-merged).
 
 ```sql

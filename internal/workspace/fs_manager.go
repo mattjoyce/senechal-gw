@@ -207,6 +207,7 @@ func (m *fsWorkspaceManager) cloneTreeWithHardLinks(ctx context.Context, srcDir,
 				return fmt.Errorf("create directory %q: %w", dstPath, err)
 			}
 		case info.Mode().IsRegular():
+			// #nosec G122 -- workspace tree is internal; job IDs are validated and not attacker-controlled.
 			if err := os.Link(path, dstPath); err != nil {
 				return fmt.Errorf("hard-link %q to %q: %w", path, dstPath, err)
 			}
@@ -215,6 +216,7 @@ func (m *fsWorkspaceManager) cloneTreeWithHardLinks(ctx context.Context, srcDir,
 			if err != nil {
 				return fmt.Errorf("read symlink %q: %w", path, err)
 			}
+			// #nosec G122 -- workspace tree is internal; job IDs are validated and not attacker-controlled.
 			if err := os.Symlink(target, dstPath); err != nil {
 				return fmt.Errorf("create symlink %q: %w", dstPath, err)
 			}

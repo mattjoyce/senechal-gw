@@ -58,6 +58,7 @@ func Load(configPath string) (*Config, error) {
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
 	// Add root node to SourceFiles (manually since loadConfigFile returns a partial Config)
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	rootData, _ := os.ReadFile(absPath)
 	var rootNode yaml.Node
 	if err := yaml.Unmarshal(rootData, &rootNode); err == nil {
@@ -117,6 +118,7 @@ func Load(configPath string) (*Config, error) {
 func DiscoverConfigDir() (string, error) {
 	// 1. Check environment variable
 	if dir := os.Getenv("DUCTILE_CONFIG_DIR"); dir != "" {
+		// #nosec G703 -- config dir is operator-controlled (local operator input).
 		if _, err := os.Stat(dir); err == nil {
 			return dir, nil
 		}
@@ -246,6 +248,7 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 		visited[absPath] = true
 
 		// Load included file
+		// #nosec G304 -- config include paths are operator-controlled local inputs.
 		includedData, _ := os.ReadFile(absPath)
 		var includedNode yaml.Node
 		if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
@@ -277,6 +280,7 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 // loadConfigFile loads and parses a single config file.
 // visited is used for cycle detection when loading includes (nil for top-level).
 func loadConfigFile(path string, visited map[string]bool) (*Config, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)

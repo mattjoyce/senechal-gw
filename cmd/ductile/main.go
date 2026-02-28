@@ -687,6 +687,7 @@ func applyConfigSetFallback(configTarget, path, value string) error {
 		configFile = filepath.Join(configTarget, "config.yaml")
 	}
 
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	original, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
@@ -712,7 +713,9 @@ func applyConfigSetFallback(configTarget, path, value string) error {
 
 	if _, err := config.Load(configTarget); err != nil {
 		backupPath := configFile + ".bak"
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		if backup, readErr := os.ReadFile(backupPath); readErr == nil {
+			// #nosec G703 -- config paths are operator-controlled local inputs.
 			_ = os.WriteFile(configFile, backup, 0o644)
 		}
 		return fmt.Errorf("validation failed: %w", err)
@@ -1624,6 +1627,7 @@ func checkPIDLockState(lockPath string) systemStatusCheck {
 		Path: lockPath,
 	}
 
+	// #nosec G304 -- lock path is operator-controlled local input.
 	data, err := os.ReadFile(lockPath)
 	if err != nil {
 		if os.IsNotExist(err) {

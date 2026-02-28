@@ -257,6 +257,7 @@ func (c *Config) resolveRootConfigPath(fallback string) string {
 }
 
 func (c *Config) persistWithValidation(targetFile string, candidate []byte) error {
+	// #nosec G304 -- targetFile is derived from config sources (operator-controlled).
 	original, err := os.ReadFile(targetFile)
 	if err != nil {
 		return fmt.Errorf("failed to read original config file: %w", err)
@@ -267,12 +268,14 @@ func (c *Config) persistWithValidation(targetFile string, candidate []byte) erro
 		mode = info.Mode().Perm()
 	}
 
+	// #nosec G703 -- targetFile is derived from config sources (operator-controlled).
 	if err := os.WriteFile(targetFile, candidate, mode); err != nil {
 		return fmt.Errorf("failed to persist config change: %w", err)
 	}
 
 	rootPath := c.resolveRootConfigPath(targetFile)
 	if _, err := Load(rootPath); err != nil {
+		// #nosec G703 -- targetFile is derived from config sources (operator-controlled).
 		restoreErr := os.WriteFile(targetFile, original, mode)
 		if restoreErr != nil {
 			return fmt.Errorf("validation failed (%v) and rollback failed (%v)", err, restoreErr)

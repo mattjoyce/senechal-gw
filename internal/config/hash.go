@@ -29,6 +29,7 @@ type HashUpdateReport struct {
 
 // ComputeBlake3Hash computes the BLAKE3 hash of a file.
 func ComputeBlake3Hash(filePath string) (string, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
@@ -129,6 +130,7 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 	checksumPath := filepath.Join(configDir, ".checksums")
 
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(checksumPath)
 	if err != nil {
 		if os.IsNotExist(err) {
