@@ -1,6 +1,6 @@
 manifest_spec: ductile.plugin
 manifest_version: 1
-name: if
+name: switch
 version: 0.1.0
 protocol: 2
 entrypoint: run.py

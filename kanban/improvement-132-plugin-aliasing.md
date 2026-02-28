@@ -23,11 +23,11 @@ Add a `uses:` field under `plugins.<instance>` to map an instance name to a base
 ```yaml
 plugins:
   check_youtube:
-    uses: if
+    uses: switch
     config: { ... }
 
   check_status:
-    uses: if
+    uses: switch
     config: { ... }
 ```
 

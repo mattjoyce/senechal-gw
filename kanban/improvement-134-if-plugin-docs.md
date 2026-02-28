@@ -6,11 +6,11 @@ blocked_by: []
 tags: [docs, plugin, classifier]
 ---
 
-# Document `if` Classifier Plugin
+# Document `switch` classifier Plugin
 
 ## Job Story
 
-When operators need to route events based on payload content, they need clear documentation for the `if` classifier plugin so they can configure checks confidently.
+When operators need to route events based on payload content, they need clear documentation for the `switch` classifier plugin so they can configure checks confidently.
 
 ## Scope
 
@@ -26,4 +26,4 @@ When operators need to route events based on payload content, they need clear do
 
 ## Narrative
 
-- 2026-02-27: Card created for documenting the `if` classifier plugin. (by @assistant)
+- 2026-02-27: Card created for documenting the `switch` classifier plugin. (by @assistant)

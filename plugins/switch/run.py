@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""if classifier plugin for Ductile (protocol v2).
+"""switch classifier plugin for Ductile (protocol v2).
 
 Evaluates configured checks against a payload field and emits the first
 matching event type with the payload unchanged.
