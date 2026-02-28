@@ -1258,6 +1258,14 @@ func runStart(args []string) int {
 		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
 		return 1
 	}
+	aliases, err := plugin.ApplyAliases(registry, cfg.Plugins)
+	if err != nil {
+		logger.Error("plugin aliasing failed", "error", err)
+		return 1
+	}
+	for _, alias := range aliases {
+		logger.Info("plugin alias registered", "plugin", alias.Name, "uses", alias.Uses)
+	}
 
 	// Preflight: report which config files were loaded
 	{

@@ -69,6 +69,7 @@ type APIToken struct {
 // PluginConf defines configuration for a single plugin.
 type PluginConf struct {
 	Enabled             bool                  `yaml:"enabled"`
+	Uses                string                `yaml:"uses,omitempty"`
 	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"`
 	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`

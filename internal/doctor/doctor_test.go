@@ -103,6 +103,40 @@ func TestValidate_RequiredConfigKey(t *testing.T) {
 	assertHasError(t, r, "plugin_refs", "api_token")
 }
 
+func TestValidate_UsesAliasResolves(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Plugins = map[string]config.PluginConf{
+		"check_youtube": {
+			Enabled: true,
+			Uses:    "echo",
+		},
+	}
+	p := echoPlugin()
+	d := New(cfg, registryWith(p))
+	r := d.Validate()
+	if !r.Valid {
+		t.Fatalf("expected valid, got errors: %v", r.Errors)
+	}
+}
+
+func TestValidate_UsesMissingBase(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Plugins = map[string]config.PluginConf{
+		"check_youtube": {
+			Enabled: true,
+			Uses:    "switch",
+		},
+	}
+	d := New(cfg, registryWith(echoPlugin()))
+	r := d.Validate()
+	if r.Valid {
+		t.Fatal("expected invalid")
+	}
+	assertHasError(t, r, "plugin_refs", "switch")
+}
+
 func TestValidate_TokenScopeValidPlugin(t *testing.T) {
 	t.Parallel()
 	cfg := validConfig()
