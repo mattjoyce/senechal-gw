@@ -35,6 +35,8 @@ go build -o ductile ./cmd/ductile
 ./ductile system watch
 ```
 
+![Ductile system watch TUI](docs/Ductile-system-watch-screenshot.png)
+
 ## Documentation Index
 
 - [**Getting Started**](docs/GETTING_STARTED.md) — Installation and basic usage.

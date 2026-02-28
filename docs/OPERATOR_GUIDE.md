@@ -27,12 +27,16 @@ You can reload the configuration without restarting the service by sending a `SI
 ### Real-Time Dashboard (TUI)
 Ductile includes a built-in terminal UI for real-time visibility:
 ```bash
-./ductile system monitor --api-key "your-admin-token"
+./ductile system watch --api-key "your-admin-token"
 ```
-The monitor shows:
--   Service health and uptime.
--   A live process tree of active and recent jobs.
--   A real-time event stream.
+
+![Ductile system watch TUI](Ductile-system-watch-screenshot.png)
+
+The watch view shows:
+-   Service health, uptime, queue depth, and plugin count.
+-   Metadata header (config path, binary path, version).
+-   Pipelines with live status and last activity.
+-   An event stream of recent activity.
 
 ### Logging
 Ductile emits structured JSON logs to `stdout`. These are ideal for consumption by Logstash, Fluentd, or simple `jq` queries.

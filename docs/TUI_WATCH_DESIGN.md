@@ -13,6 +13,10 @@
 5. **Connection awareness** - show SSE clients, API activity
 6. **Operator UX** - inspired by systemctl, k9s, lazydocker, htop
 
+## Screenshot
+
+![Ductile system watch TUI](Ductile-system-watch-screenshot.png)
+
 ## Architecture
 
 ### Theme System (Scaffold)
