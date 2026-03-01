@@ -1019,8 +1019,8 @@ func printValidationSummary(result *doctor.Result) {
 func refreshConfigIntegrity(configDir string) error {
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
-		_, legacyErr := config.GenerateChecksumsWithReport(configDir, []string{"tokens.yaml", "webhooks.yaml"}, false)
-		if legacyErr != nil {
+		_, includeErr := config.GenerateChecksumsWithReport(configDir, []string{"tokens.yaml", "webhooks.yaml"}, false)
+		if includeErr != nil {
 			return err
 		}
 		return nil

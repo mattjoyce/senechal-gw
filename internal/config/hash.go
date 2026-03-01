@@ -62,9 +62,10 @@ func GenerateChecksums(configDir string, scopeFiles []string) error {
 
 // GenerateChecksumsWithReport computes scope file hashes and optionally writes .checksums.
 // When dryRun is true, it computes hashes and returns report details without writing files.
+// Writes v2 manifests with absolute path keys.
 func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun bool) (*HashUpdateReport, error) {
 	manifest := ChecksumManifest{
-		Version:     1,
+		Version:     2,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Hashes:      make(map[string]string),
 	}
@@ -76,9 +77,14 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 		Files:        make([]HashUpdateFileResult, 0, len(scopeFiles)),
 	}
 
+	absDir, err := filepath.Abs(configDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve config dir %q: %w", configDir, err)
+	}
+
 	// Compute hash for each scope file
 	for _, filename := range scopeFiles {
-		filePath := filepath.Join(configDir, filename)
+		filePath := filepath.Join(absDir, filename)
 
 		// Skip if file doesn't exist (optional files)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -96,7 +102,7 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 			return nil, fmt.Errorf("failed to hash %s: %w", filename, err)
 		}
 
-		manifest.Hashes[filename] = hash
+		manifest.Hashes[filePath] = hash
 		report.Files = append(report.Files, HashUpdateFileResult{
 			Filename: filename,
 			Path:     filePath,
@@ -125,8 +131,7 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 }
 
 // LoadChecksums reads the .checksums file from a config directory.
-// Supports v1 (filename keys) and v2 (absolute path keys) manifests.
-// v1 manifests are transparently upgraded: filename keys are resolved to absolute paths.
+// Only v2 manifests (absolute path keys) are supported.
 func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 	checksumPath := filepath.Join(configDir, ".checksums")
 
@@ -144,22 +149,7 @@ func LoadChecksums(configDir string) (*ChecksumManifest, error) {
 		return nil, fmt.Errorf("failed to parse checksums: %w", err)
 	}
 
-	switch manifest.Version {
-	case 1:
-		// Migrate v1 filename keys to absolute paths for uniform lookup
-		absDir, _ := filepath.Abs(configDir)
-		migrated := make(map[string]string, len(manifest.Hashes))
-		for key, hash := range manifest.Hashes {
-			if filepath.IsAbs(key) {
-				migrated[key] = hash
-			} else {
-				migrated[filepath.Join(absDir, key)] = hash
-			}
-		}
-		manifest.Hashes = migrated
-	case 2:
-		// v2 already uses absolute paths — nothing to do
-	default:
+	if manifest.Version != 2 {
 		return nil, fmt.Errorf("unsupported checksums version: %d", manifest.Version)
 	}
 
@@ -205,24 +195,28 @@ func GenerateChecksumsFromDiscovery(files *ConfigFiles, dryRun bool) error {
 func VerifyScopeFiles(configDir string, manifest *ChecksumManifest, scopeFiles []string) error {
 	for _, filename := range scopeFiles {
 		filePath := filepath.Join(configDir, filename)
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve scope file path %s: %w", filePath, err)
+		}
 
 		// Skip if file doesn't exist (optional files like webhooks.yaml)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		if _, err := os.Stat(absPath); os.IsNotExist(err) {
 			// But verify it's also not in the manifest
-			if _, hasHash := manifest.Hashes[filename]; hasHash {
+			if _, hasHash := manifest.Hashes[absPath]; hasHash {
 				return fmt.Errorf("scope file %s is in checksums but missing from disk", filename)
 			}
 			continue
 		}
 
 		// File exists - must have hash in manifest
-		expectedHash, ok := manifest.Hashes[filename]
+		expectedHash, ok := manifest.Hashes[absPath]
 		if !ok {
 			return fmt.Errorf("scope file %s has no hash in checksums (run 'ductile config hash-update')", filename)
 		}
 
 		// Verify hash
-		if err := VerifyFileHash(filePath, expectedHash); err != nil {
+		if err := VerifyFileHash(absPath, expectedHash); err != nil {
 			return fmt.Errorf("scope file verification failed: %w\n"+
 				"This indicates tampering or unauthorized modification.\n"+
 				"If you edited this file intentionally, run: ductile config hash-update", err)

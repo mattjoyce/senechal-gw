@@ -388,7 +388,6 @@ func verifyScopeFilesRecursively(paths []string) error {
 
 		// Verify each scope file in this directory
 		for _, path := range files {
-			// LoadChecksums migrates v1 keys to absolute paths, so look up by absolute path
 			absPath, _ := filepath.Abs(path)
 			expectedHash, ok := checksums.Hashes[absPath]
 			if !ok {

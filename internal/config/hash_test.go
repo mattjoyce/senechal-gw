@@ -29,8 +29,14 @@ func TestGenerateChecksumsWithReportDryRun(t *testing.T) {
 	if !report.Files[0].Exists || report.Files[0].Hash == "" {
 		t.Fatal("tokens.yaml should exist with computed hash")
 	}
+	if !filepath.IsAbs(report.Files[0].Path) {
+		t.Fatal("expected absolute path for tokens.yaml in report")
+	}
 	if report.Files[1].Exists || report.Files[1].Hash != "" {
 		t.Fatal("webhooks.yaml should be reported as missing without hash")
+	}
+	if !filepath.IsAbs(report.Files[1].Path) {
+		t.Fatal("expected absolute path for webhooks.yaml in report")
 	}
 
 	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); !os.IsNotExist(err) {

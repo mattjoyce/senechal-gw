@@ -1911,7 +1911,7 @@ func runConfigHashUpdate(args []string) int {
 				}
 			}
 		} else {
-			// Legacy include-based mode
+			// Include-based mode
 			scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
 			report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
 			if err != nil {
@@ -1919,7 +1919,7 @@ func runConfigHashUpdate(args []string) int {
 				return 1
 			}
 			if isVerbose {
-				fmt.Printf("Processing directory (v1 manifest): %s\n", dir)
+				fmt.Printf("Processing directory: %s\n", dir)
 				for _, file := range report.Files {
 					if file.Exists {
 						fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
