@@ -291,7 +291,8 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
             }
         )
 
-    updated_seen = list({entry["video_id"] for entry in entries} | seen_set)
+    emitted_ids = {e["payload"]["video_id"] for e in events}
+    updated_seen = list(emitted_ids | seen_set)
 
     return ok_response(
         events=events,

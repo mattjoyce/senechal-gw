@@ -71,10 +71,14 @@ def handle_command(
     title = pick(payload, context, "title", default=None)
 
     if not content and not title:
-        return error_response(
-            "No message content found in payload (tried: message, content, result, title)",
-            retry=False,
-        )
+        default_msg = str(config.get("default_message") or "").strip()
+        if default_msg:
+            content = default_msg
+        else:
+            return error_response(
+                "No message content found in payload (tried: message, content, result, title)",
+                retry=False,
+            )
 
     # Combine title + body, or use whichever is present
     if title and content:
