@@ -184,7 +184,7 @@ plugins:
 
 Supported intervals: `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, `monthly`.
 
-No crontab syntax.
+Cron syntax is supported via `cron:` with standard 5-field expressions (min hour dom month dow). Cron schedules are evaluated in the system timezone unless `timezone:` is set on the schedule.
 
 ### 4.2 Jitter
 
