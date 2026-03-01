@@ -571,12 +571,20 @@ func validate(cfg *Config) error {
 func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConfig) error {
 	hasEvery := strings.TrimSpace(schedule.Every) != ""
 	hasCron := strings.TrimSpace(schedule.Cron) != ""
+	hasAt := strings.TrimSpace(schedule.At) != ""
+	hasAfter := schedule.After > 0
 
-	if !hasEvery && !hasCron {
-		return fmt.Errorf("plugin %q: %s requires either every or cron", pluginName, sourcePath)
+	modeCount := 0
+	for _, mode := range []bool{hasEvery, hasCron, hasAt, hasAfter} {
+		if mode {
+			modeCount++
+		}
 	}
-	if hasEvery && hasCron {
-		return fmt.Errorf("plugin %q: %s cannot set both every and cron", pluginName, sourcePath)
+	if modeCount == 0 {
+		return fmt.Errorf("plugin %q: %s requires one of every, cron, at, or after", pluginName, sourcePath)
+	}
+	if modeCount > 1 {
+		return fmt.Errorf("plugin %q: %s must set exactly one of every, cron, at, or after", pluginName, sourcePath)
 	}
 
 	if hasEvery {
@@ -590,6 +598,14 @@ func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConf
 			return fmt.Errorf("plugin %q: invalid %s.cron: %w", pluginName, sourcePath, err)
 		}
 	}
+	if hasAt {
+		if _, err := time.Parse(time.RFC3339, schedule.At); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.at %q: expected RFC3339 timestamp", pluginName, sourcePath, schedule.At)
+		}
+	}
+	if schedule.After < 0 {
+		return fmt.Errorf("plugin %q: invalid %s.after %q: duration must be positive", pluginName, sourcePath, schedule.After)
+	}
 	if catchUp := strings.TrimSpace(schedule.CatchUp); catchUp != "" {
 		switch catchUp {
 		case "skip", "run_once", "run_all":
@@ -597,8 +613,16 @@ func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConf
 		default:
 			return fmt.Errorf("plugin %q: invalid %s.catch_up %q: expected skip, run_once, or run_all", pluginName, sourcePath, schedule.CatchUp)
 		}
-		if hasCron && catchUp != "skip" {
+		if !hasEvery && catchUp != "skip" {
 			return fmt.Errorf("plugin %q: %s.catch_up %q is only supported for every schedules", pluginName, sourcePath, catchUp)
+		}
+	}
+	if ifRunning := strings.TrimSpace(schedule.IfRunning); ifRunning != "" {
+		switch ifRunning {
+		case "skip", "queue", "cancel":
+			// valid
+		default:
+			return fmt.Errorf("plugin %q: invalid %s.if_running %q: expected skip, queue, or cancel", pluginName, sourcePath, schedule.IfRunning)
 		}
 	}
 	if err := validateScheduleConstraints(pluginName, sourcePath, schedule); err != nil {

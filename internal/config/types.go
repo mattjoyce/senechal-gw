@@ -80,8 +80,11 @@ type ScheduleConfig struct {
 	ID              string           `yaml:"id,omitempty"`
 	Every           string           `yaml:"every,omitempty"` // e.g., "5m", "hourly", "daily"
 	Cron            string           `yaml:"cron,omitempty"`  // standard 5-field cron expression
+	At              string           `yaml:"at,omitempty"`    // one-shot RFC3339 timestamp
+	After           time.Duration    `yaml:"after,omitempty"` // one-shot delay from service start
 	Jitter          time.Duration    `yaml:"jitter,omitempty"`
 	CatchUp         string           `yaml:"catch_up,omitempty"`         // skip|run_once|run_all (every schedules)
+	IfRunning       string           `yaml:"if_running,omitempty"`       // skip|queue|cancel
 	OnlyBetween     string           `yaml:"only_between,omitempty"`     // "HH:MM-HH:MM"
 	Timezone        string           `yaml:"timezone,omitempty"`         // IANA timezone name
 	NotOn           []any            `yaml:"not_on,omitempty"`           // weekday names (mon) or ints (0-6, 7=sun)
@@ -115,6 +118,9 @@ func (s *ScheduleConfig) applyDefaults() {
 	}
 	if strings.TrimSpace(s.CatchUp) == "" {
 		s.CatchUp = "skip"
+	}
+	if strings.TrimSpace(s.IfRunning) == "" {
+		s.IfRunning = "skip"
 	}
 	if s.Payload == nil {
 		s.Payload = map[string]any{}

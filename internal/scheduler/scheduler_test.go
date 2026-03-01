@@ -601,6 +601,88 @@ func TestCatchUpScheduleRunAllBounded(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestSchedulerTickOneShotAfterNotDue(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, logBuf := NewTestSlogger()
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	cfg.Service.JobLogRetention = 24 * time.Hour
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedules: []config.ScheduleConfig{
+				{After: 2 * time.Hour},
+			},
+		},
+	}
+
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(nil, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().LatestCompletedCommandResult(gomock.Any(), "echo", pollCommand, "ductile").Return(nil, nil)
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.NotNil(t, state.NextRunAt)
+		assert.Equal(t, queue.ScheduleEntryActive, state.Status)
+		return nil
+	})
+	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
+
+	s.tick(ctx)
+	assert.Contains(t, logBuf.String(), "Skipped scheduled job (not due)")
+}
+
+func TestSchedulerTickOneShotAtDueExhausts(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, _ := NewTestSlogger()
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	cfg.Service.JobLogRetention = 24 * time.Hour
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedules: []config.ScheduleConfig{
+				{At: "2026-03-01T00:00:00Z"},
+			},
+			CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
+			MaxOutstandingPolls: 1,
+		},
+	}
+
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(nil, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().LatestCompletedCommandResult(gomock.Any(), "echo", pollCommand, "ductile").Return(nil, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(0, nil)
+	mockQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return("job-1", nil)
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		if state.Status == queue.ScheduleEntryActive {
+			assert.NotNil(t, state.NextRunAt)
+			return nil
+		}
+		assert.Equal(t, queue.ScheduleEntryExhausted, state.Status)
+		assert.NotNil(t, state.Reason)
+		assert.Equal(t, "one_shot_exhausted", *state.Reason)
+		assert.Nil(t, state.NextRunAt)
+		return nil
+	}).Times(2)
+	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
+
+	s.tick(ctx)
+}
+
 func TestCircuitBreakerStateTransitions(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -645,7 +727,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 
 	openedAt := time.Now().UTC().Add(-1 * time.Minute)
 	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(&queue.CircuitBreaker{Plugin: "echo", Command: pollCommand, State: queue.CircuitOpen, FailureCount: 2, OpenedAt: &openedAt}, nil)
-	allowed, reason, err := s.canSchedule(ctx, "echo", pollCommand, pluginConf)
+	allowed, reason, err := s.canSchedule(ctx, "echo", pollCommand, pluginConf, config.ScheduleConfig{})
 	assert.NoError(t, err)
 	assert.False(t, allowed)
 	assert.Equal(t, "circuit_open", reason)
@@ -657,7 +739,7 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 		return nil
 	})
 	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(0, nil)
-	allowed, reason, err = s.canSchedule(ctx, "echo", pollCommand, pluginConf)
+	allowed, reason, err = s.canSchedule(ctx, "echo", pollCommand, pluginConf, config.ScheduleConfig{})
 	assert.NoError(t, err)
 	assert.True(t, allowed)
 	assert.Equal(t, "", reason)
@@ -674,4 +756,43 @@ func TestCircuitBreakerStateTransitions(t *testing.T) {
 	})
 	_, err = s.reconcileCircuitBreaker(ctx, "echo", pollCommand, pluginConf)
 	assert.NoError(t, err)
+}
+
+func TestCanScheduleIfRunningPolicies(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	pluginConf := config.PluginConf{
+		MaxOutstandingPolls: 1,
+		CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
+	}
+
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(1, nil)
+	allowed, reason, err := s.canSchedule(ctx, "echo", pollCommand, pluginConf, config.ScheduleConfig{IfRunning: "skip"})
+	assert.NoError(t, err)
+	assert.False(t, allowed)
+	assert.Equal(t, "already_running", reason)
+
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(1, nil)
+	mockQueue.EXPECT().CancelOutstandingJobs(gomock.Any(), "echo", pollCommand, gomock.Any()).Return(1, nil)
+	allowed, reason, err = s.canSchedule(ctx, "echo", pollCommand, pluginConf, config.ScheduleConfig{IfRunning: "cancel"})
+	assert.NoError(t, err)
+	assert.True(t, allowed)
+	assert.Equal(t, "", reason)
+
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(1, nil)
+	allowed, reason, err = s.canSchedule(ctx, "echo", pollCommand, pluginConf, config.ScheduleConfig{IfRunning: "queue"})
+	assert.NoError(t, err)
+	assert.False(t, allowed)
+	assert.Equal(t, "outstanding_limit", reason)
 }
