@@ -168,8 +168,7 @@ type WebhookEndpoint struct {
 	Name            string `yaml:"name,omitempty"` // Directory mode: endpoint name
 	Path            string `yaml:"path"`
 	Plugin          string `yaml:"plugin"`
-	Secret          string `yaml:"secret,omitempty"`     // Legacy: direct secret (deprecated)
-	SecretRef       string `yaml:"secret_ref,omitempty"` // Preferred: reference to tokens.yaml
+	SecretRef       string `yaml:"secret_ref,omitempty"`
 	SignatureHeader string `yaml:"signature_header"`
 	MaxBodySize     string `yaml:"max_body_size"`
 }

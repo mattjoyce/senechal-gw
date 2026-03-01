@@ -28,10 +28,7 @@ type EndpointConfig struct {
 	// Command is the plugin command to execute (default: "handle")
 	Command string `yaml:"command"`
 
-	// Secret is the HMAC secret for signature verification
-	Secret string `yaml:"secret,omitempty"`
-
-	// SecretRef references a secret in tokens.yaml (preferred over Secret)
+	// SecretRef references a secret in tokens.yaml
 	SecretRef string `yaml:"secret_ref,omitempty"`
 
 	// SignatureHeader is the HTTP header containing the HMAC signature

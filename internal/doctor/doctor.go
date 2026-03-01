@@ -225,9 +225,9 @@ func (d *Doctor) validateWebhooks(r *Result) {
 		seen[normalized] = i
 
 		// Check secret configured
-		if ep.Secret == "" && ep.SecretRef == "" {
+		if ep.SecretRef == "" {
 			d.addError(r, "webhooks", field,
-				fmt.Sprintf("webhook %q: either secret or secret_ref is required", ep.Path))
+				fmt.Sprintf("webhook %q: secret_ref is required", ep.Path))
 		}
 	}
 }
@@ -309,10 +309,10 @@ func (d *Doctor) warnMissingEnvVars(r *Result) {
 	// Check webhook secrets
 	if d.cfg.Webhooks != nil {
 		for i, ep := range d.cfg.Webhooks.Endpoints {
-			if ep.Secret != "" && envVarRe.MatchString(ep.Secret) {
-				for _, m := range envVarRe.FindAllStringSubmatch(ep.Secret, -1) {
+			if ep.SecretRef != "" && envVarRe.MatchString(ep.SecretRef) {
+				for _, m := range envVarRe.FindAllStringSubmatch(ep.SecretRef, -1) {
 					if os.Getenv(m[1]) == "" {
-						d.addWarning(r, "env_vars", fmt.Sprintf("webhooks.endpoints[%d].secret", i),
+						d.addWarning(r, "env_vars", fmt.Sprintf("webhooks.endpoints[%d].secret_ref", i),
 							fmt.Sprintf("environment variable ${%s} not set", m[1]))
 					}
 				}

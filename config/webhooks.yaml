@@ -4,5 +4,5 @@ webhooks:
     - name: example_handler
       path: /webhook/example
       plugin: sys_exec
-      secret: "REPLACE_WITH_WEBHOOK_SECRET"
+      secret_ref: example_webhook_secret
       signature_header: X-Ductile-Signature-256

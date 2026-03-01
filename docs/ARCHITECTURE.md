@@ -721,7 +721,7 @@ webhooks:
   endpoints:
     - path: /hook/github
       plugin: github-handler
-      secret: ${GITHUB_WEBHOOK_SECRET}
+      secret_ref: github_webhook_secret
       signature_header: X-Hub-Signature-256
       max_body_size: 1MB
 ```
@@ -731,7 +731,7 @@ webhooks:
 HMAC-SHA256 signature verification is **mandatory** for all webhook endpoints.
 
 1. Read raw request body (up to `max_body_size`, default 1 MB).
-2. Compute `HMAC-SHA256(secret, raw_body)`.
+2. Resolve `secret_ref` from tokens.yaml and compute `HMAC-SHA256(secret, raw_body)`.
 3. Compare against the signature header (configurable name per endpoint).
 4. Reject with `403` if invalid. No error details in response.
 5. Reject with `413` if body exceeds `max_body_size`.

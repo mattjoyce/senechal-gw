@@ -103,7 +103,7 @@ webhooks:
   - name: github
     path: /webhook/github
     plugin: echo
-    secret: gh-secret
+    secret_ref: github_secret
     signature_header: X-Hub-Signature-256
 `)
 

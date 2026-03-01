@@ -51,13 +51,13 @@ webhooks:
     - name: astro_rebuild_staging
       path: /webhook/astro-rebuild-staging
       plugin: astro_rebuild_staging
-      secret: "<shared secret>"         # direct secret (deprecated)
+      secret_ref: astro_webhook_secret
       signature_header: X-Ductile-Signature-256
       max_body_size: 1MB                 # optional
 ```
 
 Notes:
-- `secret_ref` is preferred over `secret` when you have `tokens.yaml`.
+- `secret_ref` is required and must reference tokens.yaml.
 - `signature_header` is mandatory.
 - `max_body_size` defaults to 1MB.
 

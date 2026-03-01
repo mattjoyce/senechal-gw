@@ -153,7 +153,7 @@ plugins:
     schedules:
       - every: daily
     config:
-      secret: ${MISSING_VAR}
+      secret_ref: ${MISSING_VAR}
 `,
 			env:     map[string]string{}, // MISSING_VAR not set
 			wantErr: true,

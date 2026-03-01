@@ -132,7 +132,7 @@ webhooks:
   - name: github
     path: /webhook/github
     plugin: github-handler
-    secret: ${GITHUB_WEBHOOK_SECRET}
+    secret_ref: github_webhook_secret
     signature_header: X-Hub-Signature-256
 ```
 
