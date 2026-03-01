@@ -101,6 +101,7 @@ type ScheduleEntryState struct {
 	Command          string
 	Status           ScheduleEntryStatus
 	Reason           *string
+	LastFiredAt      *time.Time
 	LastSuccessJobID *string
 	LastSuccessAt    *time.Time
 	NextRunAt        *time.Time

@@ -81,6 +81,7 @@ type ScheduleConfig struct {
 	Every           string           `yaml:"every,omitempty"` // e.g., "5m", "hourly", "daily"
 	Cron            string           `yaml:"cron,omitempty"`  // standard 5-field cron expression
 	Jitter          time.Duration    `yaml:"jitter,omitempty"`
+	CatchUp         string           `yaml:"catch_up,omitempty"`         // skip|run_once|run_all (every schedules)
 	OnlyBetween     string           `yaml:"only_between,omitempty"`     // "HH:MM-HH:MM"
 	Timezone        string           `yaml:"timezone,omitempty"`         // IANA timezone name
 	NotOn           []any            `yaml:"not_on,omitempty"`           // weekday names (mon) or ints (0-6, 7=sun)
@@ -111,6 +112,9 @@ func (p PluginConf) NormalizedSchedules() []ScheduleConfig {
 func (s *ScheduleConfig) applyDefaults() {
 	if strings.TrimSpace(s.Command) == "" {
 		s.Command = "poll"
+	}
+	if strings.TrimSpace(s.CatchUp) == "" {
+		s.CatchUp = "skip"
 	}
 	if s.Payload == nil {
 		s.Payload = map[string]any{}

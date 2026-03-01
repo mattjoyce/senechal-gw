@@ -88,6 +88,16 @@ func TestParseScheduleInterval(t *testing.T) {
 	}
 }
 
+func TestCountMissedRuns(t *testing.T) {
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	interval := 5 * time.Minute
+
+	assert.Equal(t, 0, countMissedRuns(base, base, interval))
+	assert.Equal(t, 0, countMissedRuns(base, base.Add(4*time.Minute), interval))
+	assert.Equal(t, 1, countMissedRuns(base, base.Add(5*time.Minute), interval))
+	assert.Equal(t, 3, countMissedRuns(base, base.Add(15*time.Minute), interval))
+}
+
 func TestScheduleConstraintsAllowAt(t *testing.T) {
 	now := time.Date(2026, 3, 2, 10, 30, 0, 0, time.UTC) // Monday
 
@@ -217,6 +227,12 @@ func TestSchedulerTickEnqueuesWhenAllowed(t *testing.T) {
 		assert.Equal(t, 3, req.MaxAttempts)
 		assert.Equal(t, []byte(`{}`), []byte(req.Payload))
 		return "job-1", nil
+	})
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.Equal(t, "echo", state.Plugin)
+		assert.Equal(t, "default", state.ScheduleID)
+		assert.NotNil(t, state.LastFiredAt)
+		return nil
 	})
 	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
 
@@ -499,6 +515,90 @@ func TestSchedulerTickCronDueEnqueuesAndAdvancesNextRun(t *testing.T) {
 	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
 
 	s.tick(ctx)
+}
+
+func TestCatchUpScheduleRunOnce(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, _ := NewTestSlogger()
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	lastFired := now.Add(-20 * time.Minute)
+	schedule := config.ScheduleConfig{
+		ID:      "default",
+		Every:   "5m",
+		CatchUp: "run_once",
+	}
+
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(&queue.ScheduleEntryState{
+		Plugin:      "echo",
+		ScheduleID:  "default",
+		Command:     "poll",
+		Status:      queue.ScheduleEntryActive,
+		LastFiredAt: &lastFired,
+	}, nil)
+	mockQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req queue.EnqueueRequest) (string, error) {
+		assert.Equal(t, "echo", req.Plugin)
+		assert.Equal(t, "poll", req.Command)
+		assert.NotNil(t, req.DedupeKey)
+		assert.Contains(t, *req.DedupeKey, ":catchup:")
+		return "job-1", nil
+	}).Times(1)
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.NotNil(t, state.LastFiredAt)
+		assert.True(t, state.LastFiredAt.After(lastFired))
+		assert.NotNil(t, state.NextRunAt)
+		return nil
+	})
+
+	err := s.catchUpSchedule(ctx, "echo", config.PluginConf{Enabled: true}, schedule, now)
+	assert.NoError(t, err)
+}
+
+func TestCatchUpScheduleRunAllBounded(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, _ := NewTestSlogger()
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	lastFired := now.Add(-1000 * time.Minute)
+	schedule := config.ScheduleConfig{
+		ID:      "default",
+		Every:   "5m",
+		CatchUp: "run_all",
+	}
+
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(&queue.ScheduleEntryState{
+		Plugin:      "echo",
+		ScheduleID:  "default",
+		Command:     "poll",
+		Status:      queue.ScheduleEntryActive,
+		LastFiredAt: &lastFired,
+	}, nil)
+	mockQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).Return("job-x", nil).Times(catchUpRunAllMax)
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.NotNil(t, state.LastFiredAt)
+		expected := lastFired.Add(5 * time.Minute * time.Duration(catchUpRunAllMax))
+		assert.WithinDuration(t, expected, *state.LastFiredAt, time.Second)
+		return nil
+	})
+
+	err := s.catchUpSchedule(ctx, "echo", config.PluginConf{Enabled: true}, schedule, now)
+	assert.NoError(t, err)
 }
 
 func TestCircuitBreakerStateTransitions(t *testing.T) {

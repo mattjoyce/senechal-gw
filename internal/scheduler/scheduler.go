@@ -30,8 +30,12 @@ type Scheduler struct {
 }
 
 const (
-	pollCommand   = "poll"
-	handleCommand = "handle"
+	pollCommand      = "poll"
+	handleCommand    = "handle"
+	catchUpSkip      = "skip"
+	catchUpRunOnce   = "run_once"
+	catchUpRunAll    = "run_all"
+	catchUpRunAllMax = 100
 )
 
 // Option mutates scheduler behavior.
@@ -71,6 +75,9 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	// Perform crash recovery on startup
 	if err := s.recoverOrphanedJobs(ctx); err != nil {
 		return fmt.Errorf("scheduler crash recovery failed: %w", err)
+	}
+	if err := s.runStartupCatchUp(ctx); err != nil {
+		return fmt.Errorf("scheduler catch-up failed: %w", err)
 	}
 
 	s.wg.Add(1)
@@ -146,6 +153,114 @@ func (s *Scheduler) tick(ctx context.Context) {
 			s.logger.Error("Failed to prune job logs", "error", err)
 		}
 	}
+}
+
+func (s *Scheduler) runStartupCatchUp(ctx context.Context) error {
+	now := time.Now().UTC()
+
+	var pluginNames []string
+	for name := range s.cfg.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+
+	for _, pluginName := range pluginNames {
+		pluginConf := s.cfg.Plugins[pluginName]
+		if !pluginConf.Enabled {
+			continue
+		}
+		for _, schedule := range pluginConf.NormalizedSchedules() {
+			if err := s.catchUpSchedule(ctx, pluginName, pluginConf, schedule, now); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) catchUpSchedule(ctx context.Context, pluginName string, pluginConf config.PluginConf, schedule config.ScheduleConfig, now time.Time) error {
+	if strings.TrimSpace(schedule.Cron) != "" {
+		return nil
+	}
+
+	baseInterval, err := parseScheduleEvery(schedule.Every)
+	if err != nil {
+		return nil
+	}
+
+	policy := strings.TrimSpace(schedule.CatchUp)
+	if policy == "" {
+		policy = catchUpSkip
+	}
+	if policy == catchUpSkip {
+		return nil
+	}
+
+	scheduleID := strings.TrimSpace(schedule.ID)
+	if scheduleID == "" {
+		scheduleID = "default"
+	}
+	command := strings.TrimSpace(schedule.Command)
+	if command == "" {
+		command = pollCommand
+	}
+
+	entryState, err := s.currentScheduleEntryState(ctx, pluginName, scheduleID, command)
+	if err != nil {
+		return err
+	}
+	if entryState.LastFiredAt == nil {
+		if entryState.LastSuccessAt == nil {
+			return nil
+		}
+		last := entryState.LastSuccessAt.UTC()
+		entryState.LastFiredAt = &last
+	}
+
+	lastFired := entryState.LastFiredAt.UTC()
+	missed := countMissedRuns(lastFired, now, baseInterval)
+	if missed <= 0 {
+		return nil
+	}
+
+	toRun := 1
+	if policy == catchUpRunAll {
+		toRun = missed
+		if toRun > catchUpRunAllMax {
+			toRun = catchUpRunAllMax
+		}
+	}
+
+	enqueued := 0
+	for i := 0; i < toRun; i++ {
+		slot := lastFired.Add(baseInterval * time.Duration(i+1))
+		dedupeKey := fmt.Sprintf("%s:%s:%s:catchup:%s", pluginName, command, scheduleID, slot.Format(time.RFC3339))
+		dedupeTTL := baseInterval
+		if _, dedupeHit, enqueueErr := s.enqueueCatchUpJob(ctx, pluginName, command, pluginConf, dedupeKey, dedupeTTL, schedule.Payload); enqueueErr != nil {
+			s.logger.Error("Failed to enqueue catch-up job", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", enqueueErr)
+			continue
+		} else if !dedupeHit {
+			enqueued++
+		}
+	}
+
+	advancedFired := lastFired
+	if policy == catchUpRunOnce {
+		advancedFired = now
+	} else if toRun > 0 {
+		advancedFired = lastFired.Add(baseInterval * time.Duration(toRun))
+	}
+	entryState.LastFiredAt = &advancedFired
+	if entryState.NextRunAt == nil || entryState.NextRunAt.Before(advancedFired) {
+		next := advancedFired.Add(baseInterval)
+		entryState.NextRunAt = &next
+	}
+	if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+		return err
+	}
+
+	s.logger.Info("Processed startup catch-up", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "policy", policy, "missed", missed, "enqueued", enqueued)
+	return nil
 }
 
 func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, pluginConf config.PluginConf, schedule config.ScheduleConfig) {
@@ -374,6 +489,8 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		s.logger.Error("Failed to enqueue scheduled job", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		return
 	}
+	now := time.Now().UTC()
+	entryState.LastFiredAt = &now
 	if hasEvery && dedupeHit {
 		if err := s.advanceScheduleNextRun(ctx, &entryState, baseInterval, schedule.Jitter); err != nil {
 			s.logger.Error("Failed to advance schedule after dedupe hit", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
@@ -382,6 +499,11 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 	if !hasEvery && cronExpr != nil {
 		if err := s.advanceCronNextRun(ctx, &entryState, *cronExpr, time.Now().UTC()); err != nil {
 			s.logger.Error("Failed to advance cron schedule", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		}
+	}
+	if hasEvery && !dedupeHit {
+		if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+			s.logger.Error("Failed to persist schedule fired state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		}
 	}
 }
@@ -512,6 +634,52 @@ func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, schedul
 	})
 	s.logger.Info("Enqueued scheduled job", "plugin", pluginName, "command", command, "schedule_id", scheduleID, "job_id", jobID, "dedupe_key", dedupeKey)
 	return false, nil
+}
+
+func (s *Scheduler) enqueueCatchUpJob(
+	ctx context.Context,
+	pluginName, command string,
+	pluginConf config.PluginConf,
+	dedupeKey string,
+	dedupeTTL time.Duration,
+	payload map[string]any,
+) (string, bool, error) {
+	rawPayload := []byte(`{}`)
+	if len(payload) > 0 {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return "", false, fmt.Errorf("marshal schedule payload: %w", err)
+		}
+		rawPayload = encoded
+	}
+
+	req := queue.EnqueueRequest{
+		Plugin:      pluginName,
+		Command:     command,
+		Payload:     rawPayload,
+		SubmittedBy: s.cfg.Service.Name,
+		DedupeKey:   &dedupeKey,
+		DedupeTTL:   &dedupeTTL,
+	}
+	if pluginConf.Retry != nil {
+		req.MaxAttempts = pluginConf.Retry.MaxAttempts
+	}
+
+	jobID, err := s.queue.Enqueue(ctx, req)
+	if err != nil {
+		var dedupeErr *queue.DedupeDropError
+		if errors.As(err, &dedupeErr) {
+			return "", true, nil
+		}
+		return "", false, err
+	}
+	s.events.Publish("scheduler.scheduled", map[string]any{
+		"job_id":      jobID,
+		"plugin":      pluginName,
+		"command":     command,
+		"schedule_id": "catch_up",
+	})
+	return jobID, false, nil
 }
 
 func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) (*queue.CommandResult, error) {
@@ -784,6 +952,26 @@ func parseScheduleInterval(every, cronExpr string) (time.Duration, bool, error) 
 		return 0, false, err
 	}
 	return 0, false, nil
+}
+
+func parseScheduleEvery(every string) (time.Duration, error) {
+	return config.ParseInterval(every)
+}
+
+func countMissedRuns(lastFiredAt, now time.Time, interval time.Duration) int {
+	if interval <= 0 {
+		return 0
+	}
+	last := lastFiredAt.UTC()
+	current := now.UTC()
+	if !current.After(last) {
+		return 0
+	}
+	nextDue := last.Add(interval)
+	if current.Before(nextDue) {
+		return 0
+	}
+	return int(current.Sub(nextDue)/interval) + 1
 }
 
 func scheduleConstraintsAllowAt(schedule config.ScheduleConfig, now time.Time) (bool, string, error) {

@@ -570,6 +570,7 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 
 	reason := "command_not_supported"
+	lastFiredAt := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Microsecond)
 	lastSuccessJobID := "job-123"
 	lastSuccessAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Microsecond)
 	nextRunAt := time.Now().UTC().Add(50 * time.Minute).Truncate(time.Microsecond)
@@ -579,6 +580,7 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 		Command:          "token_refresh",
 		Status:           ScheduleEntryPausedInvalid,
 		Reason:           &reason,
+		LastFiredAt:      &lastFiredAt,
 		LastSuccessJobID: &lastSuccessJobID,
 		LastSuccessAt:    &lastSuccessAt,
 		NextRunAt:        &nextRunAt,
@@ -598,6 +600,9 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 	if got.Reason == nil || *got.Reason != reason {
 		t.Fatalf("reason=%v want %q", got.Reason, reason)
+	}
+	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(lastFiredAt) {
+		t.Fatalf("last_fired_at=%v want %v", got.LastFiredAt, lastFiredAt)
 	}
 	if got.LastSuccessJobID == nil || *got.LastSuccessJobID != lastSuccessJobID {
 		t.Fatalf("last_success_job_id=%v want %q", got.LastSuccessJobID, lastSuccessJobID)
@@ -631,7 +636,7 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	if got.Reason != nil {
 		t.Fatalf("expected nil reason after activate, got %v", *got.Reason)
 	}
-	if got.LastSuccessJobID != nil || got.LastSuccessAt != nil || got.NextRunAt != nil {
+	if got.LastFiredAt != nil || got.LastSuccessJobID != nil || got.LastSuccessAt != nil || got.NextRunAt != nil {
 		t.Fatalf("expected timing fields cleared after activate update, got %#v", got)
 	}
 }

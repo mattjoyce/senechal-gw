@@ -124,6 +124,7 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
   command         TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'active',
   reason          TEXT,
+  last_fired_at   TEXT,
   last_success_job_id TEXT,
   last_success_at  TEXT,
   next_run_at      TEXT,
@@ -154,6 +155,9 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if err := ensureColumnExists(ctx, db, "schedule_entries", "last_success_job_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumnExists(ctx, db, "schedule_entries", "last_fired_at", "TEXT"); err != nil {
 		return err
 	}
 	if err := ensureColumnExists(ctx, db, "schedule_entries", "last_success_at", "TEXT"); err != nil {
