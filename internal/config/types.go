@@ -81,6 +81,9 @@ type ScheduleConfig struct {
 	Every           string           `yaml:"every,omitempty"` // e.g., "5m", "hourly", "daily"
 	Cron            string           `yaml:"cron,omitempty"`  // standard 5-field cron expression
 	Jitter          time.Duration    `yaml:"jitter,omitempty"`
+	OnlyBetween     string           `yaml:"only_between,omitempty"`     // "HH:MM-HH:MM"
+	Timezone        string           `yaml:"timezone,omitempty"`         // IANA timezone name
+	NotOn           []any            `yaml:"not_on,omitempty"`           // weekday names (mon) or ints (0-6, 7=sun)
 	Command         string           `yaml:"command,omitempty"`          // default: "poll"
 	Payload         map[string]any   `yaml:"payload,omitempty"`          // default: {}
 	PreferredWindow *PreferredWindow `yaml:"preferred_window,omitempty"` // Not in MVP
@@ -121,6 +124,9 @@ func (s ScheduleConfig) copy() ScheduleConfig {
 		for k, v := range s.Payload {
 			copied.Payload[k] = v
 		}
+	}
+	if s.NotOn != nil {
+		copied.NotOn = append([]any(nil), s.NotOn...)
 	}
 	return copied
 }

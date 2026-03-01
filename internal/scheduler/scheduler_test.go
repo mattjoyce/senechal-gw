@@ -88,6 +88,54 @@ func TestParseScheduleInterval(t *testing.T) {
 	}
 }
 
+func TestScheduleConstraintsAllowAt(t *testing.T) {
+	now := time.Date(2026, 3, 2, 10, 30, 0, 0, time.UTC) // Monday
+
+	ok, reason, err := scheduleConstraintsAllowAt(config.ScheduleConfig{}, now)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{
+		OnlyBetween: "08:00-12:00",
+	}, now)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{
+		OnlyBetween: "11:00-12:00",
+	}, now)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outside_time_window", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{
+		NotOn: []any{"monday"},
+	}, now)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outside_day_constraint", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{
+		Timezone: "UTC",
+		NotOn:    []any{1},
+	}, now)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outside_day_constraint", reason)
+
+	_, _, err = scheduleConstraintsAllowAt(config.ScheduleConfig{
+		OnlyBetween: "bad-window",
+	}, now)
+	assert.Error(t, err)
+
+	_, _, err = scheduleConstraintsAllowAt(config.ScheduleConfig{
+		Timezone: "Mars/Phobos",
+	}, now)
+	assert.Error(t, err)
+}
+
 func TestRecoverOrphanedJobs(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

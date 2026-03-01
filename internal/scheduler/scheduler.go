@@ -337,6 +337,20 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		}
 	}
 
+	if allowed, reason, err := scheduleConstraintsAllowAt(schedule, time.Now().UTC()); err != nil {
+		s.logger.Error("Failed schedule constraints check", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		return
+	} else if !allowed {
+		s.events.Publish("scheduler.skipped", map[string]any{
+			"plugin":      pluginName,
+			"schedule_id": scheduleID,
+			"command":     command,
+			"reason":      reason,
+		})
+		s.logger.Debug("Skipped scheduled job (constraints)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "reason", reason)
+		return
+	}
+
 	if allowed, reason, err := s.canSchedule(ctx, pluginName, command, pluginConf); err != nil {
 		s.logger.Error("Failed scheduling checks", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		return
@@ -770,4 +784,120 @@ func parseScheduleInterval(every, cronExpr string) (time.Duration, bool, error) 
 		return 0, false, err
 	}
 	return 0, false, nil
+}
+
+func scheduleConstraintsAllowAt(schedule config.ScheduleConfig, now time.Time) (bool, string, error) {
+	loc := time.UTC
+	if tz := strings.TrimSpace(schedule.Timezone); tz != "" {
+		loaded, err := time.LoadLocation(tz)
+		if err != nil {
+			return false, "", err
+		}
+		loc = loaded
+	}
+	localNow := now.In(loc)
+
+	if len(schedule.NotOn) > 0 {
+		day := localNow.Weekday()
+		for _, token := range schedule.NotOn {
+			parsed, err := parseWeekdayConstraint(token)
+			if err != nil {
+				return false, "", err
+			}
+			if parsed == day {
+				return false, "outside_day_constraint", nil
+			}
+		}
+	}
+
+	window := strings.TrimSpace(schedule.OnlyBetween)
+	if window == "" {
+		return true, "", nil
+	}
+	parts := strings.Split(window, "-")
+	if len(parts) != 2 {
+		return false, "", fmt.Errorf("invalid only_between %q", schedule.OnlyBetween)
+	}
+	startMin, err := parseClockConstraint(parts[0])
+	if err != nil {
+		return false, "", err
+	}
+	endMin, err := parseClockConstraint(parts[1])
+	if err != nil {
+		return false, "", err
+	}
+	if startMin == endMin {
+		return false, "", fmt.Errorf("invalid only_between %q: start and end cannot be equal", schedule.OnlyBetween)
+	}
+
+	nowMin := localNow.Hour()*60 + localNow.Minute()
+	if startMin < endMin {
+		if nowMin < startMin || nowMin >= endMin {
+			return false, "outside_time_window", nil
+		}
+		return true, "", nil
+	}
+
+	// Overnight window, e.g. 22:00-06:00.
+	if nowMin >= startMin || nowMin < endMin {
+		return true, "", nil
+	}
+	return false, "outside_time_window", nil
+}
+
+func parseClockConstraint(raw string) (int, error) {
+	parsed, err := time.Parse("15:04", strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("expected HH:MM")
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
+}
+
+func parseWeekdayConstraint(token any) (time.Weekday, error) {
+	switch v := token.(type) {
+	case int:
+		return parseWeekdayIntConstraint(v)
+	case int64:
+		return parseWeekdayIntConstraint(int(v))
+	case float64:
+		if v != float64(int(v)) {
+			return 0, fmt.Errorf("weekday number must be integer: %v", v)
+		}
+		return parseWeekdayIntConstraint(int(v))
+	case string:
+		return parseWeekdayStringConstraint(v)
+	default:
+		return 0, fmt.Errorf("unsupported weekday type %T", token)
+	}
+}
+
+func parseWeekdayIntConstraint(v int) (time.Weekday, error) {
+	if v == 7 {
+		return time.Sunday, nil
+	}
+	if v < 0 || v > 6 {
+		return 0, fmt.Errorf("weekday number %d out of range [0,6] or 7 for sunday", v)
+	}
+	return time.Weekday(v), nil
+}
+
+func parseWeekdayStringConstraint(raw string) (time.Weekday, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "sun", "sunday":
+		return time.Sunday, nil
+	case "mon", "monday":
+		return time.Monday, nil
+	case "tue", "tues", "tuesday":
+		return time.Tuesday, nil
+	case "wed", "wednesday":
+		return time.Wednesday, nil
+	case "thu", "thurs", "thursday":
+		return time.Thursday, nil
+	case "fri", "friday":
+		return time.Friday, nil
+	case "sat", "saturday":
+		return time.Saturday, nil
+	default:
+		return 0, fmt.Errorf("unknown weekday %q", raw)
+	}
 }
