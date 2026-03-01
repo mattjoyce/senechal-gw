@@ -7,8 +7,10 @@ entrypoint: run.py
 description: "Wrapper for fabric AI pattern tool - processes text through predefined patterns"
 commands:
   - name: poll
+    type: write
     description: "No-op scheduled tick — no configured scheduled actions."
   - name: handle
+    type: write
     description: "Process text, URL, or YouTube video through a fabric AI pattern."
     input_schema:
       text: string
@@ -18,6 +20,7 @@ commands:
       prompt: string
       model: string
   - name: health
+    type: read
     description: "Check fabric binary availability and list available patterns."
 config_keys:
   required: []
