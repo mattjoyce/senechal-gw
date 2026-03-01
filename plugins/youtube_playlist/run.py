@@ -25,7 +25,7 @@ Return ONLY markdown with YAML frontmatter matching this schema exactly:
 ---
 created: '{created_at}'
 id: {video_id}
-metadata: {}
+metadata: {{}}
 model_used: gpt-4o
 output_format: markdown
 prompt_used: youtube playlist wisdom
