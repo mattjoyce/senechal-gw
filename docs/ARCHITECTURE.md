@@ -166,37 +166,50 @@ When a producer enqueues a job with a `dedupe_key`:
 
 ## 4. Scheduler
 
-A single internal tick loop. Each tick, the scheduler checks which plugins are due based on their configured intervals and enqueues `poll` jobs. Plugins without schedules are ignored by the scheduler and can still be triggered via webhook, router, CLI, or API.
+A single internal tick loop manages scheduled `poll` jobs. Each enabled plugin can define one or more schedule entries under `schedules:`. Plugins without schedules are ignored by the scheduler and can still be triggered via webhook, router, CLI, or API.
 
-### 4.1 Fuzzy Intervals
+### 4.1 Schedule Entries
+
+Each schedule entry is independent and has its own ID (default: `default`), command, and payload:
 
 ```yaml
 plugins:
   withings:
     schedules:
-      - id: default
-        every: 6h
-        jitter: 30m
-        preferred_window:
-          start: "06:00"
-          end: "22:00"
+      - id: hourly
+        every: 1h
+        command: poll
+        payload:
+          source: heartbeat
 ```
 
-Supported intervals: `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, `monthly`.
+Supported schedule types:
+- `every`: Interval schedule (`5m`, `15m`, `30m`, `hourly`, `2h`, `daily`, `weekly`, `monthly`).
+- `cron`: Standard 5-field cron (`min hour dom month dow`).
+- `at`: One-shot RFC3339 timestamp.
+- `after`: One-shot delay from service start.
 
-Cron syntax is supported via `cron:` with standard 5-field expressions (min hour dom month dow). Cron schedules are evaluated in the system timezone unless `timezone:` is set on the schedule.
+### 4.2 Time Controls
 
-### 4.2 Jitter
+Schedule execution can be constrained with time settings:
+- `jitter`: Random offset per scheduled run.
+- `preferred_window`: Hard window (`start`, `end`) for interval schedules.
+- `only_between`: Time window string (e.g. `"08:00-22:00"`).
+- `timezone`: IANA timezone for cron/window evaluation.
+- `not_on`: List of weekdays to skip (`[saturday, sunday]` or `[0-6]`).
 
-Jitter computed **per scheduled run**, not per tick:
-
+Jitter is computed per scheduled run (not per tick):
 ```
 next_run = last_successful_run + interval + random(-jitter/2, +jitter/2)
 ```
 
-Fixed for that scheduled run — no re-randomization per tick (prevents schedule wander). `preferred_window` is a hard constraint: if `next_run` falls outside the window, it snaps to the start of the next valid window.
+### 4.3 Catch-up and Overlap
 
-### 4.3 Poll Guard
+Two per-schedule policies control missed ticks and concurrency:
+- `catch_up`: `skip` (default), `run_once`, `run_all`.
+- `if_running`: `skip` (default), `queue`, `cancel`.
+
+### 4.4 Poll Guard
 
 The scheduler **must not enqueue** a new `poll` job if there is already a `queued` or `running` `poll` job for that plugin. Configurable per-plugin (default 1):
 
@@ -449,6 +462,7 @@ Single JSON object written to plugin's stdout:
 ```json
 {
   "status": "ok | error",
+  "result": "short human-readable summary",
   "error": "human-readable message (when status=error)",
   "retry": true,
   "events": [],
@@ -457,6 +471,7 @@ Single JSON object written to plugin's stdout:
 }
 ```
 
+- `result` — required when `status=ok`. Summarizes what the plugin did.
 - `retry` — defaults to `true` if omitted. Set `false` for permanent failures.
 - `events` — array of event envelopes (see 6.3).
 - `state_updates` — shallow-merged into plugin state.
