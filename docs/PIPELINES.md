@@ -130,7 +130,7 @@ Plugins receive orchestration metadata via `stdin`.
 {
   "protocol": 2,
   "job_id": "uuid-456",
-  "workspace_dir": "/tmp/ductile/ws/job-456/",
+  "workspace_dir": "<workspace_root>/ws/job-456/",
   "context": {
     "origin_user": "matt",
     "channel_id": "123"

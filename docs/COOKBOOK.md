@@ -23,7 +23,7 @@ plugins:
     config:
       watches:
         - id: astro_summaries
-          root: /home/matt/site/src/content/summaries
+          root: ${HOME}/site/src/content/summaries
           event_type: astro.summaries.changed
           recursive: true
           include_globs: ["**/*.md"]
@@ -53,8 +53,8 @@ plugins:
     enabled: true
     timeout: 15m
     config:
-      command: "docker compose -f /home/matt/admin/docker-compose.yml up -d --build"
-      working_dir: "/home/matt/admin"
+      command: "docker compose -f ${HOME}/admin/docker-compose.yml up -d --build"
+      working_dir: "${HOME}/admin"
 ```
 
 ---

@@ -14,7 +14,7 @@ See also: RFC-006 (local execution plane topology).
 Build from source and install to the user's local bin:
 
 ```bash
-cd /home/matt/Projects/ductile
+cd /path/to/ductile
 go build -o ~/.local/bin/ductile ./cmd/ductile
 ```
 
@@ -64,7 +64,7 @@ state:
     path: ./data/ductile.db
 
 plugin_roots:
-  - /home/matt/Projects/ductile/plugins
+  - /path/to/ductile/plugins
 
 include:
   - api.yaml
@@ -115,8 +115,8 @@ plugins:
     timeout: 30s
     max_attempts: 1
     config:
-      allowed_read_paths: "/home/matt"
-      allowed_write_paths: "/home/matt/admin/ductile-local/data/outputs"
+      allowed_read_paths: "${HOME}"
+      allowed_write_paths: "${HOME}/ductile-local/data/outputs"
 
   jina-reader:
     enabled: true
@@ -163,8 +163,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/matt/admin/ductile-local
-ExecStart=/home/matt/.local/bin/ductile system start --config config/config.yaml
+WorkingDirectory=${HOME}/ductile-local
+ExecStart=${HOME}/.local/bin/ductile system start --config config/config.yaml
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
@@ -242,7 +242,7 @@ When a new version is built:
 systemctl --user stop ductile-local
 
 # Rebuild
-cd /home/matt/Projects/ductile
+cd /path/to/ductile
 go build -o ~/.local/bin/ductile ./cmd/ductile
 
 # Restart
@@ -253,5 +253,5 @@ systemctl --user status ductile-local
 Or just rebuild and restart in one shot — the service will pick up the new
 binary on next start:
 ```bash
-cd /home/matt/Projects/ductile && go build -o ~/.local/bin/ductile ./cmd/ductile && systemctl --user restart ductile-local
+cd /path/to/ductile && go build -o ~/.local/bin/ductile ./cmd/ductile && systemctl --user restart ductile-local
 ```

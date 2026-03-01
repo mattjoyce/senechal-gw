@@ -80,7 +80,7 @@ When Step A transitions to Step B:
 Every job is assigned a unique `workspace_dir` on the filesystem.
 
 ### 4.1 Lifecycle
-1.  **Creation:** The Root job gets a fresh directory: `/tmp/ductile/ws/<job_id>`.
+1.  **Creation:** The Root job gets a fresh directory: `<workspace_root>/ws/<job_id>`.
 2.  **Cloning (The Branch Mechanic):** When a pipeline `splits` or moves to the next step, the Core **clones** the workspace.
     *   To save space/time, the Core uses **Hard Links** (`cp -al`).
     *   This provides **Isolation**: Step B cannot accidentally delete a file needed by Step C in a parallel branch.
@@ -96,7 +96,7 @@ Plugins receive the following via `stdin`:
 {
   "protocol": 2,
   "job_id": "uuid-456",
-  "workspace_dir": "/tmp/ductile/ws/job-456/",
+  "workspace_dir": "<workspace_root>/ws/job-456/",
   "context": {
     "origin_plugin": "discord",
     "channel_id": "123",
