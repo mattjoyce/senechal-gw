@@ -1405,7 +1405,11 @@ func runStart(args []string) int {
 	}
 
 	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
-		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, make(map[string]string))
+		tokensMap := make(map[string]string, len(cfg.Tokens))
+		for _, t := range cfg.Tokens {
+			tokensMap[t.Name] = t.Key
+		}
+		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, tokensMap)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
 			return 1

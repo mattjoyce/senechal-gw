@@ -254,6 +254,13 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 			return fmt.Errorf("include[%d] (%s): %w", i, includePath, err)
 		}
 
+		// Special handling for scope files with non-YAML-serialisable fields
+		if filepath.Base(absPath) == "tokens.yaml" {
+			if err := graftTokens(cfg, absPath); err != nil {
+				return fmt.Errorf("include[%d] (%s): %w", i, includePath, err)
+			}
+		}
+
 		// Deep merge included config into main config
 		if err := deepMergeConfig(cfg, includedCfg); err != nil {
 			return fmt.Errorf("include[%d] (%s): merge failed: %w", i, includePath, err)
@@ -407,12 +414,12 @@ func verifyScopeFilesRecursively(paths []string) error {
 }
 
 // extractTokensFromConfig extracts token definitions from config for cross-validation.
-// In include-based mode, tokens are defined inline in config (not separate file).
 func extractTokensFromConfig(cfg *Config) map[string]string {
-	// In the include approach, tokens would be merged into the config
-	// For now, return empty map - tokens validation will be updated separately
-	// when we determine how tokens are structured in this approach
-	return make(map[string]string)
+	m := make(map[string]string, len(cfg.Tokens))
+	for _, t := range cfg.Tokens {
+		m[t.Name] = t.Key
+	}
+	return m
 }
 
 // applyConfigDefaults merges default values into config where not explicitly set.
