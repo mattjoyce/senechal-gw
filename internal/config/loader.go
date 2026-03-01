@@ -590,6 +590,17 @@ func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConf
 			return fmt.Errorf("plugin %q: invalid %s.cron: %w", pluginName, sourcePath, err)
 		}
 	}
+	if catchUp := strings.TrimSpace(schedule.CatchUp); catchUp != "" {
+		switch catchUp {
+		case "skip", "run_once", "run_all":
+			// valid
+		default:
+			return fmt.Errorf("plugin %q: invalid %s.catch_up %q: expected skip, run_once, or run_all", pluginName, sourcePath, schedule.CatchUp)
+		}
+		if hasCron && catchUp != "skip" {
+			return fmt.Errorf("plugin %q: %s.catch_up %q is only supported for every schedules", pluginName, sourcePath, catchUp)
+		}
+	}
 	if err := validateScheduleConstraints(pluginName, sourcePath, schedule); err != nil {
 		return err
 	}

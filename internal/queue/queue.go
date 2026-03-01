@@ -547,7 +547,7 @@ func (q *Queue) GetScheduleEntryState(ctx context.Context, plugin, scheduleID st
 	}
 
 	row := q.db.QueryRowContext(ctx, `
-SELECT plugin, schedule_id, command, status, reason, last_success_job_id, last_success_at, next_run_at, updated_at
+SELECT plugin, schedule_id, command, status, reason, last_fired_at, last_success_job_id, last_success_at, next_run_at, updated_at
 FROM schedule_entries
 WHERE plugin = ? AND schedule_id = ?;
 `, plugin, scheduleID)
@@ -556,6 +556,7 @@ WHERE plugin = ? AND schedule_id = ?;
 		state            ScheduleEntryState
 		statusS          string
 		reason           sql.NullString
+		lastFiredAt      sql.NullString
 		lastSuccessJobID sql.NullString
 		lastSuccessAt    sql.NullString
 		nextRunAt        sql.NullString
@@ -567,6 +568,7 @@ WHERE plugin = ? AND schedule_id = ?;
 		&state.Command,
 		&statusS,
 		&reason,
+		&lastFiredAt,
 		&lastSuccessJobID,
 		&lastSuccessAt,
 		&nextRunAt,
@@ -581,6 +583,11 @@ WHERE plugin = ? AND schedule_id = ?;
 	state.Status = ScheduleEntryStatus(statusS)
 	if reason.Valid {
 		state.Reason = &reason.String
+	}
+	if lastFiredAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, lastFiredAt.String); err == nil {
+			state.LastFiredAt = &t
+		}
 	}
 	if lastSuccessJobID.Valid {
 		state.LastSuccessJobID = &lastSuccessJobID.String
@@ -621,6 +628,10 @@ func (q *Queue) UpsertScheduleEntryState(ctx context.Context, state ScheduleEntr
 	if state.Reason != nil {
 		reason = *state.Reason
 	}
+	var lastFiredAt any
+	if state.LastFiredAt != nil {
+		lastFiredAt = state.LastFiredAt.UTC().Format(time.RFC3339Nano)
+	}
 	var lastSuccessJobID any
 	if state.LastSuccessJobID != nil {
 		lastSuccessJobID = *state.LastSuccessJobID
@@ -635,17 +646,18 @@ func (q *Queue) UpsertScheduleEntryState(ctx context.Context, state ScheduleEntr
 	}
 
 	_, err := q.db.ExecContext(ctx, `
-INSERT INTO schedule_entries(plugin, schedule_id, command, status, reason, last_success_job_id, last_success_at, next_run_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO schedule_entries(plugin, schedule_id, command, status, reason, last_fired_at, last_success_job_id, last_success_at, next_run_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(plugin, schedule_id) DO UPDATE SET
   command = excluded.command,
   status = excluded.status,
   reason = excluded.reason,
+  last_fired_at = excluded.last_fired_at,
   last_success_job_id = excluded.last_success_job_id,
   last_success_at = excluded.last_success_at,
   next_run_at = excluded.next_run_at,
   updated_at = excluded.updated_at;
-`, state.Plugin, state.ScheduleID, state.Command, state.Status, reason, lastSuccessJobID, lastSuccessAt, nextRunAt, updatedAt)
+`, state.Plugin, state.ScheduleID, state.Command, state.Status, reason, lastFiredAt, lastSuccessJobID, lastSuccessAt, nextRunAt, updatedAt)
 	if err != nil {
 		return fmt.Errorf("upsert schedule entry state: %w", err)
 	}

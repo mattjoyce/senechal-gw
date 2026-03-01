@@ -339,6 +339,60 @@ plugins:
 			wantErr: true,
 		},
 		{
+			name: "schedule catch_up run_once is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        catch_up: run_once
+`,
+			wantErr: false,
+		},
+		{
+			name: "schedule catch_up invalid value",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        catch_up: replay
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule catch_up run_all not allowed with cron",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - cron: "*/15 * * * *"
+        catch_up: run_all
+`,
+			wantErr: true,
+		},
+		{
 			name: "invalid schedule interval",
 			yaml: `
 service:
