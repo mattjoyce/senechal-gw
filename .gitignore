@@ -43,6 +43,9 @@ go.work.sum
 # Claude Code local settings
 .claude/
 
+# Beads local database
+.beads/
+
 # OS
 .DS_Store
 Thumbs.db
