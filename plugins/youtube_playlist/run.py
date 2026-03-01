@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
 """YouTube playlist poller plugin for Ductile Gateway (protocol v2).
 
-Fetches the YouTube playlist Atom feed and emits events for new videos.
-Uses plugin state to avoid duplicate processing and supports conditional
-requests (ETag/Last-Modified) to reduce rate limiting.
+Fetches playlist entries via yt-dlp --flat-playlist and emits events for new
+videos. Uses plugin state (seen_ids) to avoid duplicate processing.
 """
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
-
-ATOM_NS = {
-    "atom": "http://www.w3.org/2005/Atom",
-    "yt": "http://www.youtube.com/xml/schemas/2015",
-    "media": "http://search.yahoo.com/mrss/",
-}
+from typing import Any, Dict, List, Optional
 
 PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -117,61 +109,6 @@ def safe_format(template: str, values: Dict[str, Any]) -> str:
     return template.format_map(SafeDict(values))
 
 
-def fetch_feed(
-    url: str,
-    timeout: int,
-    user_agent: str,
-    etag: str,
-    last_modified: str,
-) -> Tuple[Optional[str], str, str, bool]:
-    headers = {"User-Agent": user_agent}
-    if etag:
-        headers["If-None-Match"] = etag
-    if last_modified:
-        headers["If-Modified-Since"] = last_modified
-
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            return (
-                body,
-                resp.headers.get("ETag", ""),
-                resp.headers.get("Last-Modified", ""),
-                False,
-            )
-    except urllib.error.HTTPError as e:
-        if e.code == 304:
-            return None, etag, last_modified, True
-        raise
-
-
-def parse_entries(feed_xml: str) -> List[Dict[str, str]]:
-    root = ET.fromstring(feed_xml)
-    entries: List[Dict[str, str]] = []
-    for entry in root.findall("atom:entry", ATOM_NS):
-        video_id = entry.findtext("yt:videoId", default="", namespaces=ATOM_NS).strip()
-        title = entry.findtext("atom:title", default="", namespaces=ATOM_NS).strip()
-        published = entry.findtext("atom:published", default="", namespaces=ATOM_NS).strip()
-        link_el = entry.find("atom:link", ATOM_NS)
-        link = ""
-        if link_el is not None:
-            link = link_el.attrib.get("href", "")
-        if not link and video_id:
-            link = f"https://www.youtube.com/watch?v={video_id}"
-        if not video_id:
-            continue
-        entries.append(
-            {
-                "video_id": video_id,
-                "title": title,
-                "published": published,
-                "video_url": link,
-            }
-        )
-    return entries
-
-
 def build_output_path(
     output_dir: str,
     filename_template: str,
@@ -187,6 +124,73 @@ def build_output_path(
     return filename
 
 
+def fetch_playlist_via_ytdlp(
+    playlist_url: str,
+    max_entries: int,
+    timeout: int,
+) -> List[Dict[str, str]]:
+    """Fetch playlist entries using yt-dlp --flat-playlist.
+
+    Returns a list of dicts with video_id, title, published (ISO 8601), video_url.
+    """
+    ytdlp = shutil.which("yt-dlp")
+    if not ytdlp:
+        raise RuntimeError("yt-dlp not found in PATH")
+
+    cmd = [
+        ytdlp,
+        "--flat-playlist",
+        "--dump-json",
+        "--no-warnings",
+        "--playlist-end", str(max_entries),
+        playlist_url,
+    ]
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or "yt-dlp exited non-zero")
+
+    entries: List[Dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        video_id = str(item.get("id") or item.get("video_id") or "").strip()
+        if not video_id:
+            continue
+        # yt-dlp upload_date is YYYYMMDD; convert to ISO 8601
+        upload_date = str(item.get("upload_date") or "").strip()
+        published = ""
+        if len(upload_date) == 8:
+            try:
+                published = (
+                    datetime.strptime(upload_date, "%Y%m%d")
+                    .replace(tzinfo=timezone.utc)
+                    .isoformat()
+                )
+            except ValueError:
+                pass
+        entries.append({
+            "video_id": video_id,
+            "title": str(item.get("title") or "").strip(),
+            "published": published,
+            "video_url": str(
+                item.get("url") or f"https://www.youtube.com/watch?v={video_id}"
+            ),
+        })
+    return entries
+
+
 def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     playlist_id = parse_playlist_id(str(config.get("playlist_id") or ""))
     playlist_url = str(config.get("playlist_url") or "").strip()
@@ -196,47 +200,16 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     if not playlist_id:
         return error_response("Missing playlist_id or playlist_url in config", retry=False)
 
-    feed_url = f"https://www.youtube.com/feeds/videos.xml?playlist_id={playlist_id}"
-    timeout = int(config.get("request_timeout_seconds", 15))
-    user_agent = str(
-        config.get(
-            "user_agent",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        )
-    )
-
-    etag = str(state.get("etag") or "")
-    last_modified = str(state.get("last_modified") or "")
+    effective_url = playlist_url or f"https://www.youtube.com/playlist?list={playlist_id}"
+    max_entries = int(config.get("max_entries", 50))
+    timeout = int(config.get("request_timeout_seconds", 60))
 
     try:
-        feed_xml, new_etag, new_last_modified, not_modified = fetch_feed(
-            feed_url,
-            timeout=timeout,
-            user_agent=user_agent,
-            etag=etag,
-            last_modified=last_modified,
-        )
-    except urllib.error.HTTPError as e:
-        return error_response(f"Failed to fetch playlist feed: HTTP {e.code}", retry=e.code >= 500)
+        entries = fetch_playlist_via_ytdlp(effective_url, max_entries=max_entries, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return error_response("yt-dlp timed out fetching playlist", retry=True)
     except Exception as e:
-        return error_response(f"Failed to fetch playlist feed: {e}", retry=True)
-
-    if not_modified:
-        return ok_response(
-            logs=[{"level": "info", "message": "Playlist feed not modified"}],
-            state_updates={"last_checked": iso_now()},
-        )
-
-    if not feed_xml:
-        return ok_response(
-            logs=[{"level": "warn", "message": "Playlist feed empty"}],
-            state_updates={"last_checked": iso_now(), "etag": new_etag, "last_modified": new_last_modified},
-        )
-
-    entries = parse_entries(feed_xml)
-    max_entries = int(config.get("max_entries", 50))
-    entries = entries[:max_entries]
+        return error_response(f"Failed to fetch playlist: {e}", retry=True)
 
     seen_ids = state.get("seen_ids")
     seen_set = set(seen_ids or [])
@@ -248,12 +221,10 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     if first_run and not emit_existing:
         updated_seen = list({entry["video_id"] for entry in entries} | seen_set)
         return ok_response(
-            logs=[{"level": "info", "message": f"First run: recorded {len(updated_seen)} videos"}],
+            logs=[{"level": "info", "message": f"First run: recorded {len(updated_seen)} videos, emitting none"}],
             state_updates={
                 "seen_ids": updated_seen,
                 "last_checked": iso_now(),
-                "etag": new_etag,
-                "last_modified": new_last_modified,
             },
         )
 
@@ -274,9 +245,11 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
         published_date = ""
         if published_at:
             try:
-                published_date = datetime.fromisoformat(published_at.replace("Z", "+00:00")).date().isoformat()
+                published_date = datetime.fromisoformat(
+                    published_at.replace("Z", "+00:00")
+                ).date().isoformat()
             except ValueError:
-                published_date = ""
+                pass
 
         raw_title = entry.get("title", "")
         title_clean = " ".join(str(raw_title).split())
@@ -289,7 +262,7 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
             "video_id": entry.get("video_id", ""),
             "video_url": entry.get("video_url", ""),
             "playlist_id": playlist_id,
-            "playlist_url": playlist_url or feed_url,
+            "playlist_url": effective_url,
             "published_at": published_at,
             "published_date": published_date,
             "created_at": created_at,
@@ -303,7 +276,7 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
             "title": title_clean,
             "published_at": published_at,
             "playlist_id": playlist_id,
-            "playlist_url": playlist_url or feed_url,
+            "playlist_url": effective_url,
             "output_path": build_output_path(output_dir, filename_template, values),
             "prompt": safe_format(prompt_template, values),
         }
@@ -325,8 +298,6 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
         state_updates={
             "seen_ids": updated_seen,
             "last_checked": iso_now(),
-            "etag": new_etag,
-            "last_modified": new_last_modified,
         },
         logs=[
             {
@@ -344,7 +315,10 @@ def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
         playlist_id = parse_playlist_id(playlist_url)
     if not playlist_id:
         return error_response("Missing playlist_id or playlist_url in config", retry=False)
-    return ok_response(logs=[{"level": "info", "message": "youtube_playlist config ok"}])
+    ytdlp = shutil.which("yt-dlp")
+    if not ytdlp:
+        return error_response("yt-dlp not found in PATH", retry=False)
+    return ok_response(logs=[{"level": "info", "message": f"youtube_playlist config ok (yt-dlp: {ytdlp})"}])
 
 
 def handle_request(request: Dict[str, Any]) -> Dict[str, Any]:
