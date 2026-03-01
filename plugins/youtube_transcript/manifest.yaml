@@ -20,4 +20,4 @@ commands:
     description: "Returns plugin health status."
 config_keys:
   required: []
-  optional: [default_language, request_timeout_seconds, user_agent]
+  optional: [default_language, request_timeout_seconds, user_agent, js_runtime_path]

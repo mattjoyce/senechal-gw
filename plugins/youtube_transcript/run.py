@@ -253,7 +253,22 @@ def choose_vtt_file(paths: List[str], preferred_language: str) -> Optional[str]:
     return paths[0]
 
 
-def fetch_transcript_via_ytdlp(video_id: str, language: str, timeout: int) -> Tuple[str, str, str]:
+def get_js_runtime_args(config: Dict[str, Any]) -> List[str]:
+    """Return --js-runtimes args for yt-dlp if a suitable runtime is found."""
+    # Config override takes priority
+    runtime_path = (config.get("js_runtime_path") or "").strip()
+    if runtime_path:
+        name = os.path.basename(runtime_path).split(".")[0]
+        return ["--js-runtimes", f"{name}:{runtime_path}"]
+    # Auto-detect node or bun from PATH
+    for runtime in ("node", "bun"):
+        path = shutil_which(runtime)
+        if path:
+            return ["--js-runtimes", f"{runtime}:{path}"]
+    return []
+
+
+def fetch_transcript_via_ytdlp(video_id: str, language: str, timeout: int, config: Optional[Dict[str, Any]] = None) -> Tuple[str, str, str]:
     if not shutil_which("yt-dlp"):
         raise RuntimeError("yt-dlp not available")
 
@@ -275,6 +290,7 @@ def fetch_transcript_via_ytdlp(video_id: str, language: str, timeout: int) -> Tu
             "vtt",
             "--sub-langs",
             lang_opts,
+            *get_js_runtime_args(config or {}),
             "-o",
             output_tpl,
             url,
@@ -355,6 +371,7 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
             video_id=video_id,
             language=str(language),
             timeout=timeout,
+            config=config,
         )
     except Exception as e:
         ytdlp_error = str(e)
