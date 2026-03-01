@@ -26,6 +26,7 @@ type JobQueuer interface {
 	GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error)
 	GetJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, error)
 	ListJobs(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
+	ListJobLogs(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error)
 	Depth(ctx context.Context) (int, error)
 }
 
@@ -164,6 +165,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
 	})

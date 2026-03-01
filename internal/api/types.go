@@ -47,6 +47,28 @@ type JobListItem struct {
 	Attempt     int        `json:"attempt"`
 }
 
+// JobLogListResponse is returned by GET /job-logs.
+type JobLogListResponse struct {
+	Logs  []JobLogItem `json:"logs"`
+	Total int          `json:"total"`
+}
+
+// JobLogItem is one row in GET /job-logs.
+type JobLogItem struct {
+	JobID       string          `json:"job_id"`
+	LogID       string          `json:"log_id"`
+	Plugin      string          `json:"plugin"`
+	Command     string          `json:"command"`
+	Status      string          `json:"status"`
+	Attempt     int             `json:"attempt"`
+	SubmittedBy string          `json:"submitted_by"`
+	CreatedAt   time.Time       `json:"created_at"`
+	CompletedAt time.Time       `json:"completed_at"`
+	LastError   *string         `json:"last_error,omitempty"`
+	Stderr      *string         `json:"stderr,omitempty"`
+	Result      json.RawMessage `json:"result,omitempty"`
+}
+
 // SyncResponse is returned for successful synchronous pipeline executions.
 type SyncResponse struct {
 	JobID      string          `json:"job_id"`

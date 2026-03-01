@@ -214,7 +214,51 @@ Results are sorted by `created_at` descending (most recent first).
 
 ---
 
-### 6. System Health
+### 6. Job Logs
+
+Query stored job log records for audit and troubleshooting. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
+
+**Endpoint**: `GET /job-logs`
+
+**Query Parameters**:
+- `job_id` (String, optional): Filter by job id.
+- `plugin` (String, optional): Exact plugin name filter.
+- `command` (String, optional): Exact command name filter.
+- `status` (String, optional): Job status filter (same values as `/jobs`).
+- `submitted_by` (String, optional): Exact submitter filter.
+- `from` (RFC3339, optional): Completed-at lower bound.
+- `to` (RFC3339, optional): Completed-at upper bound.
+- `query` (String, optional): Full-text search over `last_error`, `stderr`, and `result`.
+- `limit` (Integer, optional): Max rows returned (default 50, max 200).
+- `include_result` (Boolean, optional): Include full `result` payloads.
+
+**Response (200 OK)**:
+```json
+{
+  "logs": [
+    {
+      "job_id": "uuid-v4",
+      "log_id": "uuid-v4-1",
+      "plugin": "withings",
+      "command": "poll",
+      "status": "failed",
+      "attempt": 1,
+      "submitted_by": "api",
+      "created_at": "2026-02-21T10:00:00Z",
+      "completed_at": "2026-02-21T10:00:02Z",
+      "last_error": "token expired",
+      "stderr": "stack trace..."
+    }
+  ],
+  "total": 42
+}
+```
+
+Results are sorted by `completed_at` descending (most recent first).
+
+---
+
+### 7. System Health
 
 Unauthenticated endpoint for health checks. Typically used by monitoring tools or load balancers.
 

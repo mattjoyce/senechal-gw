@@ -513,6 +513,133 @@ func (q *Queue) ListJobs(ctx context.Context, filter ListJobsFilter) ([]*JobSumm
 	return jobs, total, nil
 }
 
+// ListJobLogs retrieves job log rows with optional filters and search terms.
+func (q *Queue) ListJobLogs(ctx context.Context, filter JobLogFilter) ([]*JobLogEntry, int, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var (
+		whereParts []string
+		args       []any
+	)
+	whereParts = append(whereParts, "1=1")
+
+	if filter.JobID != "" {
+		whereParts = append(whereParts, "(q.id = ? OR l.id LIKE ?)")
+		args = append(args, filter.JobID, filter.JobID+"-%")
+	}
+	if filter.Plugin != "" {
+		whereParts = append(whereParts, "l.plugin = ?")
+		args = append(args, filter.Plugin)
+	}
+	if filter.Command != "" {
+		whereParts = append(whereParts, "l.command = ?")
+		args = append(args, filter.Command)
+	}
+	if filter.Status != nil {
+		whereParts = append(whereParts, "l.status = ?")
+		args = append(args, *filter.Status)
+	}
+	if filter.SubmittedBy != "" {
+		whereParts = append(whereParts, "l.submitted_by = ?")
+		args = append(args, filter.SubmittedBy)
+	}
+	if filter.Since != nil {
+		whereParts = append(whereParts, "l.completed_at >= ?")
+		args = append(args, filter.Since.Format(time.RFC3339Nano))
+	}
+	if filter.Until != nil {
+		whereParts = append(whereParts, "l.completed_at <= ?")
+		args = append(args, filter.Until.Format(time.RFC3339Nano))
+	}
+	if strings.TrimSpace(filter.Query) != "" {
+		needle := "%" + strings.ToLower(strings.TrimSpace(filter.Query)) + "%"
+		whereParts = append(whereParts, "(LOWER(COALESCE(l.last_error, '')) LIKE ? OR LOWER(COALESCE(l.stderr, '')) LIKE ? OR LOWER(COALESCE(l.result, '')) LIKE ?)")
+		args = append(args, needle, needle, needle)
+	}
+
+	whereClause := strings.Join(whereParts, " AND ")
+
+	countQuery := "SELECT COUNT(*) FROM job_log l LEFT JOIN job_queue q ON l.id = (q.id || '-' || q.attempt) WHERE " + whereClause + ";"
+	var total int
+	if err := q.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count job logs: %w", err)
+	}
+
+	listQuery := strings.Builder{}
+	listQuery.WriteString("\nSELECT\n  COALESCE(q.id, '') AS job_id, l.id, l.plugin, l.command, l.status, l.attempt, l.submitted_by, l.created_at, l.completed_at, l.last_error, l.stderr")
+	if filter.IncludeResult {
+		listQuery.WriteString(", l.result")
+	} else {
+		listQuery.WriteString(", NULL")
+	}
+	listQuery.WriteString("\nFROM job_log l\nLEFT JOIN job_queue q ON l.id = (q.id || '-' || q.attempt)\nWHERE ")
+	listQuery.WriteString(whereClause)
+	listQuery.WriteString("\nORDER BY l.completed_at DESC, l.rowid DESC\nLIMIT ?;\n")
+
+	listArgs := append(append([]any{}, args...), limit)
+	rows, err := q.db.QueryContext(ctx, listQuery.String(), listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list job logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*JobLogEntry
+	for rows.Next() {
+		var (
+			entry       JobLogEntry
+			jobID       sql.NullString
+			statusS     string
+			createdAtS  string
+			completedAt string
+			lastErrS    sql.NullString
+			stderrS     sql.NullString
+			resultS     sql.NullString
+		)
+
+		if err := rows.Scan(&jobID, &entry.LogID, &entry.Plugin, &entry.Command, &statusS, &entry.Attempt, &entry.SubmittedBy, &createdAtS, &completedAt, &lastErrS, &stderrS, &resultS); err != nil {
+			return nil, 0, fmt.Errorf("scan job log: %w", err)
+		}
+
+		if jobID.Valid {
+			entry.JobID = jobID.String
+		}
+		entry.Status = Status(statusS)
+
+		createdAt, err := time.Parse(time.RFC3339Nano, createdAtS)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse job log created_at: %w", err)
+		}
+		entry.CreatedAt = createdAt
+
+		completedAtT, err := time.Parse(time.RFC3339Nano, completedAt)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse job log completed_at: %w", err)
+		}
+		entry.CompletedAt = completedAtT
+
+		if lastErrS.Valid {
+			entry.LastError = &lastErrS.String
+		}
+		if stderrS.Valid {
+			entry.Stderr = &stderrS.String
+		}
+		if resultS.Valid {
+			entry.Result = json.RawMessage(resultS.String)
+		}
+
+		logs = append(logs, &entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate job logs: %w", err)
+	}
+
+	return logs, total, nil
+}
+
 // LatestCompletedCommandResult returns the most recently completed result for a
 // plugin command submitted by a given producer identity.
 func (q *Queue) LatestCompletedCommandResult(ctx context.Context, plugin, command, submittedBy string) (*CommandResult, error) {

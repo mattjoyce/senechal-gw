@@ -431,6 +431,94 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// handleListJobLogs handles GET /job-logs.
+func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	filter := queue.JobLogFilter{
+		JobID:       strings.TrimSpace(q.Get("job_id")),
+		Plugin:      strings.TrimSpace(q.Get("plugin")),
+		Command:     strings.TrimSpace(q.Get("command")),
+		SubmittedBy: strings.TrimSpace(q.Get("submitted_by")),
+		Query:       strings.TrimSpace(q.Get("query")),
+		Limit:       50,
+	}
+
+	if rawLimit := strings.TrimSpace(q.Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit <= 0 {
+			s.writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if limit > 200 {
+			s.writeError(w, http.StatusBadRequest, "limit must be <= 200")
+			return
+		}
+		filter.Limit = limit
+	}
+
+	if rawStatus := strings.TrimSpace(q.Get("status")); rawStatus != "" {
+		status, ok := parseJobStatusFilter(rawStatus)
+		if !ok {
+			s.writeError(w, http.StatusBadRequest, "invalid status filter")
+			return
+		}
+		filter.Status = &status
+	}
+
+	if rawFrom := strings.TrimSpace(q.Get("from")); rawFrom != "" {
+		parsed, err := parseTimeParam(rawFrom)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid from timestamp")
+			return
+		}
+		filter.Since = &parsed
+	}
+
+	if rawTo := strings.TrimSpace(q.Get("to")); rawTo != "" {
+		parsed, err := parseTimeParam(rawTo)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid to timestamp")
+			return
+		}
+		filter.Until = &parsed
+	}
+
+	if strings.EqualFold(strings.TrimSpace(q.Get("include_result")), "true") {
+		filter.IncludeResult = true
+	}
+
+	logs, total, err := s.queue.ListJobLogs(r.Context(), filter)
+	if err != nil {
+		s.logger.Error("failed to list job logs", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to list job logs")
+		return
+	}
+
+	resp := JobLogListResponse{
+		Logs:  make([]JobLogItem, 0, len(logs)),
+		Total: total,
+	}
+	for _, logEntry := range logs {
+		resp.Logs = append(resp.Logs, JobLogItem{
+			JobID:       logEntry.JobID,
+			LogID:       logEntry.LogID,
+			Plugin:      logEntry.Plugin,
+			Command:     logEntry.Command,
+			Status:      string(logEntry.Status),
+			Attempt:     logEntry.Attempt,
+			SubmittedBy: logEntry.SubmittedBy,
+			CreatedAt:   logEntry.CreatedAt,
+			CompletedAt: logEntry.CompletedAt,
+			LastError:   logEntry.LastError,
+			Stderr:      logEntry.Stderr,
+			Result:      logEntry.Result,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
 func parseJobStatusFilter(raw string) (queue.Status, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "pending":
@@ -444,6 +532,16 @@ func parseJobStatusFilter(raw string) (queue.Status, bool) {
 	default:
 		return "", false
 	}
+}
+
+func parseTimeParam(raw string) (time.Time, error) {
+	layouts := []string{time.RFC3339Nano, time.RFC3339}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid time")
 }
 
 // handleListPlugins handles GET /plugins.

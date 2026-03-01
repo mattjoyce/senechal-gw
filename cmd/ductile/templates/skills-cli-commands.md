@@ -15,3 +15,4 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json|tui> [flags="<...
 - system.watch tier=READ mut=0 out=tui d="Open real-time diagnostic dashboard (Overwatch)."
 - system.skills tier=READ mut=0 out=markdown flags="[--config <dir>]" d="Export capability manifest."
 - job.inspect tier=READ mut=0 out=human|json flags="<job_id>" d="Retrieve logs, baggage, and workspace artifacts for a job."
+- job.logs tier=READ mut=0 out=human|json flags="[--plugin <name>] [--command <cmd>] [--status <status>] [--submitted-by <name>] [--from <time>] [--to <time>] [--query <text>] [--limit <n>] [--include-result]" d="Query stored job logs for audit and troubleshooting."

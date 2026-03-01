@@ -25,10 +25,11 @@ import (
 
 // mockQueue implements JobQueuer for testing
 type mockQueue struct {
-	enqueueFunc    func(ctx context.Context, req queue.EnqueueRequest) (string, error)
-	getJobByIDFunc func(ctx context.Context, jobID string) (*queue.JobResult, error)
-	listJobsFunc   func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
-	depthFunc      func(ctx context.Context) (int, error)
+	enqueueFunc     func(ctx context.Context, req queue.EnqueueRequest) (string, error)
+	getJobByIDFunc  func(ctx context.Context, jobID string) (*queue.JobResult, error)
+	listJobsFunc    func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
+	listJobLogsFunc func(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error)
+	depthFunc       func(ctx context.Context) (int, error)
 }
 
 func (m *mockQueue) Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error) {
@@ -44,6 +45,13 @@ func (m *mockQueue) ListJobs(ctx context.Context, filter queue.ListJobsFilter) (
 		return nil, 0, nil
 	}
 	return m.listJobsFunc(ctx, filter)
+}
+
+func (m *mockQueue) ListJobLogs(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error) {
+	if m.listJobLogsFunc == nil {
+		return nil, 0, nil
+	}
+	return m.listJobLogsFunc(ctx, filter)
 }
 
 func (m *mockQueue) Depth(ctx context.Context) (int, error) {
