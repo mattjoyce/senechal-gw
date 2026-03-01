@@ -332,9 +332,6 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.API.Listen != "" {
 		dst.API.Listen = src.API.Listen
 	}
-	if src.API.Auth.APIKey != "" {
-		dst.API.Auth.APIKey = src.API.Auth.APIKey
-	}
 	if len(src.API.Auth.Tokens) > 0 {
 		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
 	}
@@ -514,13 +511,8 @@ func validate(cfg *Config) error {
 
 	// API auth validation
 	if cfg.API.Enabled {
-		// If tokens are configured, validate them. api_key remains supported for back-compat.
-		if envVarPattern.MatchString(cfg.API.Auth.APIKey) {
-			matches := envVarPattern.FindStringSubmatch(cfg.API.Auth.APIKey)
-			if len(matches) > 1 {
-				return fmt.Errorf("api.auth.api_key: environment variable ${%s} is not set", matches[1])
-			}
-			return fmt.Errorf("api.auth.api_key: unresolved environment variable")
+		if len(cfg.API.Auth.Tokens) == 0 {
+			return fmt.Errorf("api.auth.tokens must be configured when API is enabled")
 		}
 		for i, tok := range cfg.API.Auth.Tokens {
 			if tok.Token == "" {

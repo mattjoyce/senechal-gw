@@ -845,7 +845,11 @@ func TestHashVerification(t *testing.T) {
 
 	// Create tokens.yaml (scope file)
 	tokensYAML := `
-api_key: original-secret
+tokens:
+  - name: test
+    key: original-secret
+    scopes_file: scopes/test.json
+    scopes_hash: blake3:deadbeef
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0600); err != nil {
 		t.Fatal(err)
@@ -885,7 +889,11 @@ plugins:
 
 	// Modify tokens.yaml (tamper with it)
 	tamperedYAML := `
-api_key: tampered-secret
+tokens:
+  - name: test
+    key: tampered-secret
+    scopes_file: scopes/test.json
+    scopes_hash: blake3:deadbeef
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tamperedYAML), 0600); err != nil {
 		t.Fatal(err)
@@ -936,7 +944,7 @@ include:
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(secretsDir, "tokens.yaml"), []byte("api_key: secret\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(secretsDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: secret\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(hooksDir, "webhooks.yaml"), []byte("listen: :8080\n"), 0600); err != nil {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/api"
+	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -62,7 +63,7 @@ func TestAPIIntegration(t *testing.T) {
 	testPort := "localhost:18080"
 	config := api.Config{
 		Listen: testPort,
-		APIKey: "test-key-123",
+		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
 	}
 	hub := events.NewHub(10)
 	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, nil, hub, slog.Default())

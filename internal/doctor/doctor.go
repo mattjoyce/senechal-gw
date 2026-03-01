@@ -49,7 +49,6 @@ func (d *Doctor) Validate() *Result {
 	d.validateRoutes(r)
 	d.warnUnusedPlugins(r)
 	d.warnMissingEnvVars(r)
-	d.warnDeprecatedSyntax(r)
 	d.warnSuspiciousSchedule(r)
 
 	r.Valid = len(r.Errors) == 0
@@ -131,8 +130,8 @@ func (d *Doctor) validateAPIConfig(r *Result) {
 	if d.cfg.API.Listen == "" {
 		d.addError(r, "api", "api.listen", "api.listen is required when API is enabled")
 	}
-	if d.cfg.API.Auth.APIKey == "" && len(d.cfg.API.Auth.Tokens) == 0 {
-		d.addWarning(r, "api", "api.auth", "API enabled but no authentication configured")
+	if len(d.cfg.API.Auth.Tokens) == 0 {
+		d.addError(r, "api", "api.auth.tokens", "api.auth.tokens must be configured when API is enabled")
 	}
 }
 
@@ -319,18 +318,6 @@ func (d *Doctor) warnMissingEnvVars(r *Result) {
 				}
 			}
 		}
-	}
-}
-
-// warnDeprecatedSyntax warns about legacy config patterns.
-func (d *Doctor) warnDeprecatedSyntax(r *Result) {
-	if d.cfg.API.Auth.APIKey != "" && len(d.cfg.API.Auth.Tokens) > 0 {
-		d.addWarning(r, "deprecated", "api.auth",
-			"both api_key and tokens configured; prefer tokens array only")
-	}
-	if d.cfg.API.Auth.APIKey != "" && len(d.cfg.API.Auth.Tokens) == 0 {
-		d.addWarning(r, "deprecated", "api.auth.api_key",
-			"legacy api_key grants full access; migrate to tokens array with scopes")
 	}
 }
 

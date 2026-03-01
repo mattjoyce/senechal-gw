@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -134,7 +135,7 @@ func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 	logger := slog.Default()
 	config := Config{
 		Listen: "localhost:8080",
-		APIKey: "test-key-123",
+		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
 	}
 	hub := events.NewHub(10)
 	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
@@ -619,7 +620,7 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 	}
 
 	server := New(
-		Config{Listen: "localhost:8080", APIKey: "test-key-123"},
+		Config{Listen: "localhost:8080", Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}}},
 		q,
 		&mockRegistry{},
 		rt,

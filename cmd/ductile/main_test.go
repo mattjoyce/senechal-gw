@@ -89,7 +89,7 @@ include:
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,7 +135,7 @@ include:
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

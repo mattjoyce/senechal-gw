@@ -13,9 +13,7 @@ All API requests (except `/healthz`, `/plugins`, `/skills`, `/openapi.json`, `/.
 Authorization: Bearer <your_token>
 ```
 
-Ductile supports two authentication modes:
-1. **Legacy API Key**: A single `api_key` configured in `api.auth`.
-2. **Scoped Tokens**: A list of `tokens` with explicit scopes (e.g., `plugin:rw`, `jobs:ro`, `events:ro`).
+Ductile uses scoped tokens configured in `api.auth.tokens`, with explicit scopes (e.g., `plugin:rw`, `jobs:ro`, `events:ro`).
 
 ---
 

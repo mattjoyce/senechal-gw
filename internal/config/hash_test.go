@@ -9,7 +9,7 @@ import (
 func TestGenerateChecksumsWithReportDryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -41,7 +41,7 @@ func TestGenerateChecksumsWithReportDryRun(t *testing.T) {
 func TestGenerateChecksumsWithReportWritesChecksums(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte("listen: :8080\n"), 0600); err != nil {

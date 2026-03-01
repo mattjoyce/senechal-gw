@@ -54,9 +54,7 @@ type PluginRegistry interface {
 // Config holds API server configuration
 type Config struct {
 	Listen string
-	// APIKey is the legacy single bearer token (admin/full access).
-	APIKey string
-	// Tokens is an optional list of scoped bearer tokens.
+	// Tokens is a list of scoped bearer tokens.
 	Tokens            []auth.TokenConfig
 	MaxConcurrentSync int
 	MaxSyncTimeout    time.Duration

@@ -150,19 +150,9 @@ tokens:
 
 ## 5. Authentication Configuration
 
-Ductile supports two authentication modes. These are configured within the `api` section of the configuration (typically in `config.yaml` or a dedicated `auth.yaml`).
+Ductile authentication is configured within the `api` section of the configuration (typically in `config.yaml` or a dedicated `auth.yaml`).
 
-### 5.1 Legacy: Single API Key (Simple)
-For single-user or development environments.
-```yaml
-api:
-  auth:
-    api_key: your_secret_token
-```
-**Access Level**: Full admin (`*` scope).
-**Note**: This field is intended for simple setups and is planned for deprecation in future versions.
-
-### 5.2 Modern: Scoped Tokens (Recommended)
+### 5.1 Scoped Tokens
 For multi-user or production environments.
 ```yaml
 api:
@@ -176,14 +166,7 @@ api:
         scopes: ["plugin:rw", "jobs:rw", "events:ro"]
 ```
 
-### 5.3 Coexistence and Migration
-- If both `api_key` and `tokens` are provided, both remain valid.
-- **Migration Path**:
-  1. Add clients to the `tokens` array.
-  2. Verify client connectivity.
-  3. Remove the `api_key` field.
-
-### 5.4 Token Scopes
+### 5.2 Token Scopes
 Scopes are explicit:
 - `*`: Full admin access.
 - `plugin:ro`, `plugin:rw`: Plugin and pipeline trigger access.

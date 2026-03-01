@@ -59,15 +59,7 @@ func constantTimeEqual(a, b string) bool {
 }
 
 // Authenticate matches a presented bearer token against configured tokens.
-// If legacyAPIKey matches, it authenticates as admin with scope "*".
-func Authenticate(presented string, legacyAPIKey string, tokens []TokenConfig) (Principal, bool) {
-	if constantTimeEqual(presented, legacyAPIKey) {
-		return Principal{
-			Token:  presented,
-			Scopes: map[string]struct{}{"*": {}},
-		}, true
-	}
-
+func Authenticate(presented string, tokens []TokenConfig) (Principal, bool) {
 	for _, t := range tokens {
 		if constantTimeEqual(presented, t.Token) {
 			return Principal{

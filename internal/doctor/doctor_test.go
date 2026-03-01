@@ -264,29 +264,6 @@ func TestValidate_WarnUnusedPlugin(t *testing.T) {
 	assertHasWarning(t, r, "unused", "unused-plugin")
 }
 
-func TestValidate_WarnDeprecatedAPIKey(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.APIKey = "old-key"
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	assertHasWarning(t, r, "deprecated", "api_key")
-}
-
-func TestValidate_WarnBothAPIKeyAndTokens(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.APIKey = "old-key"
-	cfg.API.Auth.Tokens = []config.APIToken{{Token: "new-key", Scopes: []string{"*"}}}
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	assertHasWarning(t, r, "deprecated", "both")
-}
-
 func TestFormatJSON(t *testing.T) {
 	t.Parallel()
 	r := &Result{

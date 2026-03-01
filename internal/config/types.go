@@ -53,9 +53,6 @@ type APIConfig struct {
 
 // APIAuthConfig defines API authentication settings.
 type APIAuthConfig struct {
-	// APIKey is the legacy single bearer token (admin/full access).
-	// Prefer Tokens for scoped access.
-	APIKey string     `yaml:"api_key"`
 	Tokens []APIToken `yaml:"tokens,omitempty"`
 }
 
@@ -360,11 +357,8 @@ func Defaults() *Config {
 		API: APIConfig{
 			Enabled: false,
 			Listen:  "127.0.0.1:8080",
-			Auth: APIAuthConfig{
-				APIKey: "",
-			},
 		},
-		Plugins:    make(map[string]PluginConf),
+		Plugins: make(map[string]PluginConf),
 	}
 }
 

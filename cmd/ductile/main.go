@@ -1401,7 +1401,6 @@ func runStart(args []string) int {
 
 		apiConfig := api.Config{
 			Listen:            cfg.API.Listen,
-			APIKey:            cfg.API.Auth.APIKey,
 			Tokens:            tokens,
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,

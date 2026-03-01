@@ -164,7 +164,7 @@ func TestIsConfigSpecDir(t *testing.T) {
 	// Directory with config.yaml + tokens.yaml but no subdir → false (include-mode)
 	tmpDir3 := t.TempDir()
 	writeTestFile(t, filepath.Join(tmpDir3, "config.yaml"), "include:\n  - tokens.yaml\n")
-	writeTestFile(t, filepath.Join(tmpDir3, "tokens.yaml"), "api_key: test\n")
+	writeTestFile(t, filepath.Join(tmpDir3, "tokens.yaml"), "tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n")
 
 	if IsConfigSpecDir(tmpDir3) {
 		t.Error("config.yaml + tokens.yaml without subdirectory should not be CONFIG_SPEC dir")

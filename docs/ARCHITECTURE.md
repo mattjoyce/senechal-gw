@@ -587,7 +587,9 @@ api:
   enabled: true
   listen: "localhost:8080"
   auth:
-    api_key: ${API_KEY}  # Bearer token for authentication
+    tokens:
+      - token: ${ADMIN_API_TOKEN}
+        scopes: ["*"]
 ```
 
 ### 9.2 Primary Trigger Endpoints
@@ -605,7 +607,7 @@ Retrieves the status and results of a previously triggered job.
 
 **Request:**
 - URL param: `{job_id}` - UUID returned from one of the POST trigger endpoints
-- Header: `Authorization: Bearer <api_key>`
+- Header: `Authorization: Bearer <token>`
 
 **Response (200 OK - queued):**
 ```json
@@ -647,7 +649,7 @@ Retrieves the status and results of a previously triggered job.
 ```
 
 **Error Responses:**
-- `401 Unauthorized` - Missing or invalid API key
+- `401 Unauthorized` - Missing or invalid token
 - `404 Not Found` - Job ID not found
 
 ### 9.4 Authentication & Authorization (Sprint 3+)
@@ -700,15 +702,10 @@ tokens:
 5. Check if requested action matches any granted scope
 6. Return 403 if denied, proceed if allowed
 
-**Backward compatibility:**
-- Sprint 3-4: Support legacy `api.auth.api_key` (single key, full access)
-- Sprint 5: Remove legacy support (breaking change)
+Tokens should be stored in environment variables and interpolated (for example `${ADMIN_API_TOKEN}`).
 
-See cards #35 (Token Scopes), #36 (Manifest Metadata), #38 (CLI Config Tool), #40 (TUI Token Manager).
-
-- Key should be stored in environment variable and interpolated: `${API_KEY}`
-- All API requests must include `Authorization: Bearer <api_key>` header
-- Invalid or missing key returns `401 Unauthorized`
+- All API requests must include `Authorization: Bearer <token>` header
+- Invalid or missing token returns `401 Unauthorized`
 - No key rotation mechanism in MVP (manual config update + reload)
 
 ### 9.5 Resource Guarding (Synchronous Pipelines)
