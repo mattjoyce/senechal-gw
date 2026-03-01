@@ -58,7 +58,7 @@ go build \
 
 For local builds without explicit ldflags:
 
-- `version` defaults to `0.1.0-dev`
+- `version` defaults to `1.0.0-rc.1`
 - commit/build time are discovered from Go VCS build info when available
 - if VCS metadata is unavailable, commit/build time are reported as `unknown`
 

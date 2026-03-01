@@ -52,11 +52,62 @@ plugins:
       reset_after: 5m
     config: {}
 
-# Routes: event-driven plugin chaining (not in MVP)
-# routes:
-#   - from: plugin_a
-#     event_type: data_ready
-#     to: plugin_b
+  file_handler:
+    enabled: true
+    timeout: 30s
+    max_attempts: 1
+    config:
+      allowed_write_paths: /mnt/Projects/matt_joyce/site/src/content/summaries
+      default_output_dir: /mnt/Projects/matt_joyce/site/src/content/summaries
+
+  fabric:
+    enabled: true
+    timeout: 120s
+    max_attempts: 1
+    config:
+      FABRIC_DEFAULT_MODEL: ${FABRIC_DEFAULT_MODEL}
+
+  youtube_transcript:
+    enabled: true
+    timeout: 60s
+    max_attempts: 2
+    circuit_breaker:
+      threshold: 3
+      reset_after: 10m
+    config:
+      default_language: en
+      request_timeout_seconds: 20
+
+  youtube_playlist:
+    enabled: true
+    schedule:
+      every: 30m
+      jitter: 2m
+    timeout: 30s
+    max_attempts: 2
+    circuit_breaker:
+      threshold: 3
+      reset_after: 10m
+    config:
+      playlist_url: "https://youtube.com/playlist?list=PL5Rty1LvKaJ5GI4nqEzvEPTdgobgODlkk&si=R01sIlTR-Rp4A--u"
+      output_dir: /mnt/Projects/matt_joyce/site/src/content/summaries
+      filename_template: "{video_id}.md"
+      max_entries: 50
+      max_emit: 5
+      emit_existing_on_first_run: true
+      transcript_language: en
+      request_timeout_seconds: 15
+
+routes:
+  - from: youtube_playlist
+    event_type: youtube.playlist_item
+    to: youtube_transcript
+  - from: youtube_transcript
+    event_type: youtube.transcript
+    to: fabric
+  - from: fabric
+    event_type: fabric.completed
+    to: file_handler
 
 # Webhooks: HTTP listener endpoints (not in MVP)
 # webhooks:

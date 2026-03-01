@@ -1,0 +1,28 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: youtube_playlist
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Poll a YouTube playlist feed and emit new video events."
+commands:
+  - name: poll
+    type: write
+    description: "Fetch playlist feed and emit new video events."
+  - name: health
+    type: read
+    description: "Validate playlist configuration."
+config_keys:
+  required: []
+  optional:
+    - playlist_id
+    - playlist_url
+    - output_dir
+    - filename_template
+    - prompt_template
+    - max_entries
+    - max_emit
+    - emit_existing_on_first_run
+    - transcript_language
+    - user_agent
+    - request_timeout_seconds

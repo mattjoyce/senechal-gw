@@ -228,7 +228,7 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
   "plugins_loaded": 5,
   "config_path": "/etc/ductile",
   "binary_path": "/usr/local/bin/ductile",
-  "version": "0.1.0-dev"
+  "version": "1.0.0-rc.1"
 }
 ```
 
