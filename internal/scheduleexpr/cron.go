@@ -65,9 +65,9 @@ func ParseCron(expr string) (CronExpression, error) {
 	return CronExpression{minute: minute, hour: hour, dom: dom, month: month, dow: dow}, nil
 }
 
-// Matches reports whether t matches the cron expression (evaluated at minute granularity, UTC).
+// Matches reports whether t matches the cron expression (evaluated at minute granularity).
+// The caller controls timezone by passing a time with the desired location.
 func (c CronExpression) Matches(t time.Time) bool {
-	t = t.UTC()
 	if !c.minute.matches(int(t.Minute())) || !c.hour.matches(t.Hour()) || !c.month.matches(int(t.Month())) {
 		return false
 	}
@@ -89,8 +89,9 @@ func (c CronExpression) Matches(t time.Time) bool {
 }
 
 // NextAfter returns the next matching time strictly after from.
+// The caller controls timezone by passing a time with the desired location.
 func (c CronExpression) NextAfter(from time.Time) (time.Time, error) {
-	candidate := from.UTC().Truncate(time.Minute).Add(time.Minute)
+	candidate := from.Truncate(time.Minute).Add(time.Minute)
 	deadline := candidate.AddDate(5, 0, 0)
 	for !candidate.After(deadline) {
 		if c.Matches(candidate) {

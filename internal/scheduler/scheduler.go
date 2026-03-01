@@ -459,7 +459,22 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 			return
 		}
 	} else if cronExpr != nil {
-		due, nextRunAt, changed, cronErr := s.evaluateCronDueState(entryState, *cronExpr, time.Now().UTC())
+		cronNow, cronErr := s.scheduleCronNow(schedule)
+		if cronErr != nil {
+			reason := "invalid_schedule_config"
+			s.logger.Error("Failed to resolve cron timezone", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", cronErr)
+			if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
+				s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+			}
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      reason,
+			})
+			return
+		}
+		due, nextRunAt, changed, cronErr := s.evaluateCronDueState(entryState, *cronExpr, cronNow)
 		if cronErr != nil {
 			reason := "invalid_schedule_config"
 			s.logger.Error("Failed to evaluate cron schedule", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", cronErr)
@@ -561,7 +576,10 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		}
 	}
 	if !hasEvery && cronExpr != nil {
-		if err := s.advanceCronNextRun(ctx, &entryState, *cronExpr, time.Now().UTC()); err != nil {
+		cronNow, cronErr := s.scheduleCronNow(schedule)
+		if cronErr != nil {
+			s.logger.Error("Failed to resolve cron timezone", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", cronErr)
+		} else if err := s.advanceCronNextRun(ctx, &entryState, *cronExpr, cronNow); err != nil {
 			s.logger.Error("Failed to advance cron schedule", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		}
 	}
@@ -587,7 +605,7 @@ func (s *Scheduler) evaluateCronDueState(
 	expr scheduleexpr.CronExpression,
 	now time.Time,
 ) (bool, time.Time, bool, error) {
-	nowSlot := now.UTC().Truncate(time.Minute)
+	nowSlot := now.Truncate(time.Minute)
 	if entryState.NextRunAt == nil {
 		if expr.Matches(nowSlot) {
 			return true, nowSlot, false, nil
@@ -598,7 +616,7 @@ func (s *Scheduler) evaluateCronDueState(
 		}
 		return false, next, true, nil
 	}
-	nextRun := entryState.NextRunAt.UTC().Truncate(time.Minute)
+	nextRun := entryState.NextRunAt.Truncate(time.Minute)
 	return !nowSlot.Before(nextRun), nextRun, false, nil
 }
 
@@ -606,7 +624,7 @@ func (s *Scheduler) advanceCronNextRun(ctx context.Context, state *queue.Schedul
 	if state == nil {
 		return nil
 	}
-	nextRunAt, err := expr.NextAfter(now.UTC())
+	nextRunAt, err := expr.NextAfter(now)
 	if err != nil {
 		return err
 	}
@@ -1133,6 +1151,18 @@ func parseClockConstraint(raw string) (int, error) {
 		return 0, fmt.Errorf("expected HH:MM")
 	}
 	return parsed.Hour()*60 + parsed.Minute(), nil
+}
+
+func (s *Scheduler) scheduleCronNow(schedule config.ScheduleConfig) (time.Time, error) {
+	loc := time.Local
+	if tz := strings.TrimSpace(schedule.Timezone); tz != "" {
+		loaded, err := time.LoadLocation(tz)
+		if err != nil {
+			return time.Time{}, err
+		}
+		loc = loaded
+	}
+	return time.Now().In(loc), nil
 }
 
 func parseWeekdayConstraint(token any) (time.Weekday, error) {
