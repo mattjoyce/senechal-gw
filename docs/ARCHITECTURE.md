@@ -168,6 +168,8 @@ When a producer enqueues a job with a `dedupe_key`:
 
 A single internal tick loop manages scheduled `poll` jobs. Each enabled plugin can define one or more schedule entries under `schedules:`. Plugins without schedules are ignored by the scheduler and can still be triggered via webhook, router, CLI, or API.
 
+For a full field-by-field reference and behavior details, see [SCHEDULER.md](SCHEDULER.md).
+
 ### 4.1 Schedule Entries
 
 Each schedule entry is independent and has its own ID (default: `default`), command, and payload:
@@ -193,10 +195,11 @@ Supported schedule types:
 
 Schedule execution can be constrained with time settings:
 - `jitter`: Random offset per scheduled run.
-- `preferred_window`: Hard window (`start`, `end`) for interval schedules.
 - `only_between`: Time window string (e.g. `"08:00-22:00"`).
 - `timezone`: IANA timezone for cron/window evaluation.
 - `not_on`: List of weekdays to skip (`[saturday, sunday]` or `[0-6]`).
+
+`preferred_window` exists in config but is not enforced yet.
 
 Jitter is computed per scheduled run (not per tick):
 ```
