@@ -312,25 +312,46 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		})
 		return
 	}
-
-	baseInterval, hasEvery, err := parseScheduleInterval(schedule.Every, schedule.Cron)
-	if err != nil {
-		reason := "invalid_schedule_config"
-		s.logger.Error("Invalid schedule config for plugin", "plugin", pluginName, "schedule_id", scheduleID, "every", schedule.Every, "cron", schedule.Cron, "error", err)
-		if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
-			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
-		}
+	if entryState.Status == queue.ScheduleEntryExhausted {
 		s.events.Publish("scheduler.skipped", map[string]any{
 			"plugin":      pluginName,
 			"schedule_id": scheduleID,
 			"command":     command,
-			"reason":      reason,
+			"reason":      "schedule_exhausted",
 		})
 		return
 	}
 
+	hasEvery := strings.TrimSpace(schedule.Every) != ""
+	hasCron := strings.TrimSpace(schedule.Cron) != ""
+	hasAt := strings.TrimSpace(schedule.At) != ""
+	hasAfter := schedule.After > 0
+	oneShot := hasAt || hasAfter
+	var baseInterval time.Duration
 	var cronExpr *scheduleexpr.CronExpression
-	if !hasEvery {
+	var oneShotRunAt time.Time
+
+	if hasEvery || hasCron {
+		parsedInterval, everyMode, parseErr := parseScheduleInterval(schedule.Every, schedule.Cron)
+		if parseErr != nil {
+			reason := "invalid_schedule_config"
+			s.logger.Error("Invalid schedule config for plugin", "plugin", pluginName, "schedule_id", scheduleID, "every", schedule.Every, "cron", schedule.Cron, "error", parseErr)
+			if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
+				s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+			}
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      reason,
+			})
+			return
+		}
+		baseInterval = parsedInterval
+		hasEvery = everyMode
+	}
+
+	if hasCron {
 		parsedCron, parseErr := scheduleexpr.ParseCron(schedule.Cron)
 		if parseErr != nil {
 			reason := "invalid_schedule_config"
@@ -347,6 +368,27 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 			return
 		}
 		cronExpr = &parsedCron
+	}
+	if oneShot {
+		if hasAt {
+			parsedAt, parseErr := time.Parse(time.RFC3339, schedule.At)
+			if parseErr != nil {
+				reason := "invalid_schedule_config"
+				if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
+					s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+				}
+				s.events.Publish("scheduler.skipped", map[string]any{
+					"plugin":      pluginName,
+					"schedule_id": scheduleID,
+					"command":     command,
+					"reason":      reason,
+				})
+				return
+			}
+			oneShotRunAt = parsedAt.UTC()
+		} else if hasAfter {
+			oneShotRunAt = time.Now().UTC().Add(schedule.After)
+		}
 	}
 
 	if command == handleCommand {
@@ -450,6 +492,28 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 			s.logger.Debug("Skipped scheduled job (not due)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "next_run_at", nextRunAt.Format(time.RFC3339Nano))
 			return
 		}
+	} else if oneShot {
+		now := time.Now().UTC()
+		if entryState.NextRunAt == nil {
+			entryState.NextRunAt = &oneShotRunAt
+			if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+				s.logger.Error("Failed to persist one-shot schedule timing state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+				return
+			}
+		} else {
+			oneShotRunAt = entryState.NextRunAt.UTC()
+		}
+		if now.Before(oneShotRunAt) {
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      "not_due",
+				"next_run_at": oneShotRunAt.Format(time.RFC3339Nano),
+			})
+			s.logger.Debug("Skipped scheduled job (not due)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "next_run_at", oneShotRunAt.Format(time.RFC3339Nano))
+			return
+		}
 	}
 
 	if allowed, reason, err := scheduleConstraintsAllowAt(schedule, time.Now().UTC()); err != nil {
@@ -466,7 +530,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		return
 	}
 
-	if allowed, reason, err := s.canSchedule(ctx, pluginName, command, pluginConf); err != nil {
+	if allowed, reason, err := s.canSchedule(ctx, pluginName, command, pluginConf, schedule); err != nil {
 		s.logger.Error("Failed scheduling checks", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		return
 	} else if !allowed {
@@ -500,6 +564,16 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		if err := s.advanceCronNextRun(ctx, &entryState, *cronExpr, time.Now().UTC()); err != nil {
 			s.logger.Error("Failed to advance cron schedule", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		}
+	}
+	if oneShot {
+		reason := "one_shot_exhausted"
+		entryState.Status = queue.ScheduleEntryExhausted
+		entryState.Reason = &reason
+		entryState.NextRunAt = nil
+		if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+			s.logger.Error("Failed to persist exhausted one-shot state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		}
+		return
 	}
 	if hasEvery && !dedupeHit {
 		if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
@@ -772,7 +846,7 @@ func (s *Scheduler) reconcileScheduleTiming(
 	return true, nil
 }
 
-func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string, pluginConf config.PluginConf) (bool, string, error) {
+func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string, pluginConf config.PluginConf, schedule config.ScheduleConfig) (bool, string, error) {
 	cb, err := s.currentCircuitBreaker(ctx, pluginName, command)
 	if err != nil {
 		return false, "", err
@@ -794,17 +868,37 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 		s.logger.Info("Circuit breaker moved to half-open", "plugin", pluginName, "command", command)
 	}
 
-	maxOutstanding := pluginConf.MaxOutstandingPolls
-	if maxOutstanding <= 0 {
-		maxOutstanding = 1
-	}
-
 	outstanding, err := s.queue.CountOutstandingJobs(ctx, pluginName, command)
 	if err != nil {
 		return false, "", err
 	}
-	if outstanding >= maxOutstanding {
-		return false, "outstanding_limit", nil
+	ifRunning := strings.TrimSpace(schedule.IfRunning)
+	if ifRunning == "" {
+		ifRunning = "skip"
+	}
+	switch ifRunning {
+	case "skip":
+		if outstanding > 0 {
+			return false, "already_running", nil
+		}
+	case "queue":
+		maxOutstanding := pluginConf.MaxOutstandingPolls
+		if maxOutstanding <= 0 {
+			maxOutstanding = 1
+		}
+		if outstanding >= maxOutstanding {
+			return false, "outstanding_limit", nil
+		}
+	case "cancel":
+		if outstanding > 0 {
+			cancelled, cancelErr := s.queue.CancelOutstandingJobs(ctx, pluginName, command, "cancelled by scheduler (if_running=cancel)")
+			if cancelErr != nil {
+				return false, "", cancelErr
+			}
+			s.logger.Info("Cancelled outstanding scheduled jobs", "plugin", pluginName, "command", command, "cancelled", cancelled)
+		}
+	default:
+		return false, "", fmt.Errorf("invalid if_running policy %q", ifRunning)
 	}
 
 	return true, "", nil

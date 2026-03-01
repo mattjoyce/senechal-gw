@@ -393,6 +393,93 @@ plugins:
 			wantErr: true,
 		},
 		{
+			name: "schedule if_running cancel is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        if_running: cancel
+`,
+			wantErr: false,
+		},
+		{
+			name: "schedule if_running invalid value",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        if_running: replace
+`,
+			wantErr: true,
+		},
+		{
+			name: "one-shot at schedule is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - at: "2026-03-15T14:00:00Z"
+`,
+			wantErr: false,
+		},
+		{
+			name: "one-shot after schedule is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - after: 2h
+`,
+			wantErr: false,
+		},
+		{
+			name: "one-shot at invalid timestamp",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - at: "tomorrow"
+`,
+			wantErr: true,
+		},
+		{
 			name: "invalid schedule interval",
 			yaml: `
 service:

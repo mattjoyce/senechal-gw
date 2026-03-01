@@ -93,6 +93,7 @@ const (
 	ScheduleEntryActive        ScheduleEntryStatus = "active"
 	ScheduleEntryPausedManual  ScheduleEntryStatus = "paused_manual"
 	ScheduleEntryPausedInvalid ScheduleEntryStatus = "paused_invalid"
+	ScheduleEntryExhausted     ScheduleEntryStatus = "exhausted"
 )
 
 type ScheduleEntryState struct {

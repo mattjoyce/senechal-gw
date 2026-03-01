@@ -94,6 +94,34 @@ func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (in
 	return q.CountOutstandingJobs(ctx, plugin, "poll")
 }
 
+// CancelOutstandingJobs marks queued+running jobs for a plugin command as dead.
+func (q *Queue) CancelOutstandingJobs(ctx context.Context, plugin, command, reason string) (int, error) {
+	if plugin == "" {
+		return 0, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return 0, fmt.Errorf("command is empty")
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "cancelled by scheduler"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := q.db.ExecContext(ctx, `
+UPDATE job_queue
+SET status = ?, completed_at = ?, last_error = ?
+WHERE plugin = ? AND command = ? AND status IN (?, ?);
+`, StatusDead, now, reason, plugin, command, StatusQueued, StatusRunning)
+	if err != nil {
+		return 0, fmt.Errorf("cancel outstanding jobs: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("cancel outstanding jobs rows affected: %w", err)
+	}
+	return int(affected), nil
+}
+
 func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error) {
 	if req.Plugin == "" {
 		return "", fmt.Errorf("plugin is empty")

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -406,6 +407,56 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("generic outstanding completed count=%d, want 0", n)
+	}
+}
+
+func TestQueueCancelOutstandingJobs(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+
+	cancelled, err := q.CancelOutstandingJobs(context.Background(), "echo", "poll", "cancelled by test")
+	if err != nil {
+		t.Fatalf("CancelOutstandingJobs: %v", err)
+	}
+	if cancelled != 1 {
+		t.Fatalf("cancelled=%d want 1", cancelled)
+	}
+
+	var (
+		status    string
+		lastError sql.NullString
+		completed sql.NullString
+	)
+	if err := db.QueryRow(`SELECT status, last_error, completed_at FROM job_queue WHERE id = ?`, id).Scan(&status, &lastError, &completed); err != nil {
+		t.Fatalf("query cancelled job: %v", err)
+	}
+	if status != string(StatusDead) {
+		t.Fatalf("status=%q want %q", status, StatusDead)
+	}
+	if !lastError.Valid || lastError.String != "cancelled by test" {
+		t.Fatalf("last_error=%v want %q", lastError, "cancelled by test")
+	}
+	if !completed.Valid || completed.String == "" {
+		t.Fatalf("completed_at=%v want non-empty", completed)
 	}
 }
 
