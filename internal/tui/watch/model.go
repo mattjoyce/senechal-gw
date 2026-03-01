@@ -66,6 +66,7 @@ func (m Model) Init() tea.Cmd {
 		subscribeToEvents(m.apiURL, m.apiKey, m.hubEvents),
 		receiveNextEvent(m.hubEvents),
 		func() tea.Msg { return fetchHealth(m.apiURL, m.apiKey) },
+		func() tea.Msg { return fetchSchedulerSnapshot(m.apiURL, m.apiKey) },
 		tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }),
 		tea.EnterAltScreen,
 	)
@@ -140,6 +141,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 			return fetchHealth(m.apiURL, m.apiKey)
 		})
+
+	case schedulerSnapshotMsg:
+		applyScheduleSnapshot(m.schedules, msg)
+		return m, nil
 
 	case sseDisconnectedMsg:
 		m.health.Connected = false

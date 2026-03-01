@@ -79,6 +79,69 @@ func updateScheduleState(schedules map[string]*ScheduleState, e events.Event) {
 	}
 }
 
+func applyScheduleSnapshot(schedules map[string]*ScheduleState, snap schedulerSnapshotMsg) {
+	if schedules == nil {
+		return
+	}
+	now := time.Now()
+	for _, job := range snap.Jobs {
+		plugin := strings.TrimSpace(job.Plugin)
+		if plugin == "" {
+			continue
+		}
+		scheduleID := strings.TrimSpace(job.ScheduleID)
+		if scheduleID == "" {
+			scheduleID = "default"
+		}
+		command := strings.TrimSpace(job.Command)
+		if command == "" {
+			command = "poll"
+		}
+
+		key := scheduleKey(plugin, scheduleID, command)
+		state, ok := schedules[key]
+		if !ok {
+			state = &ScheduleState{
+				Plugin:     plugin,
+				ScheduleID: scheduleID,
+				Command:    command,
+			}
+			schedules[key] = state
+		}
+		state.LastSeen = now
+		state.Reason = strings.TrimSpace(job.Reason)
+
+		if job.NextRunAt != nil {
+			state.NextRunAt = *job.NextRunAt
+		}
+
+		switch strings.TrimSpace(job.Status) {
+		case "invalid":
+			state.Status = "skipped"
+			if state.Reason == "" {
+				state.Reason = "invalid_schedule"
+			}
+		case "exhausted":
+			state.Status = "skipped"
+			if state.Reason == "" {
+				state.Reason = "schedule_exhausted"
+			}
+		default:
+			if !state.NextRunAt.IsZero() && now.Before(state.NextRunAt) {
+				state.Status = "waiting"
+				if state.Reason == "" {
+					state.Reason = "not_due"
+				}
+			} else {
+				state.Status = "scheduled"
+				if state.Reason == "" {
+					state.Reason = ""
+				}
+			}
+		}
+	}
+}
+
 func renderSchedules(schedules map[string]*ScheduleState, theme Theme, width int) string {
 	innerWidth := width - 4
 
