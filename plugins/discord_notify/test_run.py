@@ -214,6 +214,26 @@ class TestMainProtocol(unittest.TestCase):
         self.assertEqual(r["status"], "error")
         self.assertIn("Unknown command", r["error"])
 
+    def test_poll_no_message(self):
+        r = self._run({
+            "command": "poll",
+            "config": {"webhook_url": WEBHOOK_URL},
+            "event": {"type": "scheduler", "payload": {}},
+            "context": {},
+        })
+        self.assertEqual(r["status"], "error")
+        self.assertIn("No message content", r["error"])
+
+    def test_poll_not_unknown_command(self):
+        """poll should route to handle_command, not return Unknown command."""
+        r = self._run({
+            "command": "poll",
+            "config": {"webhook_url": WEBHOOK_URL},
+            "event": {"type": "scheduler", "payload": {}},
+            "context": {},
+        })
+        self.assertNotIn("Unknown command", r.get("error", ""))
+
     def test_health_no_config(self):
         r = self._run({"command": "health", "config": {}, "event": {}, "context": {}})
         self.assertEqual(r["status"], "error")

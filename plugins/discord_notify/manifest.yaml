@@ -14,9 +14,17 @@ commands:
       content: string
       title: string
       username: string
+  - name: poll
+    type: write
+    description: "Schedulable alias for handle. Post a message to Discord via a scheduled trigger."
+    input_schema:
+      message: string
+      content: string
+      title: string
+      username: string
   - name: health
     type: read
     description: "Verify webhook URL is configured and reachable."
 config_keys:
   required: []
-  optional: [webhook_url, default_username, default_avatar_url]
+  optional: [webhook_url, default_username, default_avatar_url, poll_message]

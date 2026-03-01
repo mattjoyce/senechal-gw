@@ -45,7 +45,10 @@ def post_to_discord(webhook_url: str, discord_payload: Dict[str, Any], timeout: 
     req = urllib.request.Request(
         webhook_url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "ductile-discord-notify/1 (https://github.com/mattjoyce/ductile)",
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
@@ -147,11 +150,19 @@ def main() -> None:
 
     if command == "handle":
         response = handle_command(config, payload, context)
+    elif command == "poll":
+        # Scheduled polls: dispatcher doesn't pass event payload for non-handle commands.
+        # Fall back to config-level poll_message so schedules can include a message.
+        if not payload.get("message") and not payload.get("content") and not payload.get("title"):
+            poll_msg = str(config.get("poll_message") or "").strip()
+            if poll_msg:
+                payload = {**payload, "message": poll_msg}
+        response = handle_command(config, payload, context)
     elif command == "health":
         response = handle_health(config)
     else:
         response = error_response(
-            f"Unknown command: '{command}'. Supported: handle, health"
+            f"Unknown command: '{command}'. Supported: handle, poll, health"
         )
 
     json.dump(response, sys.stdout, separators=(",", ":"))
