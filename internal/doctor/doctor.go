@@ -332,6 +332,9 @@ func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 			continue
 		}
 		for i, schedule := range schedules {
+			if strings.TrimSpace(schedule.Cron) != "" {
+				continue
+			}
 			interval, err := config.ParseInterval(schedule.Every)
 			if err != nil {
 				d.addError(r, "schedule", fmt.Sprintf("plugins.%s.schedules[%d].every", name, i),

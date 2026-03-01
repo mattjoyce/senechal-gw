@@ -15,6 +15,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/scheduleexpr"
 )
 
 // Scheduler manages the scheduling and recovery of plugin jobs.
@@ -164,6 +165,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		"schedule_id", scheduleID,
 		"command", command,
 		"schedule_every", schedule.Every,
+		"schedule_cron", schedule.Cron,
 		"jitter", schedule.Jitter,
 	)
 
@@ -196,10 +198,10 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		return
 	}
 
-	baseInterval, err := parseScheduleEvery(schedule.Every)
+	baseInterval, hasEvery, err := parseScheduleInterval(schedule.Every, schedule.Cron)
 	if err != nil {
-		reason := "invalid_schedule_interval"
-		s.logger.Error("Invalid schedule interval for plugin", "plugin", pluginName, "schedule_id", scheduleID, "interval", schedule.Every, "error", err)
+		reason := "invalid_schedule_config"
+		s.logger.Error("Invalid schedule config for plugin", "plugin", pluginName, "schedule_id", scheduleID, "every", schedule.Every, "cron", schedule.Cron, "error", err)
 		if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
 			s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
 		}
@@ -210,6 +212,26 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 			"reason":      reason,
 		})
 		return
+	}
+
+	var cronExpr *scheduleexpr.CronExpression
+	if !hasEvery {
+		parsedCron, parseErr := scheduleexpr.ParseCron(schedule.Cron)
+		if parseErr != nil {
+			reason := "invalid_schedule_config"
+			s.logger.Error("Invalid cron schedule for plugin", "plugin", pluginName, "schedule_id", scheduleID, "cron", schedule.Cron, "error", parseErr)
+			if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
+				s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+			}
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      reason,
+			})
+			return
+		}
+		cronExpr = &parsedCron
 	}
 
 	if command == handleCommand {
@@ -257,27 +279,62 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		return
 	}
 
-	if stateChanged, err := s.reconcileScheduleTiming(&entryState, latestCompleted, baseInterval, schedule.Jitter); err != nil {
-		s.logger.Error("Failed to reconcile schedule timing", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
-		return
-	} else if stateChanged {
-		if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
-			s.logger.Error("Failed to persist schedule timing state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+	if hasEvery {
+		if stateChanged, timingErr := s.reconcileScheduleTiming(&entryState, latestCompleted, baseInterval, schedule.Jitter); timingErr != nil {
+			s.logger.Error("Failed to reconcile schedule timing", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", timingErr)
+			return
+		} else if stateChanged {
+			if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+				s.logger.Error("Failed to persist schedule timing state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+				return
+			}
+		}
+		now := time.Now().UTC()
+		if entryState.NextRunAt != nil && now.Before(*entryState.NextRunAt) {
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      "not_due",
+				"next_run_at": entryState.NextRunAt.Format(time.RFC3339Nano),
+			})
+			s.logger.Debug("Skipped scheduled job (not due)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "next_run_at", entryState.NextRunAt.Format(time.RFC3339Nano))
 			return
 		}
-	}
-
-	now := time.Now().UTC()
-	if entryState.NextRunAt != nil && now.Before(*entryState.NextRunAt) {
-		s.events.Publish("scheduler.skipped", map[string]any{
-			"plugin":      pluginName,
-			"schedule_id": scheduleID,
-			"command":     command,
-			"reason":      "not_due",
-			"next_run_at": entryState.NextRunAt.Format(time.RFC3339Nano),
-		})
-		s.logger.Debug("Skipped scheduled job (not due)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "next_run_at", entryState.NextRunAt.Format(time.RFC3339Nano))
-		return
+	} else if cronExpr != nil {
+		due, nextRunAt, changed, cronErr := s.evaluateCronDueState(entryState, *cronExpr, time.Now().UTC())
+		if cronErr != nil {
+			reason := "invalid_schedule_config"
+			s.logger.Error("Failed to evaluate cron schedule", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", cronErr)
+			if upsertErr := s.pauseScheduleInvalid(ctx, entryState, reason); upsertErr != nil {
+				s.logger.Error("Failed to persist invalid schedule state", "plugin", pluginName, "schedule_id", scheduleID, "error", upsertErr)
+			}
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      reason,
+			})
+			return
+		}
+		if changed {
+			entryState.NextRunAt = &nextRunAt
+			if err := s.queue.UpsertScheduleEntryState(ctx, entryState); err != nil {
+				s.logger.Error("Failed to persist cron timing state", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+				return
+			}
+		}
+		if !due {
+			s.events.Publish("scheduler.skipped", map[string]any{
+				"plugin":      pluginName,
+				"schedule_id": scheduleID,
+				"command":     command,
+				"reason":      "not_due",
+				"next_run_at": nextRunAt.Format(time.RFC3339Nano),
+			})
+			s.logger.Debug("Skipped scheduled job (not due)", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "next_run_at", nextRunAt.Format(time.RFC3339Nano))
+			return
+		}
 	}
 
 	if allowed, reason, err := s.canSchedule(ctx, pluginName, command, pluginConf); err != nil {
@@ -294,16 +351,57 @@ func (s *Scheduler) processSchedule(ctx context.Context, pluginName string, plug
 		return
 	}
 
-	dedupeHit, err := s.enqueueScheduledJob(ctx, pluginName, scheduleID, command, pluginConf, baseInterval, schedule.Payload)
+	dedupeTTL := s.cfg.Service.TickInterval
+	if hasEvery {
+		dedupeTTL = baseInterval
+	}
+	dedupeHit, err := s.enqueueScheduledJob(ctx, pluginName, scheduleID, command, pluginConf, dedupeTTL, schedule.Payload)
 	if err != nil {
 		s.logger.Error("Failed to enqueue scheduled job", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		return
 	}
-	if dedupeHit {
+	if hasEvery && dedupeHit {
 		if err := s.advanceScheduleNextRun(ctx, &entryState, baseInterval, schedule.Jitter); err != nil {
 			s.logger.Error("Failed to advance schedule after dedupe hit", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
 		}
 	}
+	if !hasEvery && cronExpr != nil {
+		if err := s.advanceCronNextRun(ctx, &entryState, *cronExpr, time.Now().UTC()); err != nil {
+			s.logger.Error("Failed to advance cron schedule", "plugin", pluginName, "schedule_id", scheduleID, "command", command, "error", err)
+		}
+	}
+}
+
+func (s *Scheduler) evaluateCronDueState(
+	entryState queue.ScheduleEntryState,
+	expr scheduleexpr.CronExpression,
+	now time.Time,
+) (bool, time.Time, bool, error) {
+	nowSlot := now.UTC().Truncate(time.Minute)
+	if entryState.NextRunAt == nil {
+		if expr.Matches(nowSlot) {
+			return true, nowSlot, false, nil
+		}
+		next, err := expr.NextAfter(nowSlot.Add(-time.Minute))
+		if err != nil {
+			return false, time.Time{}, false, err
+		}
+		return false, next, true, nil
+	}
+	nextRun := entryState.NextRunAt.UTC().Truncate(time.Minute)
+	return !nowSlot.Before(nextRun), nextRun, false, nil
+}
+
+func (s *Scheduler) advanceCronNextRun(ctx context.Context, state *queue.ScheduleEntryState, expr scheduleexpr.CronExpression, now time.Time) error {
+	if state == nil {
+		return nil
+	}
+	nextRunAt, err := expr.NextAfter(now.UTC())
+	if err != nil {
+		return err
+	}
+	state.NextRunAt = &nextRunAt
+	return s.queue.UpsertScheduleEntryState(ctx, *state)
 }
 
 func (s *Scheduler) currentScheduleEntryState(ctx context.Context, pluginName, scheduleID, command string) (queue.ScheduleEntryState, error) {
@@ -655,6 +753,21 @@ func calculateJitteredInterval(baseInterval time.Duration, jitter time.Duration)
 }
 
 // parseScheduleEvery converts the 'every' string from config to a base duration.
-func parseScheduleEvery(every string) (time.Duration, error) {
-	return config.ParseInterval(every)
+func parseScheduleInterval(every, cronExpr string) (time.Duration, bool, error) {
+	hasEvery := strings.TrimSpace(every) != ""
+	hasCron := strings.TrimSpace(cronExpr) != ""
+	if hasEvery == hasCron {
+		return 0, false, fmt.Errorf("schedule must set exactly one of every or cron")
+	}
+	if hasEvery {
+		d, err := config.ParseInterval(every)
+		if err != nil {
+			return 0, false, err
+		}
+		return d, true, nil
+	}
+	if _, err := scheduleexpr.ParseCron(cronExpr); err != nil {
+		return 0, false, err
+	}
+	return 0, false, nil
 }
