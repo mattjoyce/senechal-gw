@@ -255,22 +255,7 @@ plugins/
 
 ### 5.4 Manifest
 
-**Array format (legacy, deprecated Sprint 5):**
-```yaml
-manifest_spec: ductile.plugin
-manifest_version: 1
-name: withings
-version: 1.0.0
-protocol: 1
-entrypoint: run.py
-description: "Fetch health data from Withings API"
-commands: [poll, handle, health]  # All treated as type: write
-config_keys:
-  required: [client_id, client_secret]
-  optional: [access_token]
-```
-
-**Object format (Sprint 3+, recommended):**
+**Object format:**
 ```yaml
 manifest_spec: ductile.plugin
 manifest_version: 1

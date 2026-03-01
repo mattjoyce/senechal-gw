@@ -52,7 +52,8 @@ invocation:
   transport: http
   method: string
   path_template: string
-commands: [command]
+commands:
+  - command
 
 Required fields:
 - entity
