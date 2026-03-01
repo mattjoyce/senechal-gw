@@ -38,8 +38,11 @@ plugins:
 				if cfg.Service.TickInterval != 60*time.Second {
 					t.Error("tick_interval not parsed")
 				}
-				if cfg.State.Path != "./test.db" {
-					t.Error("state.path not parsed")
+				if !filepath.IsAbs(cfg.State.Path) {
+					t.Errorf("state.path should be absolute, got %s", cfg.State.Path)
+				}
+				if filepath.Base(cfg.State.Path) != "test.db" {
+					t.Errorf("state.path not resolved to test.db: %s", cfg.State.Path)
 				}
 				echo, ok := cfg.Plugins["echo"]
 				if !ok {

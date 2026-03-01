@@ -21,11 +21,11 @@ func TestDispatcher_WaitForJobTree(t *testing.T) {
 	// Plugin A emits an event that triggers Plugin B
 	scriptA := `#!/bin/bash
 read input
-echo '{"status":"ok","events":[{"type":"test.event"}]}'
+echo '{"status":"ok","result":"emitted test.event","events":[{"type":"test.event"}]}'
 `
 	scriptB := `#!/bin/bash
 read input
-echo '{"status":"ok","logs":[{"level":"info","message":"done"}]}'
+echo '{"status":"ok","result":"done","logs":[{"level":"info","message":"done"}]}'
 `
 
 	registry := plugin.NewRegistry()

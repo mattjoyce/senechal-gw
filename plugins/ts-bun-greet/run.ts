@@ -21,6 +21,7 @@ interface LogEntry {
 
 interface Response {
   status: "ok" | "error";
+  result?: string;
   error?: string;
   retry?: boolean;
   events?: Array<{ type: string; payload: Record<string, unknown>; dedupe_key?: string }>;
@@ -40,15 +41,17 @@ function poll(req: Request): Response {
   const name = (req.config.name as string) || "World";
   const now = new Date().toISOString();
 
+  const message = `${greeting}, ${name}!`;
   return {
     status: "ok",
+    result: message,
     events: [],
     state_updates: {
       last_run: now,
-      last_greeting: `${greeting}, ${name}!`,
+      last_greeting: message,
     },
     logs: [
-      { level: "info", message: `${greeting}, ${name}! (job: ${req.job_id})` },
+      { level: "info", message: `${message} (job: ${req.job_id})` },
     ],
   };
 }
@@ -56,6 +59,7 @@ function poll(req: Request): Response {
 function health(req: Request): Response {
   return {
     status: "ok",
+    result: "healthy",
     logs: [{ level: "info", message: "healthy" }],
   };
 }

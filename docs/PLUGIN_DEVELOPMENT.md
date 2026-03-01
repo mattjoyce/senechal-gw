@@ -37,6 +37,7 @@ When a job is triggered (via scheduler, API, or webhook):
 ```json
 {
   "status": "ok | error",
+  "result": "short human-readable summary",
   "error": "message",
   "retry": true,
   "events": [],
@@ -44,6 +45,7 @@ When a job is triggered (via scheduler, API, or webhook):
   "logs": []
 }
 ```
+-   `result`: **Required for `status: ok`**. A short human-readable summary of what the plugin did.
 -   `state_updates`: Top-level keys here are shallow-merged into the plugin's persistent state.
 -   `events`: An array of `{ "type": "...", "payload": {} }` to trigger downstream pipelines.
 
@@ -70,6 +72,7 @@ echo "$MESSAGE" > "$WORKSPACE/output.txt"
 cat <<EOF
 {
   "status": "ok",
+  "result": "Command $COMMAND executed successfully",
   "logs": [{"level": "info", "message": "Command $COMMAND executed successfully"}]
 }
 EOF
@@ -107,6 +110,7 @@ def main():
     # Build response
     resp = {
         "status": "ok",
+        "result": "Python plugin active",
         "state_updates": {"last_seen": "now"},
         "logs": [{"level": "info", "message": "Python plugin active"}]
     }
@@ -198,6 +202,7 @@ This makes pipelines resilient when intermediate plugins emit narrower payloads.
 ```python
 return {
     "status": "ok",
+    "result": "Scraped https://example.com",
     "events": [{
         "type": "jina_reader.scraped",
         "payload": {

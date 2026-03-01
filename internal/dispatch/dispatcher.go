@@ -308,6 +308,16 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Process events (routing + orchestration)
 	if len(resp.Events) > 0 {
+		if strings.TrimSpace(resp.Result) != "" {
+			for i := range resp.Events {
+				if resp.Events[i].Payload == nil {
+					resp.Events[i].Payload = make(map[string]any)
+				}
+				if _, exists := resp.Events[i].Payload["result"]; !exists {
+					resp.Events[i].Payload["result"] = resp.Result
+				}
+			}
+		}
 		if err := d.routeEvents(ctx, job, resp.Events, jobLogger); err != nil {
 			errMsg := fmt.Sprintf("failed to route events: %v", err)
 			jobLogger.Error(errMsg)

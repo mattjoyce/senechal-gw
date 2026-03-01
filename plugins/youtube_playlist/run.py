@@ -65,11 +65,12 @@ def error_response(message: str, retry: bool = False) -> Dict[str, Any]:
 
 def ok_response(
     *,
+    result: str,
     events: Optional[List[Dict[str, Any]]] = None,
     state_updates: Optional[Dict[str, Any]] = None,
     logs: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
-    out: Dict[str, Any] = {"status": "ok", "logs": logs or []}
+    out: Dict[str, Any] = {"status": "ok", "result": result, "logs": logs or []}
     if events:
         out["events"] = events
     if state_updates:
@@ -220,8 +221,10 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
 
     if first_run and not emit_existing:
         updated_seen = list({entry["video_id"] for entry in entries} | seen_set)
+        result = f"First run: recorded {len(updated_seen)} videos, emitting none"
         return ok_response(
-            logs=[{"level": "info", "message": f"First run: recorded {len(updated_seen)} videos, emitting none"}],
+            result=result,
+            logs=[{"level": "info", "message": result}],
             state_updates={
                 "seen_ids": updated_seen,
                 "last_checked": iso_now(),
@@ -294,7 +297,9 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     emitted_ids = {e["payload"]["video_id"] for e in events}
     updated_seen = list(emitted_ids | seen_set)
 
+    result = f"Emitted {len(events)} new playlist items (total seen {len(updated_seen)})"
     return ok_response(
+        result=result,
         events=events,
         state_updates={
             "seen_ids": updated_seen,
@@ -303,7 +308,7 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
         logs=[
             {
                 "level": "info",
-                "message": f"Emitted {len(events)} new playlist items (total seen {len(updated_seen)})",
+                "message": result,
             }
         ],
     )
@@ -319,7 +324,8 @@ def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
     ytdlp = shutil.which("yt-dlp")
     if not ytdlp:
         return error_response("yt-dlp not found in PATH", retry=False)
-    return ok_response(logs=[{"level": "info", "message": f"youtube_playlist config ok (yt-dlp: {ytdlp})"}])
+    result = f"youtube_playlist config ok (yt-dlp: {ytdlp})"
+    return ok_response(result=result, logs=[{"level": "info", "message": result}])
 
 
 def handle_request(request: Dict[str, Any]) -> Dict[str, Any]:

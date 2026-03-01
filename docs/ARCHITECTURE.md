@@ -626,6 +626,7 @@ Retrieves the status and results of a previously triggered job.
   "command": "command_name",
   "result": {
     "status": "ok",
+    "result": "Plugin executed successfully",
     "state_updates": {"last_run": "2026-02-09T10:00:10Z"},
     "logs": [{"level": "info", "message": "Plugin executed successfully"}]
   },

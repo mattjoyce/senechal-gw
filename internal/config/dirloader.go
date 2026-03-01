@@ -69,6 +69,7 @@ func LoadDir(configDir string) (*Config, []string, error) {
 
 	// 9. Apply defaults and validate
 	cfg = applyConfigDefaults(cfg)
+	resolveStatePath(cfg, cfg.ConfigDir)
 
 	if err := validate(cfg); err != nil {
 		return nil, nil, fmt.Errorf("invalid configuration: %w", err)

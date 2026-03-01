@@ -86,7 +86,7 @@ emit_response() {
         --arg ts "$timestamp" \
         --arg msg "$message" \
         --arg job "$job_id" \
-        '{status:"ok", events:[], state_updates:{last_run:$ts, job_id:$job}, logs:[{level:"info", message:($msg + " at " + $ts)}] }'
+        '{status:"ok", result:($msg + " at " + $ts), events:[], state_updates:{last_run:$ts, job_id:$job}, logs:[{level:"info", message:($msg + " at " + $ts)}] }'
       return 0
     fi
 
@@ -107,6 +107,7 @@ job = sys.argv[5]
 if status == "ok":
   out = {
     "status": "ok",
+    "result": f"{msg} at {ts}",
     "events": [],
     "state_updates": {"last_run": ts, "job_id": job},
     "logs": [{"level": "info", "message": f"{msg} at {ts}"}],
@@ -129,8 +130,8 @@ PY
   local esc_err="${err//\\/\\\\}"
   esc_err="${esc_err//\"/\\\"}"
   if [[ "$status" == "ok" ]]; then
-    printf '{"status":"ok","events":[],"state_updates":{"last_run":"%s","job_id":"%s"},"logs":[{"level":"info","message":"%s at %s"}]}\n' \
-      "$timestamp" "$job_id" "$esc_msg" "$timestamp"
+    printf '{"status":"ok","result":"%s at %s","events":[],"state_updates":{"last_run":"%s","job_id":"%s"},"logs":[{"level":"info","message":"%s at %s"}]}\n' \
+      "$esc_msg" "$timestamp" "$timestamp" "$job_id" "$esc_msg" "$timestamp"
   else
     printf '{"status":"error","error":"%s","retry":false,"logs":[{"level":"error","message":"%s"}]}\n' \
       "$esc_err" "$esc_err"

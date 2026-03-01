@@ -81,6 +81,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Apply config defaults before validation
 	cfg = applyConfigDefaults(cfg)
+	resolveStatePath(cfg, filepath.Dir(absPath))
 
 	// Hash-verify scope files (tokens.yaml, webhooks.yaml)
 	if err := verifyScopeFilesRecursively(includedPaths); err != nil {
@@ -469,6 +470,22 @@ func applyConfigDefaults(cfg *Config) *Config {
 	}
 
 	return cfg
+}
+
+func resolveStatePath(cfg *Config, baseDir string) {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(baseDir) == "" {
+		return
+	}
+	if cfg.State.Path == "" {
+		return
+	}
+	if filepath.IsAbs(cfg.State.Path) {
+		return
+	}
+	cfg.State.Path = filepath.Clean(filepath.Join(baseDir, cfg.State.Path))
 }
 
 // interpolateEnv replaces ${VAR} with environment variable values.

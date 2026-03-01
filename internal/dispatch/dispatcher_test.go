@@ -120,7 +120,7 @@ func TestDispatcher_ExecuteJob_Success(t *testing.T) {
 	// Create a simple echo plugin that returns success
 	script := `#!/bin/bash
 read input
-echo '{"status": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
+echo '{"status": "ok", "result": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
 `
 	plug := createTestPlugin(t, pluginsDir, "echo", script)
 	disp.registry.Add(plug)
@@ -539,7 +539,7 @@ func TestDispatcher_ExecuteJob_HandleCommand(t *testing.T) {
 	script := `#!/bin/bash
 read input
 # Extract event type from JSON (basic bash parsing)
-echo '{"status": "ok", "logs": [{"level": "info", "message": "handled event"}]}'
+echo '{"status": "ok", "result": "handled event", "logs": [{"level": "info", "message": "handled event"}]}'
 `
 	plug := createTestPlugin(t, pluginsDir, "handler", script)
 	disp.registry.Add(plug)
@@ -704,11 +704,11 @@ if [ -n "$workspace_dir" ]; then
   mkdir -p "$workspace_dir"
   echo "artifact-from-a" > "$workspace_dir/artifact.txt"
 fi
-echo '{"status":"ok","events":[{"type":"chain.start","dedupe_key":"chain:start:hello","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
+echo '{"status":"ok","result":"chain start","events":[{"type":"chain.start","dedupe_key":"chain:start:hello","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
 `
 	scriptB := `#!/bin/bash
 read input
-echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
+echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"handled by b"}]}'
 `
 
 	registry := plugin.NewRegistry()

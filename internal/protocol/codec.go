@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // EncodeRequest serializes a Request to JSON and writes it to w.
@@ -46,6 +47,9 @@ func DecodeResponse(r io.Reader) (*Response, error) {
 	if resp.Status == "error" && resp.Error == "" {
 		return nil, fmt.Errorf("response has status=error but no error message")
 	}
+	if resp.Status == "ok" && strings.TrimSpace(resp.Result) == "" {
+		return nil, fmt.Errorf("response has status=ok but no result message")
+	}
 
 	return &resp, nil
 }
@@ -79,6 +83,9 @@ func DecodeResponseLenient(r io.Reader) (*Response, []byte, error) {
 
 	if resp.Status == "error" && resp.Error == "" {
 		return nil, data, fmt.Errorf("response has status=error but no error message")
+	}
+	if resp.Status == "ok" && strings.TrimSpace(resp.Result) == "" {
+		return nil, data, fmt.Errorf("response has status=ok but no result message")
 	}
 
 	return &resp, data, nil

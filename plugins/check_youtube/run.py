@@ -27,9 +27,10 @@ def error_response(message: str, logs: Optional[List[Dict[str, str]]] = None) ->
     }
 
 
-def ok_response(events: Optional[List[Dict[str, Any]]] = None, logs: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+def ok_response(result: str, events: Optional[List[Dict[str, Any]]] = None, logs: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
     return {
         "status": "ok",
+        "result": result,
         "events": events or [],
         "logs": logs or [],
     }
@@ -164,9 +165,11 @@ def handle_command(config: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, A
                 output_event = {"type": emit, "payload": payload}
                 if input_dedupe_key:
                     output_event["dedupe_key"] = input_dedupe_key
+                result = f"matched {cond_type} -> {emit}"
                 return ok_response(
+                    result,
                     events=[output_event],
-                    logs=[{"level": "info", "message": f"matched {cond_type} -> {emit}"}],
+                    logs=[{"level": "info", "message": result}],
                 )
         except re.error as exc:
             return error_response(f"invalid regex: {exc}")
@@ -179,7 +182,7 @@ def health_command(config: Dict[str, Any]) -> Dict[str, Any]:
     if errors:
         return error_response("; ".join(errors))
 
-    return ok_response(logs=[{"level": "info", "message": "config ok"}])
+    return ok_response("config ok", logs=[{"level": "info", "message": "config ok"}])
 
 
 def handle_request(request: Dict[str, Any]) -> Dict[str, Any]:

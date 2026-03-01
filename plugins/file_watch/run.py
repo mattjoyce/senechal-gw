@@ -89,12 +89,14 @@ def compact_error(message: str, retry: bool = False, logs: Optional[List[Dict[st
 
 def compact_ok(
     *,
+    result: str,
     events: Optional[List[Dict[str, Any]]] = None,
     state_updates: Optional[Dict[str, Any]] = None,
     logs: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "status": "ok",
+        "result": result,
         "logs": logs or [],
     }
     if events:
@@ -326,6 +328,7 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     logs.append({"level": "info", "message": f"file_watch poll complete: watches={len(watches)} events={len(events)}"})
 
     return compact_ok(
+        result=f"file_watch poll complete: watches={len(watches)} events={len(events)}",
         events=events,
         state_updates={
             "watches": next_state_watches,
@@ -364,6 +367,7 @@ def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
         return compact_error("file_watch health failed", retry=False, logs=[{"level": "error", "message": i} for i in issues])
 
     return compact_ok(
+        result=f"file_watch health OK (watches={len(watches)})",
         state_updates={
             "last_health_check": iso_now(),
             "watches_configured": len(watches),

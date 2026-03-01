@@ -141,7 +141,7 @@ func TestGetJobByID(t *testing.T) {
 		t.Fatalf("Dequeue: %v", err)
 	}
 
-	result := json.RawMessage(`{"status":"ok","logs":[]}`)
+	result := json.RawMessage(`{"status":"ok","result":"ok","logs":[]}`)
 	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 		t.Fatalf("generic outstanding running count=%d, want 1", n)
 	}
 
-	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	n, err = q.CountOutstandingPollJobs(context.Background(), "echo")
@@ -807,7 +807,7 @@ func TestQueueEnqueueDedupeHitAfterSuccess(t *testing.T) {
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
 	}
-	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete success: %v", err)
 	}
 
@@ -862,7 +862,7 @@ func TestQueueEnqueueDedupeTTLExpiredAllowsNewJob(t *testing.T) {
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
 	}
-	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete success: %v", err)
 	}
 
@@ -910,7 +910,7 @@ func TestQueueEnqueueDedupeTTLOverride(t *testing.T) {
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
 	}
-	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete success: %v", err)
 	}
 

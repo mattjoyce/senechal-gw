@@ -27,12 +27,14 @@ event = request.get("event", {})
 max_size = int(config.get("max_size", 102400))
 
 
-def respond(status, error=None, events=None, state_updates=None, logs=None):
-    """Write protocol v1 response to stdout and exit."""
+def respond(status, result=None, error=None, events=None, state_updates=None, logs=None):
+    """Write protocol v2 response to stdout and exit."""
     resp = {"status": status}
     if error:
         resp["error"] = error
         resp["retry"] = True
+    if status == "ok" and result is not None:
+        resp["result"] = result
     if events:
         resp["events"] = events
     if state_updates:
@@ -70,7 +72,7 @@ def content_hash(text):
 # --- Command handlers ---
 
 if command == "health":
-    respond("ok", logs=[{"level": "info", "message": "healthy"}])
+    respond("ok", result="healthy", logs=[{"level": "info", "message": "healthy"}])
 
 elif command == "poll":
     url = config.get("url")
@@ -105,6 +107,7 @@ elif command == "poll":
         logs.append({"level": "warn", "message": f"content truncated to {max_size} bytes"})
 
     respond("ok",
+            result=f"polled {url} (changed={changed})",
             events=events,
             state_updates={"content_hash": new_hash, "last_url": url},
             logs=logs)
@@ -126,6 +129,7 @@ elif command == "handle":
         logs.append({"level": "warn", "message": f"content truncated to {max_size} bytes"})
 
     respond("ok",
+            result=f"scraped {url} ({len(markdown)} bytes)",
             events=[{
                 "type": "content_ready",
                 "payload": {

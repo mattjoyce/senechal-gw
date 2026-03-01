@@ -22,6 +22,7 @@ def poll_command(config, state):
     """Poll command - for scheduled execution (not implemented yet)"""
     return {
         "status": "ok",
+        "result": "Fabric poll command - no scheduled actions configured",
         "state_updates": {
             "last_poll": datetime.now(timezone.utc).isoformat(),
         },
@@ -129,8 +130,10 @@ def handle_command(config, state, event, context):
         if value is not None and value != "":
             event_payload[field] = value
 
+    log_message = build_log_message(pattern, url, youtube_url, prompt)
     return {
         "status": "ok",
+        "result": log_message,
         "events": [
             {
                 "type": "fabric.completed",
@@ -146,7 +149,7 @@ def handle_command(config, state, event, context):
         "logs": [
             {
                 "level": "info",
-                "message": build_log_message(pattern, url, youtube_url, prompt),
+                "message": log_message,
             },
         ],
     }
@@ -190,6 +193,7 @@ def health_command(config):
 
     return {
         "status": "ok",
+        "result": f"Fabric healthy, {pattern_count} patterns available",
         "state_updates": {
             "available_patterns": pattern_count,
             "last_health_check": datetime.now(timezone.utc).isoformat(),

@@ -126,8 +126,8 @@ def plugin_error(message: str, *, retry: bool = False, logs: List[Dict[str, str]
     }
 
 
-def plugin_ok(*, events: List[Dict[str, Any]] | None = None, logs: List[Dict[str, str]] | None = None, state_updates: Dict[str, Any] | None = None) -> Dict[str, Any]:
-    response: Dict[str, Any] = {"status": "ok", "logs": logs or []}
+def plugin_ok(*, result: str, events: List[Dict[str, Any]] | None = None, logs: List[Dict[str, str]] | None = None, state_updates: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    response: Dict[str, Any] = {"status": "ok", "result": result, "logs": logs or []}
     if events:
         response["events"] = events
     if state_updates:
@@ -150,10 +150,11 @@ def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
             return plugin_error(f"working_dir is not a directory: {real}", retry=False)
 
     return plugin_ok(
+        result="sys_exec health check passed",
         logs=[
             {"level": "info", "message": "sys_exec health check passed"},
             {"level": "debug", "message": f"configured command: {command}"},
-        ]
+        ],
     )
 
 
@@ -319,7 +320,12 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     events = [{"type": event_type, "payload": event_payload}] if emit_event else []
 
     if success:
-        return plugin_ok(events=events, logs=logs, state_updates=state_updates)
+        return plugin_ok(
+            result=f"command exited with code {exit_code} in {duration_ms}ms",
+            events=events,
+            logs=logs,
+            state_updates=state_updates,
+        )
 
     retry = exit_code in retry_exit_codes
     error_message = stderr_text.strip() or f"command failed with exit code {exit_code}"

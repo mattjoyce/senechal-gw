@@ -108,6 +108,8 @@ state:
   path: ./data/state.db
 ```
 
+Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml` (or the config directory in CONFIG_SPEC mode).
+
 `plugin_roots` is the multi-root setting.
 
 Discovery behavior:

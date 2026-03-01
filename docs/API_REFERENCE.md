@@ -157,6 +157,7 @@ Retrieve the current status and execution results of a job.
   "completed_at": "2026-02-13T10:00:02Z",
   "result": {
     "status": "ok",
+    "result": "Echoed: Hello API",
     "events": [],
     "state_updates": {},
     "logs": [

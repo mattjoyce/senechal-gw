@@ -35,6 +35,7 @@ def error_response(message: str, retry: bool = False) -> Dict[str, Any]:
 def ok_response(log_message: str) -> Dict[str, Any]:
     return {
         "status": "ok",
+        "result": log_message,
         "logs": [{"level": "info", "message": log_message}],
     }
 

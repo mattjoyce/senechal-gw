@@ -441,8 +441,13 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
         if field in payload:
             out_payload[field] = payload[field]
 
+    log_message = (
+        f"Fetched transcript for {video_id} "
+        f"({track_language or '?'}, {len(transcript)} chars, {source_format})"
+    )
     return {
         "status": "ok",
+        "result": log_message,
         "events": [{"type": "youtube.transcript", "payload": out_payload}],
         "state_updates": {
             "last_run": datetime.now(timezone.utc).isoformat(),
@@ -453,10 +458,7 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
         "logs": [
             {
                 "level": "info",
-                "message": (
-                    f"Fetched transcript for {video_id} "
-                    f"({track_language or '?'}, {len(transcript)} chars, {source_format})"
-                ),
+                "message": log_message,
             }
         ],
     }
@@ -465,6 +467,7 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
 def poll_command(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
+        "result": "youtube_transcript poll command (no-op, event-driven)",
         "state_updates": {"last_poll": datetime.now(timezone.utc).isoformat()},
         "logs": [
             {
@@ -478,6 +481,7 @@ def poll_command(state: Dict[str, Any]) -> Dict[str, Any]:
 def health_command(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
+        "result": "youtube_transcript healthy",
         "state_updates": {"last_health_check": datetime.now(timezone.utc).isoformat()},
         "logs": [{"level": "info", "message": "youtube_transcript healthy"}],
     }

@@ -53,7 +53,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	// 2. Create Real Bash Plugins
 	// Hop 1: Trigger (Emits event with origin metadata)
 	triggerScript := `#!/bin/bash
-echo '{"status":"ok","events":[{"type":"test.triggered","event_id":"stable-id","payload":{"origin_user":"matt","video_url":"https://yt.com/123"}}]}'
+echo '{"status":"ok","result":"triggered","events":[{"type":"test.triggered","event_id":"stable-id","payload":{"origin_user":"matt","video_url":"https://yt.com/123"}}]}'
 `
 	createPlugin(t, pluginsDir, "trigger", triggerScript)
 
@@ -67,7 +67,7 @@ if [ -n "$ws_dir" ]; then
   echo "processed-content" > "$ws_dir/result.txt"
 fi
 
-echo '{"status":"ok","events":[{"type":"test.processed","payload":{"status":"complete"}}]}'
+echo '{"status":"ok","result":"processed","events":[{"type":"test.processed","payload":{"status":"complete"}}]}'
 `
 	createPlugin(t, pluginsDir, "processor", processScript)
 
@@ -90,7 +90,7 @@ try:
         print(json.dumps({"status":"error","error":f"baggage not merged into payload: {payload}"}))
         sys.exit(0)
 
-    print(json.dumps({"status":"ok","logs":[{"level":"info","message":"verified all"}]}))
+    print(json.dumps({"status":"ok","result":"verified all","logs":[{"level":"info","message":"verified all"}]}))
 except Exception as e:
     print(json.dumps({"status":"error","error":str(e)}))
 `

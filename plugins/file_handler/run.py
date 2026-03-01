@@ -118,6 +118,7 @@ def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, 
 
     return {
         "status": "ok",
+        "result": f"Read {size_bytes:,} bytes from {filename}",
         "events": [
             {
                 "type": "file.read",
@@ -220,6 +221,7 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
 
     return {
         "status": "ok",
+        "result": f"Wrote {size_bytes:,} bytes to {os.path.basename(abs_path)}",
         "events": [
             {
                 "type": "file.written",
@@ -281,6 +283,7 @@ def health_command(config: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "status": "ok",
+        "result": f"Health OK: {len(read_paths)} read paths, {len(write_paths)} write paths",
         "state_updates": {
             "last_health_check": datetime.now(timezone.utc).isoformat(),
             "read_paths_configured": len(read_paths),
@@ -397,6 +400,7 @@ def main() -> None:
         # Poll command - no-op for event-driven plugin
         response = {
             "status": "ok",
+            "result": "file_handler poll (no-op)",
             "state_updates": {"last_poll": datetime.now(timezone.utc).isoformat()},
             "logs": [{"level": "info", "message": "file_handler poll (no-op, event-driven)"}],
         }
