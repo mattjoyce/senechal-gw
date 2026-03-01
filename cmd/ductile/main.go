@@ -82,19 +82,6 @@ func runCLI(cliArgs []string) int {
 	case "skills":
 		return runSystemSkills(args)
 
-	// --- ROOT ALIASES (Backward Compatibility) ---
-	case "start":
-		return runStart(args)
-	case "reset":
-		if hasHelpFlag(args) {
-			printSystemResetHelp()
-			return 0
-		}
-		return runSystemReset(args)
-	case "inspect":
-		return runInspect(args)
-	case "doctor": // Alias for backward compat with Claude's branch
-		return runConfigCheck(args)
 	case "version":
 		return runVersion(args)
 	case "help", "--help", "-h":
@@ -361,7 +348,7 @@ func runConfigNoun(args []string) int {
 	actionArgs := args[1:]
 
 	switch action {
-	case "lock", "hash-update": // Alias for backward compat
+	case "lock":
 		if hasHelpFlag(actionArgs) {
 			printConfigLockHelp()
 			return 0

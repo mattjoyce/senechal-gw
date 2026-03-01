@@ -371,7 +371,7 @@ Configurable consecutive failure threshold per `(plugin, command)` pair. Applies
 
 - Default threshold: 3 consecutive failures.
 - Default reset: 30 minutes.
-- Manual reset: `ductile reset <plugin>`.
+- Manual reset: `ductile system reset <plugin>`.
 - States: `closed` -> `open` -> `half_open`.
 - When cooldown expires, scheduler allows a single half-open probe poll:
   - Success closes the circuit and resets failure count.
@@ -779,7 +779,7 @@ On startup:
 
 ### 11.3 Config Reload
 
-`ductile reload` sends `SIGHUP` to the running process (found via PID file).
+Send `SIGHUP` to the running process (found via PID file) to reload config.
 
 On SIGHUP:
 
@@ -816,11 +816,11 @@ Default 30 days. Configurable via `service.job_log_retention`.
 ### 11.6 CLI
 
 ```
-ductile start              # run the service (foreground)
+ductile system start       # run the service (foreground)
 ductile run <plugin>       # manually run a plugin once
 ductile status             # show plugin states, queue depth, last runs
-ductile reload             # reload config without restart
-ductile reset <plugin>     # reset circuit breaker for a plugin
+# send SIGHUP to reload config without restart
+ductile system reset <plugin>     # reset circuit breaker for a plugin
 ductile plugins            # list discovered plugins
 ductile logs [plugin]      # tail structured logs
 ductile queue              # show pending/active jobs
@@ -934,7 +934,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ductile start --config /etc/ductile/config.yaml
+ExecStart=/usr/local/bin/ductile system start --config /etc/ductile/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 User=ductile
@@ -946,7 +946,7 @@ WantedBy=multi-user.target
 
 ### 14.2 Development
 
-Run `ductile start` directly. No systemd required.
+Run `ductile system start` directly. No systemd required.
 
 ---
 

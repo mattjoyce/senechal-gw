@@ -383,7 +383,7 @@ func verifyScopeFilesRecursively(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("checksum verification failed in %s: %w\n"+
 				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
-				"Run: ductile config hash-update --config-dir %s", dir, err, dir)
+				"Run: ductile config lock --config-dir %s", dir, err, dir)
 		}
 
 		// Verify each scope file in this directory
@@ -392,13 +392,13 @@ func verifyScopeFilesRecursively(paths []string) error {
 			expectedHash, ok := checksums.Hashes[absPath]
 			if !ok {
 				return fmt.Errorf("scope file %s has no hash in checksums at %s\n"+
-					"Run: ductile config hash-update --config-dir %s", filepath.Base(path), dir, dir)
+					"Run: ductile config lock --config-dir %s", filepath.Base(path), dir, dir)
 			}
 
 			if err := VerifyFileHash(path, expectedHash); err != nil {
 				return fmt.Errorf("scope file verification failed for %s: %w\n"+
 					"This indicates tampering or unauthorized modification.\n"+
-					"If you edited this file intentionally, run: ductile config hash-update --config-dir %s", path, err, dir)
+					"If you edited this file intentionally, run: ductile config lock --config-dir %s", path, err, dir)
 			}
 		}
 	}

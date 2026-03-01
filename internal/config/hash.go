@@ -212,14 +212,14 @@ func VerifyScopeFiles(configDir string, manifest *ChecksumManifest, scopeFiles [
 		// File exists - must have hash in manifest
 		expectedHash, ok := manifest.Hashes[absPath]
 		if !ok {
-			return fmt.Errorf("scope file %s has no hash in checksums (run 'ductile config hash-update')", filename)
+			return fmt.Errorf("scope file %s has no hash in checksums (run 'ductile config lock')", filename)
 		}
 
 		// Verify hash
 		if err := VerifyFileHash(absPath, expectedHash); err != nil {
 			return fmt.Errorf("scope file verification failed: %w\n"+
 				"This indicates tampering or unauthorized modification.\n"+
-				"If you edited this file intentionally, run: ductile config hash-update", err)
+				"If you edited this file intentionally, run: ductile config lock", err)
 		}
 	}
 
