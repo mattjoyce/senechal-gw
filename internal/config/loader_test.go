@@ -265,6 +265,80 @@ plugins:
 			wantErr: true,
 		},
 		{
+			name: "schedule constraints are valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        only_between: "08:00-22:00"
+        timezone: "Australia/Sydney"
+        not_on: [saturday, 0]
+`,
+			wantErr: false,
+		},
+		{
+			name: "schedule invalid timezone",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        timezone: "Mars/Phobos"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule invalid only_between format",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        only_between: "8am-10pm"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule invalid not_on token",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        not_on: [funday]
+`,
+			wantErr: true,
+		},
+		{
 			name: "invalid schedule interval",
 			yaml: `
 service:

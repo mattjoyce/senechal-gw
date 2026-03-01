@@ -590,6 +590,9 @@ func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConf
 			return fmt.Errorf("plugin %q: invalid %s.cron: %w", pluginName, sourcePath, err)
 		}
 	}
+	if err := validateScheduleConstraints(pluginName, sourcePath, schedule); err != nil {
+		return err
+	}
 
 	command := strings.TrimSpace(schedule.Command)
 	if command == "" {
@@ -600,6 +603,102 @@ func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConf
 	}
 
 	return nil
+}
+
+func validateScheduleConstraints(pluginName, sourcePath string, schedule ScheduleConfig) error {
+	if tz := strings.TrimSpace(schedule.Timezone); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.timezone %q: %w", pluginName, sourcePath, schedule.Timezone, err)
+		}
+	}
+
+	if window := strings.TrimSpace(schedule.OnlyBetween); window != "" {
+		parts := strings.Split(window, "-")
+		if len(parts) != 2 {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: expected HH:MM-HH:MM", pluginName, sourcePath, schedule.OnlyBetween)
+		}
+		startMin, err := parseClockMinute(parts[0])
+		if err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: %w", pluginName, sourcePath, schedule.OnlyBetween, err)
+		}
+		endMin, err := parseClockMinute(parts[1])
+		if err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: %w", pluginName, sourcePath, schedule.OnlyBetween, err)
+		}
+		if startMin == endMin {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: start and end cannot be equal", pluginName, sourcePath, schedule.OnlyBetween)
+		}
+	}
+
+	for i, token := range schedule.NotOn {
+		if _, err := parseWeekdayToken(token); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.not_on[%d]: %w", pluginName, sourcePath, i, err)
+		}
+	}
+
+	return nil
+}
+
+func parseClockMinute(raw string) (int, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, fmt.Errorf("empty time")
+	}
+	parsed, err := time.Parse("15:04", s)
+	if err != nil {
+		return 0, fmt.Errorf("expected HH:MM")
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
+}
+
+func parseWeekdayToken(token any) (time.Weekday, error) {
+	switch v := token.(type) {
+	case int:
+		return parseWeekdayInt(v)
+	case int64:
+		return parseWeekdayInt(int(v))
+	case float64:
+		if v != float64(int(v)) {
+			return 0, fmt.Errorf("weekday number must be an integer: %v", v)
+		}
+		return parseWeekdayInt(int(v))
+	case string:
+		return parseWeekdayString(v)
+	default:
+		return 0, fmt.Errorf("unsupported type %T (expected weekday name or integer)", token)
+	}
+}
+
+func parseWeekdayInt(v int) (time.Weekday, error) {
+	if v == 7 {
+		return time.Sunday, nil
+	}
+	if v < 0 || v > 6 {
+		return 0, fmt.Errorf("weekday number %d out of range [0,6] or 7 for sunday", v)
+	}
+	return time.Weekday(v), nil
+}
+
+func parseWeekdayString(raw string) (time.Weekday, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "sun", "sunday":
+		return time.Sunday, nil
+	case "mon", "monday":
+		return time.Monday, nil
+	case "tue", "tues", "tuesday":
+		return time.Tuesday, nil
+	case "wed", "wednesday":
+		return time.Wednesday, nil
+	case "thu", "thurs", "thursday":
+		return time.Thursday, nil
+	case "fri", "friday":
+		return time.Friday, nil
+	case "sat", "saturday":
+		return time.Saturday, nil
+	default:
+		return 0, fmt.Errorf("unknown weekday %q", raw)
+	}
 }
 
 // checkUnresolvedEnvVars recursively checks for ${VAR} placeholders in config values.
