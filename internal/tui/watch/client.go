@@ -3,6 +3,7 @@ package watch
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,6 +25,21 @@ type healthMsg struct {
 	ConfigPath    string `json:"config_path"`
 	BinaryPath    string `json:"binary_path"`
 	Version       string `json:"version"`
+}
+
+type schedulerSnapshotMsg struct {
+	Jobs []schedulerSnapshotJob `json:"jobs"`
+}
+
+type schedulerSnapshotJob struct {
+	Plugin     string     `json:"plugin"`
+	ScheduleID string     `json:"schedule_id"`
+	Command    string     `json:"command"`
+	Mode       string     `json:"mode"`
+	Status     string     `json:"status"`
+	Reason     string     `json:"reason,omitempty"`
+	Timezone   string     `json:"timezone,omitempty"`
+	NextRunAt  *time.Time `json:"next_run_at,omitempty"`
 }
 
 type tickMsg time.Time
@@ -121,4 +137,32 @@ func fetchHealth(apiURL, apiKey string) tea.Msg {
 		return errMsg(err)
 	}
 	return h
+}
+
+// fetchSchedulerSnapshot queries the /scheduler/jobs endpoint.
+func fetchSchedulerSnapshot(apiURL, apiKey string) tea.Msg {
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest("GET", apiURL+"/scheduler/jobs", nil)
+	if err != nil {
+		return errMsg(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return errMsg(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return schedulerSnapshotMsg{}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return errMsg(fmt.Errorf("scheduler snapshot status %d", resp.StatusCode))
+	}
+
+	var snap schedulerSnapshotMsg
+	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
+		return errMsg(err)
+	}
+	return snap
 }

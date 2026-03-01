@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -61,6 +62,7 @@ type Config struct {
 	ConfigPath        string
 	BinaryPath        string
 	Version           string
+	RuntimeConfig     *config.Config
 }
 
 // Server represents the HTTP API server
@@ -162,6 +164,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
 	})
 

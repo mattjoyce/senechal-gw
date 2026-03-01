@@ -153,3 +153,20 @@ type PluginCommand struct {
 	InputSchema  any    `json:"input_schema,omitempty"`
 	OutputSchema any    `json:"output_schema,omitempty"`
 }
+
+// SchedulerJobsResponse is returned by GET /scheduler/jobs.
+type SchedulerJobsResponse struct {
+	Jobs []SchedulerJob `json:"jobs"`
+}
+
+// SchedulerJob is one scheduler entry preview row.
+type SchedulerJob struct {
+	Plugin     string     `json:"plugin"`
+	ScheduleID string     `json:"schedule_id"`
+	Command    string     `json:"command"`
+	Mode       string     `json:"mode"` // every | cron | at | after
+	Status     string     `json:"status"`
+	Reason     string     `json:"reason,omitempty"`
+	Timezone   string     `json:"timezone,omitempty"`
+	NextRunAt  *time.Time `json:"next_run_at,omitempty"`
+}

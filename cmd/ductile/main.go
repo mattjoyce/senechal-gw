@@ -1591,6 +1591,7 @@ func runStart(args []string) int {
 			ConfigPath:        *configPath,
 			BinaryPath:        binaryPath,
 			Version:           version,
+			RuntimeConfig:     cfg,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
 		go func() {

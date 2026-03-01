@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -208,6 +209,55 @@ func TestHandleHealthz_NoAuth(t *testing.T) {
 	}
 	if resp.UptimeSeconds < 0 {
 		t.Fatalf("expected non-negative uptime_seconds")
+	}
+}
+
+func TestHandleSchedulerJobs_Authorized(t *testing.T) {
+	q := &mockQueue{
+		depthFunc: func(ctx context.Context) (int, error) { return 0, nil },
+	}
+	reg := &mockRegistry{plugins: map[string]*plugin.Plugin{}}
+	cfg := config.Defaults()
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedules: []config.ScheduleConfig{
+				{Every: "5m"},
+				{Cron: "*/15 * * * *"},
+				{After: 2 * time.Hour},
+			},
+		},
+	}
+
+	server := New(Config{
+		Listen:        "localhost:8080",
+		Tokens:        []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
+		RuntimeConfig: cfg,
+	}, q, reg, &mockRouter{}, &mockWaiter{}, nil, events.NewHub(10), slog.Default())
+
+	req := httptest.NewRequest(http.MethodGet, "/scheduler/jobs", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var resp SchedulerJobsResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Jobs) != 3 {
+		t.Fatalf("expected 3 scheduler jobs, got %d", len(resp.Jobs))
+	}
+	for _, job := range resp.Jobs {
+		if job.Plugin != "echo" {
+			t.Fatalf("expected plugin echo, got %q", job.Plugin)
+		}
+		if job.NextRunAt == nil {
+			t.Fatalf("expected next_run_at for %s mode=%s", job.ScheduleID, job.Mode)
+		}
 	}
 }
 
