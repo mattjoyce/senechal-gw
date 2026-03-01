@@ -79,7 +79,13 @@ name: %s
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll, handle, health]
+commands:
+  - name: poll
+    type: write
+  - name: handle
+    type: write
+  - name: health
+    type: read
 `, name)
 
 	manifestPath := filepath.Join(pluginDir, "manifest.yaml")

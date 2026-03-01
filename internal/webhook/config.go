@@ -41,6 +41,7 @@ func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Conf
 			Plugin:          ep.Plugin,
 			Command:         DefaultCommand, // Can be extended in config if needed
 			Secret:          secret,
+			SecretRef:       ep.SecretRef,
 			SignatureHeader: ep.SignatureHeader,
 			MaxBodySize:     maxBodySize,
 		}

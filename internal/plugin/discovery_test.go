@@ -27,7 +27,11 @@ name: test-plugin
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll, health]
+commands:
+  - name: poll
+    type: write
+  - name: health
+    type: read
 `
 				os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
 
@@ -67,7 +71,9 @@ name: ` + name + `
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 					os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
 					entrypoint := filepath.Join(pluginDir, "run.sh")
@@ -102,7 +108,9 @@ name: bad-protocol
 version: 1.0.0
 protocol: 99
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 				os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
 				return dir
@@ -123,7 +131,9 @@ name: non-exec
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 				os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
 				// Create non-executable file
@@ -185,7 +195,9 @@ name: ` + manifestName + `
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 		if err := os.WriteFile(filepath.Join(pDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
 			t.Fatalf("write manifest: %v", err)
@@ -230,7 +242,9 @@ name: plugin-x
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 	if err := os.WriteFile(filepath.Join(nested, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)

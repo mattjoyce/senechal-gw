@@ -299,9 +299,12 @@ plugins:
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	code, _, stderr := captureOutputWithExitCode(t, func() int {
-		return runConfigSet([]string{"--config", configPath, "--apply", "state.path="})
+		return runConfigSet([]string{"--config", configPath, "--apply", "service.log_level=invalid"})
 	})
 	if code == 0 {
 		t.Fatalf("runConfigSet() should fail for invalid apply, stderr: %s", stderr)
@@ -314,8 +317,8 @@ plugins:
 	if err != nil {
 		t.Fatalf("config should still be valid after failed apply: %v", err)
 	}
-	if got := reloaded.State.Path; got == "" {
-		t.Fatalf("state.path should remain set after failed apply")
+	if got := reloaded.Service.LogLevel; got != "info" {
+		t.Fatalf("service.log_level should remain %q after failed apply, got %q", "info", got)
 	}
 }
 
@@ -828,7 +831,7 @@ func TestRunConfigWebhookAddAndList(t *testing.T) {
 			"--name", "github",
 			"--path", "/webhook/github",
 			"--plugin", "github-handler",
-			"--secret", "abc123",
+			"--secret-ref", "github_secret",
 		})
 	})
 	if addCode != 0 && addCode != 2 {

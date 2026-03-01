@@ -73,9 +73,6 @@ func redactTokenEntries(entries []config.TokenEntry) []config.TokenEntry {
 }
 
 func redactWebhookEndpoint(entry config.WebhookEndpoint) config.WebhookEndpoint {
-	if entry.Secret != "" {
-		entry.Secret = redactedValue
-	}
 	return entry
 }
 
@@ -1785,18 +1782,14 @@ func runConfigWebhookList(args []string) int {
 		fmt.Printf("\n%s\n", name)
 		fmt.Printf("  Path: %s\n", hook.Path)
 		fmt.Printf("  Plugin: %s\n", hook.Plugin)
-		if hook.SecretRef != "" {
-			fmt.Printf("  SecretRef: %s\n", hook.SecretRef)
-		} else if hook.Secret != "" {
-			fmt.Printf("  Secret: %s\n", redactedValue)
-		}
+		fmt.Printf("  SecretRef: %s\n", hook.SecretRef)
 	}
 	return 0
 }
 
 func runConfigWebhookAdd(args []string) int {
 	var configPath, configDir, format string
-	var name, path, pluginName, secret, secretRef, signatureHeader, maxBodySize string
+	var name, path, pluginName, secretRef, signatureHeader, maxBodySize string
 	fs := flag.NewFlagSet("webhook add", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
@@ -1804,7 +1797,6 @@ func runConfigWebhookAdd(args []string) int {
 	fs.StringVar(&name, "name", "", "Webhook name")
 	fs.StringVar(&path, "path", "", "Webhook path (e.g. /webhook/github)")
 	fs.StringVar(&pluginName, "plugin", "", "Target plugin")
-	fs.StringVar(&secret, "secret", "", "Webhook secret value")
 	fs.StringVar(&secretRef, "secret-ref", "", "Webhook secret reference")
 	fs.StringVar(&signatureHeader, "signature-header", "X-Signature-256", "Signature header name")
 	fs.StringVar(&maxBodySize, "max-body-size", "1MB", "Maximum request body size")
@@ -1813,15 +1805,11 @@ func runConfigWebhookAdd(args []string) int {
 		return 1
 	}
 	if path == "" || pluginName == "" {
-		fmt.Fprintln(os.Stderr, "Usage: ductile config webhook add --path <path> --plugin <name> [--name <name>] [--secret <value> | --secret-ref <value>]")
+		fmt.Fprintln(os.Stderr, "Usage: ductile config webhook add --path <path> --plugin <name> [--name <name>] --secret-ref <value>")
 		return 1
 	}
-	if secret == "" && secretRef == "" {
-		fmt.Fprintln(os.Stderr, "Error: one of --secret or --secret-ref is required")
-		return 1
-	}
-	if secret != "" && secretRef != "" {
-		fmt.Fprintln(os.Stderr, "Error: use only one of --secret or --secret-ref")
+	if secretRef == "" {
+		fmt.Fprintln(os.Stderr, "Error: --secret-ref is required")
 		return 1
 	}
 
@@ -1851,7 +1839,6 @@ func runConfigWebhookAdd(args []string) int {
 		Name:            name,
 		Path:            path,
 		Plugin:          pluginName,
-		Secret:          secret,
 		SecretRef:       secretRef,
 		SignatureHeader: signatureHeader,
 		MaxBodySize:     maxBodySize,

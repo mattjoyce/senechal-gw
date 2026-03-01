@@ -205,8 +205,8 @@ func TestValidate_WebhookPathConflict(t *testing.T) {
 	cfg.Webhooks = &config.WebhooksConfig{
 		Listen: ":9090",
 		Endpoints: []config.WebhookEndpoint{
-			{Path: "/webhook/github", Plugin: "echo", Secret: "s1", SignatureHeader: "X-Hub-Signature-256"},
-			{Path: "/webhook/github/", Plugin: "echo", Secret: "s2", SignatureHeader: "X-Hub-Signature-256"},
+			{Path: "/webhook/github", Plugin: "echo", SecretRef: "s1", SignatureHeader: "X-Hub-Signature-256"},
+			{Path: "/webhook/github/", Plugin: "echo", SecretRef: "s2", SignatureHeader: "X-Hub-Signature-256"},
 		},
 	}
 	d := New(cfg, registryWith(echoPlugin()))

@@ -78,9 +78,11 @@ func (v *ConfigValidator) validateWebhooks() error {
 				i, endpoint.Path)
 		}
 
-		if _, exists := v.tokens[endpoint.SecretRef]; !exists {
-			return fmt.Errorf("webhook[%d] (%s): secret_ref %q not found in tokens.yaml",
-				i, endpoint.Path, endpoint.SecretRef)
+		if len(v.tokens) > 0 {
+			if _, exists := v.tokens[endpoint.SecretRef]; !exists {
+				return fmt.Errorf("webhook[%d] (%s): secret_ref %q not found in tokens.yaml",
+					i, endpoint.Path, endpoint.SecretRef)
+			}
 		}
 
 		// Validate required fields

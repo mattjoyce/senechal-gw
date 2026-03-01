@@ -162,7 +162,7 @@ plugins:
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	err = cfg.SetPath("state.path", "", true)
+	err = cfg.SetPath("service.log_level", "invalid", true)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "validation failed")
 
@@ -171,5 +171,5 @@ plugins:
 	if err != nil {
 		t.Fatalf("Load reloaded failed: %v", err)
 	}
-	assert.Equal(t, "5m", reloaded.Plugins["echo"].Schedules[0].Every)
+	assert.Equal(t, "info", reloaded.Service.LogLevel)
 }
