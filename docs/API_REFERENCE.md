@@ -140,24 +140,7 @@ curl -X POST http://localhost:8080/pipeline/url-to-fabric \
 
 ---
 
-### 3. Legacy Trigger (Deprecated)
-
-Compatibility endpoint retained for older clients.
-
-**Endpoint**: `POST /trigger/{plugin}/{command}` (**deprecated**)
-
-**Deprecation Header**:
-- `X-Ductile-Deprecation: The /trigger endpoint is ambiguous and will be removed in a future version. Use /plugin or /pipeline instead.`
-
-**Current behavior**:
-- Enqueues the specified plugin command.
-- If a pipeline trigger matches `{plugin}.{command}`, the request may execute with pipeline semantics (including synchronous waiting unless `?async=true`).
-
-Use this only for migration windows; new integrations should use `/plugin` or `/pipeline`.
-
----
-
-### 4. Job Status and Results
+### 3. Job Status and Results
 
 Retrieve the current status and execution results of a job.
 

@@ -43,7 +43,7 @@ Verify multi-hop event chains using the `file-to-report` example:
 
 1.  **Trigger:**
     ```bash
-    curl -X POST http://localhost:8080/trigger/file_handler/handle \
+    curl -X POST http://localhost:8080/pipeline/file-to-report \
       -H "Authorization: Bearer <token>" \
       -d '{"payload": {"action": "read", "file_path": "sample.md"}}'
     ```
@@ -115,29 +115,6 @@ curl -X POST http://localhost:8080/pipeline/url-to-fabric \
 - Response `tree[]` array contains both steps
 - Terminal step result is prioritized in top-level response
 - Context fields propagated automatically (pattern visible in fabric step)
-
-### 5.3 Legacy Trigger Endpoint (`/trigger/{plugin}/{command}`)
-
-**Purpose:** Backward compatibility - may trigger pipelines if configured.
-
-**Test Case: Trigger with Pipeline Listener**
-```bash
-curl -X POST http://localhost:8080/trigger/jina-reader/handle \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "url": "https://example.com"
-    }
-  }'
-```
-
-**Expected Result:**
-- Response header contains deprecation warning: `X-Ductile-Deprecation-Warning`
-- If pipeline listens to `jina-reader.handle`, the pipeline executes
-- Behavior matches historical routing semantics
-
----
 
 ## 6. Plugin Payload Spec Compliance
 
@@ -482,11 +459,10 @@ Before releasing a new version, complete this checklist:
 - [ ] `go test ./...` passes
 - [ ] `go test ./cmd/ductile/...` passes
 - [ ] Echo runbook completes successfully
-- [ ] All three API endpoints tested (`/plugin`, `/pipeline`, `/trigger`)
+- [ ] All API endpoints tested (`/plugin`, `/pipeline`)
 - [ ] Plugin payload spec compliance verified (all 4 plugins)
 - [ ] Context auto-propagation works in multi-step pipeline
 - [ ] Terminal step result returned in sync response
-- [ ] Deprecation header present on `/trigger` endpoint
 - [ ] Regression tests pass (all Codex findings)
 - [ ] Error handling behaves correctly
 - [ ] `ductile skill` output is accurate

@@ -79,9 +79,6 @@ func runCLI(cliArgs []string) int {
 		return runJobNoun(args)
 	case "plugin":
 		return runPluginNoun(args)
-	case "trigger":
-		printTriggerHelp()
-		return 0
 	case "skills":
 		return runSystemSkills(args)
 
@@ -285,9 +282,6 @@ Plugin Commands:
   plugin list       Show discovered plugins/connectors
   plugin run <name> Manual execution (planned)
 
-Manual Triggering:
-  trigger           Show instructions for triggering plugins via API
-
 Capability Discovery (Skills):
   skills            Export live capability registry as LLM-readable Markdown
 
@@ -297,36 +291,6 @@ General:
   help              Show this help message
 
 Use 'ductile <noun> help' for resource-specific flags.
-`)
-}
-
-func printTriggerHelp() {
-	fmt.Print(`Manual Plugin Triggering (via API)
-
-Plugins are triggered via the REST API. This allows for programmatic control 
-from LLMs, scripts, and external services.
-
-Endpoint:
-  POST /trigger/{plugin}/{command}
-
-Headers:
-  Authorization: Bearer <token>
-  Content-Type: application/json
-
-Body:
-  {
-    "payload": {
-      "key": "value"
-    }
-  }
-
-Example (curl):
-  curl -X POST http://localhost:8080/trigger/echo/poll \
-    -H "Authorization: Bearer my-token" \
-    -H "Content-Type: application/json" \
-    -d '{"payload": {"message": "Hello"}}'
-
-For more details, see docs/API_REFERENCE.md.
 `)
 }
 

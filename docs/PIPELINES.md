@@ -68,9 +68,6 @@ How a run is started affects where the first `event_context` row comes from:
 - `POST /plugin/{plugin}/{command}`:
   - Bypasses router and enqueues one direct plugin job.
   - No root `event_context` is created at enqueue time.
-- `POST /trigger/{plugin}/{command}` (deprecated):
-  - Enqueues the plugin command.
-  - If `{plugin}.{command}` matches a pipeline trigger, it creates root context and may use synchronous waiting semantics.
 
 During routed execution, each child dispatch gets a new `event_context` row with parent lineage. Updates are shallow-merged into accumulated context, and `origin_*` keys are immutable across the chain.
 

@@ -597,9 +597,6 @@ The API exposes two first-class trigger paths:
 - `POST /plugin/{plugin}/{command}`: direct plugin execution (no pipeline routing), returns `202 Accepted`.
 - `POST /pipeline/{pipeline}`: explicit pipeline orchestration, returns `202 Accepted` by default and `200 OK` for synchronous pipelines.
 
-Compatibility endpoint:
-- `POST /trigger/{plugin}/{command}` is deprecated and ambiguous. It may execute with pipeline semantics when `{plugin}.{command}` matches a pipeline trigger.
-
 See `docs/API_REFERENCE.md` for full examples and response schemas.
 
 ### 9.3 GET /job/{job_id}
@@ -1006,7 +1003,7 @@ ductile/
 |-------|--------|-------|--------|
 | 1. Skeleton | 0 | Go scaffold, CLI, config loader, SQLite state, plugin discovery | ✅ Complete |
 | 2. Core Loop | 1 | Work queue, heartbeat scheduler with fuzzy intervals, dispatch loop, plugin protocol, crash recovery | ✅ Complete |
-| 3. API Triggers | 2 | HTTP server with chi router, POST /plugin and POST /pipeline (plus legacy /trigger), GET /job, Bearer token auth, job result storage | ✅ Complete |
+| 3. API Triggers | 2 | HTTP server with chi router, POST /plugin and POST /pipeline, GET /job, Bearer token auth, job result storage | ✅ Complete |
 | 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | ✅ Complete |
 | 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | ✅ Complete |
 | 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |

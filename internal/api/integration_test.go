@@ -91,7 +91,7 @@ func TestAPIIntegration(t *testing.T) {
 	// Test 1: Trigger a job
 	triggerBody := []byte(`{"payload": {"test": "data"}}`)
 	baseURL := "http://" + testPort
-	req, _ := http.NewRequest(http.MethodPost, baseURL+"/trigger/echo/poll", bytes.NewReader(triggerBody))
+	req, _ := http.NewRequest(http.MethodPost, baseURL+"/plugin/echo/poll", bytes.NewReader(triggerBody))
 	req.Header.Set("Authorization", "Bearer test-key-123")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -153,7 +153,7 @@ func TestAPIIntegration(t *testing.T) {
 	}
 
 	// Test 3: Unauthorized request
-	req, _ = http.NewRequest(http.MethodPost, baseURL+"/trigger/echo/poll", nil)
+	req, _ = http.NewRequest(http.MethodPost, baseURL+"/plugin/echo/poll", nil)
 	// No Authorization header
 
 	resp, err = client.Do(req)

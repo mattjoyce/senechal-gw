@@ -97,7 +97,7 @@ Ductile provides a REST API for programmatic control. By default, it listens on 
 ### Manual Triggering
 You can manually enqueue any plugin command via the API:
 ```bash
-curl -X POST http://localhost:8080/trigger/echo/poll 
+curl -X POST http://localhost:8080/plugin/echo/poll 
   -H "Authorization: Bearer <token>" 
   -H "Content-Type: application/json" 
   -d '{"payload": {"message": "Hello from API"}}'

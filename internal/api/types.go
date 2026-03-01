@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// TriggerRequest is the JSON body for POST /trigger/{plugin}/{command}
+// TriggerRequest is the JSON body for POST /plugin/{plugin}/{command}.
 type TriggerRequest struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
