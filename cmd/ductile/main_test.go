@@ -293,15 +293,15 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	code, _, stderr := captureOutputWithExitCode(t, func() int {
-		return runConfigSet([]string{"--config", configPath, "--apply", "plugins.echo.schedule.every="})
+		return runConfigSet([]string{"--config", configPath, "--apply", "state.path="})
 	})
 	if code == 0 {
 		t.Fatalf("runConfigSet() should fail for invalid apply, stderr: %s", stderr)
@@ -314,8 +314,8 @@ plugins:
 	if err != nil {
 		t.Fatalf("config should still be valid after failed apply: %v", err)
 	}
-	if got := reloaded.Plugins["echo"].Schedule.Every; got != "5m" {
-		t.Fatalf("plugins.echo.schedule.every should remain %q after failed apply, got %q", "5m", got)
+	if got := reloaded.State.Path; got == "" {
+		t.Fatalf("state.path should remain set after failed apply")
 	}
 }
 
@@ -714,12 +714,12 @@ plugin_roots:
 plugins:
   withings:
     enabled: false
-    schedule:
-      every: daily
+    schedules:
+      - every: daily
   slack:
     enabled: false
-    schedule:
-      every: daily
+    schedules:
+      - every: daily
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
 		t.Fatal(err)
@@ -760,7 +760,7 @@ func TestRunConfigPluginSetCreatesPluginFile(t *testing.T) {
 	code, _, stderr := captureOutputWithExitCode(t, func() int {
 		return runConfigPluginSet([]string{
 			"echo",
-			"schedule.every",
+			"schedules.0.every",
 			"2h",
 			"--config-dir", tmpDir,
 		})

@@ -23,8 +23,9 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - id: default
+        every: 5m
 `)
 
 	// Generate checksums (no high-security files, so no manifest needed;
@@ -72,8 +73,9 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - id: default
+        every: 5m
 `)
 
 	os.MkdirAll(filepath.Join(tmpDir, "pipelines"), 0755)
@@ -171,8 +173,9 @@ plugin_roots:
 plugins:
   aaa:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - id: default
+        every: 5m
     config:
       key: from-aaa
 `)
@@ -180,16 +183,18 @@ plugins:
 plugins:
   bbb:
     enabled: true
-    schedule:
-      every: hourly
+    schedules:
+      - id: default
+        every: hourly
 `)
 	// zzz.yaml overrides aaa's config key (later alphabetically wins)
 	writeTestFile(t, filepath.Join(tmpDir, "plugins", "zzz.yaml"), `
 plugins:
   aaa:
     enabled: true
-    schedule:
-      every: daily
+    schedules:
+      - id: default
+        every: daily
     config:
       key: from-zzz
 `)
@@ -209,8 +214,8 @@ plugins:
 
 	// aaa should be overridden by zzz.yaml
 	aaa := cfg.Plugins["aaa"]
-	if aaa.Schedule.Every != "daily" {
-		t.Errorf("aaa schedule = %q, want %q (zzz.yaml should override)", aaa.Schedule.Every, "daily")
+	if len(aaa.Schedules) != 1 || aaa.Schedules[0].Every != "daily" {
+		t.Errorf("aaa schedule = %v, want %q (zzz.yaml should override)", aaa.Schedules, "daily")
 	}
 	if aaa.Config["key"] != "from-zzz" {
 		t.Errorf("aaa config.key = %q, want %q", aaa.Config["key"], "from-zzz")
@@ -277,8 +282,9 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - id: default
+        every: 5m
 `)
 
 	// No .checksums file, no high-security files — should work with warnings

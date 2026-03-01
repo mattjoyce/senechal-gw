@@ -2116,8 +2116,8 @@ func loadOrCreatePluginConfig(cfg *config.Config, configDir, name string) (strin
 
 	defaultCfg := config.PluginConf{
 		Enabled: false,
-		Schedule: &config.ScheduleConfig{
-			Every: "daily",
+		Schedules: []config.ScheduleConfig{
+			{ID: "default", Every: "daily"},
 		},
 	}
 	if existing, ok := cfg.Plugins[name]; ok {
@@ -2150,26 +2150,64 @@ func setNestedMapValue(root map[string]any, path []string, value any) {
 	if len(path) == 0 {
 		return
 	}
-	current := root
-	for i := 0; i < len(path)-1; i++ {
-		segment := strings.TrimSpace(path[i])
-		next, ok := current[segment]
-		if !ok {
-			child := map[string]any{}
-			current[segment] = child
-			current = child
-			continue
+	updated := setNestedValue(root, path, value)
+	if updatedMap, ok := updated.(map[string]any); ok {
+		for k, v := range updatedMap {
+			root[k] = v
 		}
-		asMap, ok := next.(map[string]any)
-		if !ok {
-			child := map[string]any{}
-			current[segment] = child
-			current = child
-			continue
-		}
-		current = asMap
 	}
-	current[strings.TrimSpace(path[len(path)-1])] = value
+}
+
+func setNestedValue(current any, path []string, value any) any {
+	if len(path) == 0 {
+		return current
+	}
+	segment := strings.TrimSpace(path[0])
+	if len(path) == 1 {
+		if idx, ok := parseIndex(segment); ok {
+			slice := ensureSlice(current, idx)
+			slice[idx] = value
+			return slice
+		}
+		m, ok := current.(map[string]any)
+		if !ok || m == nil {
+			m = map[string]any{}
+		}
+		m[segment] = value
+		return m
+	}
+
+	if idx, ok := parseIndex(segment); ok {
+		slice := ensureSlice(current, idx)
+		slice[idx] = setNestedValue(slice[idx], path[1:], value)
+		return slice
+	}
+
+	m, ok := current.(map[string]any)
+	if !ok || m == nil {
+		m = map[string]any{}
+	}
+	m[segment] = setNestedValue(m[segment], path[1:], value)
+	return m
+}
+
+func parseIndex(segment string) (int, bool) {
+	idx, err := strconv.Atoi(segment)
+	if err != nil || idx < 0 {
+		return 0, false
+	}
+	return idx, true
+}
+
+func ensureSlice(current any, idx int) []any {
+	slice, ok := current.([]any)
+	if !ok || slice == nil {
+		slice = []any{}
+	}
+	for len(slice) <= idx {
+		slice = append(slice, map[string]any{})
+	}
+	return slice
 }
 
 func containsRoute(routes []config.RouteConfig, target config.RouteConfig) bool {

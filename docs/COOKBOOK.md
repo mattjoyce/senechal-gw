@@ -17,8 +17,9 @@ Set up a **Proactive Operation** (`poll`) to scan your content directory.
 plugins:
   folder_watch:
     enabled: true
-    schedule:
-      every: 1m
+    schedules:
+      - id: default
+        every: 1m
     config:
       watches:
         - id: astro_summaries

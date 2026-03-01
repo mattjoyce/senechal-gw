@@ -21,8 +21,8 @@ func validConfig() *config.Config {
 		Plugins: map[string]config.PluginConf{
 			"echo": {
 				Enabled: true,
-				Schedule: &config.ScheduleConfig{
-					Every: "5m",
+				Schedules: []config.ScheduleConfig{
+					{Every: "5m"},
 				},
 			},
 		},

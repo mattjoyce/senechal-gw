@@ -119,8 +119,9 @@ Discovery behavior:
 plugins:
   echo:
     enabled: true
-    schedule:   # Optional; omit for event-driven plugins
-      every: 5m
+    schedules:   # Optional; omit for event-driven plugins
+      - id: default
+        every: 5m
     config:
       message: "Hello"
 ```

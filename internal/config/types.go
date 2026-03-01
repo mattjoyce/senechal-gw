@@ -66,7 +66,7 @@ type APIToken struct {
 type PluginConf struct {
 	Enabled             bool                  `yaml:"enabled"`
 	Uses                string                `yaml:"uses,omitempty"`
-	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"`
+	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"` // Deprecated: use schedules.
 	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`
 	Retry               *RetryConfig          `yaml:"retry,omitempty"`
@@ -85,17 +85,8 @@ type ScheduleConfig struct {
 	PreferredWindow *PreferredWindow `yaml:"preferred_window,omitempty"` // Not in MVP
 }
 
-// NormalizedSchedules returns the schedule list with compatibility defaults applied.
+// NormalizedSchedules returns the schedule list with defaults applied.
 func (p PluginConf) NormalizedSchedules() []ScheduleConfig {
-	if p.Schedule != nil {
-		legacy := p.Schedule.copy()
-		if strings.TrimSpace(legacy.ID) == "" {
-			legacy.ID = "default"
-		}
-		legacy.applyDefaults()
-		return []ScheduleConfig{legacy}
-	}
-
 	if len(p.Schedules) == 0 {
 		return nil
 	}
@@ -103,6 +94,9 @@ func (p PluginConf) NormalizedSchedules() []ScheduleConfig {
 	out := make([]ScheduleConfig, 0, len(p.Schedules))
 	for _, s := range p.Schedules {
 		entry := s.copy()
+		if strings.TrimSpace(entry.ID) == "" {
+			entry.ID = "default"
+		}
 		entry.applyDefaults()
 		out = append(out, entry)
 	}

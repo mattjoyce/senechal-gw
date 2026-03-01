@@ -28,9 +28,10 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
-      jitter: 30s
+    schedules:
+      - id: default
+        every: 5m
+        jitter: 30s
 `,
 			wantErr: false,
 			checkFn: func(t *testing.T, cfg *Config) {
@@ -47,8 +48,11 @@ plugins:
 				if !echo.Enabled {
 					t.Error("echo not enabled")
 				}
-				if echo.Schedule.Every != "5m" {
-					t.Error("schedule.every not parsed")
+				if len(echo.Schedules) != 1 {
+					t.Fatalf("expected 1 schedule, got %d", len(echo.Schedules))
+				}
+				if echo.Schedules[0].Every != "5m" {
+					t.Error("schedules[0].every not parsed")
 				}
 				// Check defaults applied
 				if echo.Retry == nil || echo.Retry.MaxAttempts != 4 {
@@ -109,8 +113,8 @@ plugin_roots:
 plugins:
   test:
     enabled: true
-    schedule:
-      every: hourly
+    schedules:
+      - every: hourly
     config:
       api_key: ${API_KEY}
       endpoint: ${API_ENDPOINT}
@@ -146,8 +150,8 @@ plugin_roots:
 plugins:
   test:
     enabled: true
-    schedule:
-      every: daily
+    schedules:
+      - every: daily
     config:
       secret: ${MISSING_VAR}
 `,
@@ -186,13 +190,13 @@ plugins:
 				if !test.Enabled {
 					t.Error("plugin should be enabled")
 				}
-				if test.Schedule != nil {
-					t.Error("plugin schedule should be nil when omitted")
+				if len(test.Schedules) != 0 {
+					t.Error("plugin schedules should be empty when omitted")
 				}
 			},
 		},
 		{
-			name: "schedule block requires every",
+			name: "schedule entry requires every",
 			yaml: `
 service:
   tick_interval: 30s
@@ -203,7 +207,8 @@ plugin_roots:
 plugins:
   test:
     enabled: true
-    schedule: {}
+    schedules:
+      - {}
 `,
 			wantErr: true,
 		},
@@ -219,13 +224,13 @@ plugin_roots:
 plugins:
   test:
     enabled: true
-    schedule:
-      every: invalid
+    schedules:
+      - every: invalid
 `,
 			wantErr: true,
 		},
 		{
-			name: "schedule and schedules together is invalid",
+			name: "legacy schedule is unsupported",
 			yaml: `
 service:
   tick_interval: 30s
@@ -238,15 +243,11 @@ plugins:
     enabled: true
     schedule:
       every: 5m
-    schedules:
-      - id: refresh
-        every: 1h
-        command: token_refresh
 `,
 			wantErr: true,
 		},
 		{
-			name: "schedules entries require id",
+			name: "schedules entries default id",
 			yaml: `
 service:
   tick_interval: 30s
@@ -261,7 +262,16 @@ plugins:
       - every: 1h
         command: token_refresh
 `,
-			wantErr: true,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				schedules := cfg.Plugins["test"].NormalizedSchedules()
+				if len(schedules) != 1 {
+					t.Fatalf("expected 1 schedule, got %d", len(schedules))
+				}
+				if schedules[0].ID != "default" {
+					t.Fatalf("expected default schedule id, got %q", schedules[0].ID)
+				}
+			},
 		},
 		{
 			name: "scheduled handle is invalid",
@@ -275,9 +285,9 @@ plugin_roots:
 plugins:
   test:
     enabled: true
-    schedule:
-      every: 5m
-      command: handle
+    schedules:
+      - every: 5m
+        command: handle
 `,
 			wantErr: true,
 		},
@@ -321,8 +331,8 @@ plugin_roots:
 plugins:
   test:
     enabled: true
-    schedule:
-      every: 7m
+    schedules:
+      - every: 7m
 `,
 			wantErr: false,
 		},
@@ -582,8 +592,8 @@ func TestValidate(t *testing.T) {
 				Plugins: map[string]PluginConf{
 					"test": {
 						Enabled: true,
-						Schedule: &ScheduleConfig{
-							Every: "hourly",
+						Schedules: []ScheduleConfig{
+							{Every: "hourly"},
 						},
 					},
 				},
@@ -667,9 +677,9 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
-      jitter: 30s
+    schedules:
+      - every: 5m
+        jitter: 30s
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "plugins.yaml"), []byte(pluginsYAML), 0644); err != nil {
 		t.Fatal(err)
@@ -740,8 +750,8 @@ func TestLoadAbsoluteIncludePath(t *testing.T) {
 plugins:
   test:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	pluginsPath := filepath.Join(tmpDir, "plugins.yaml")
 	if err := os.WriteFile(pluginsPath, []byte(pluginsYAML), 0644); err != nil {
@@ -869,8 +879,8 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -1034,8 +1044,8 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -1076,8 +1086,8 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(legacyYAML), 0644); err != nil {

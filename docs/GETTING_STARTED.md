@@ -60,9 +60,10 @@ include:
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
-      jitter: 30s
+    schedules:
+      - id: default
+        every: 5m
+        jitter: 30s
     config:
       message: "Hello from Ductile!"
 ```

@@ -48,8 +48,8 @@ plugins:
 
   folder_watch:
     enabled: true
-    schedule:
-      every: 1m
+    schedules:
+      - every: 1m
     timeout: 30s
     max_attempts: 1
     config:

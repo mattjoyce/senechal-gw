@@ -530,27 +530,19 @@ func validate(cfg *Config) error {
 			continue // Skip disabled plugins
 		}
 
-		if plugin.Schedule != nil && len(plugin.Schedules) > 0 {
-			return fmt.Errorf("plugin %q: schedule and schedules are mutually exclusive", name)
+		if plugin.Schedule != nil {
+			return fmt.Errorf("plugin %q: schedule is no longer supported; use schedules[]", name)
 		}
 
 		// Validate schedule entries if present (plugins without schedules are API-triggered only).
 		scheduleIDs := make(map[string]struct{}, len(plugin.Schedules))
 		for i, schedule := range plugin.NormalizedSchedules() {
-			sourcePath := "schedule"
-			requireID := false
-			if len(plugin.Schedules) > 0 {
-				sourcePath = fmt.Sprintf("schedules[%d]", i)
-				requireID = true
-			}
-			if err := validateScheduleConfig(name, sourcePath, schedule, requireID); err != nil {
+			sourcePath := fmt.Sprintf("schedules[%d]", i)
+			if err := validateScheduleConfig(name, sourcePath, schedule); err != nil {
 				return err
 			}
 
 			id := strings.TrimSpace(schedule.ID)
-			if id == "" {
-				continue // Legacy single schedule maps to default ID.
-			}
 			if _, exists := scheduleIDs[id]; exists {
 				return fmt.Errorf("plugin %q: duplicate schedule id %q", name, id)
 			}
@@ -568,11 +560,7 @@ func validate(cfg *Config) error {
 	return nil
 }
 
-func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConfig, requireID bool) error {
-	if requireID && strings.TrimSpace(schedule.ID) == "" {
-		return fmt.Errorf("plugin %q: %s.id is required", pluginName, sourcePath)
-	}
-
+func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConfig) error {
 	if strings.TrimSpace(schedule.Every) == "" {
 		return fmt.Errorf("plugin %q: %s.every is required", pluginName, sourcePath)
 	}

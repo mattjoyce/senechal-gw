@@ -324,22 +324,27 @@ func (d *Doctor) warnMissingEnvVars(r *Result) {
 // warnSuspiciousSchedule warns about intervals that seem too short or too long.
 func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 	for name, pc := range d.cfg.Plugins {
-		if pc.Schedule == nil || !pc.Enabled {
+		if !pc.Enabled {
 			continue
 		}
-		interval, err := config.ParseInterval(pc.Schedule.Every)
-		if err != nil {
-			d.addError(r, "schedule", fmt.Sprintf("plugins.%s.schedule.every", name),
-				fmt.Sprintf("invalid schedule interval %q: %v", pc.Schedule.Every, err))
+		schedules := pc.NormalizedSchedules()
+		if len(schedules) == 0 {
 			continue
 		}
-		// Only warn for very short intervals.
-		if interval.Minutes() < 1 {
-			d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedule.every", name),
-				fmt.Sprintf("schedule interval %q is very short (< 1m)", pc.Schedule.Every))
-		}
-		if interval.Hours() > 24 {
-			// weekly/monthly are fine, just flag unusual custom values
+		for i, schedule := range schedules {
+			interval, err := config.ParseInterval(schedule.Every)
+			if err != nil {
+				d.addError(r, "schedule", fmt.Sprintf("plugins.%s.schedules[%d].every", name, i),
+					fmt.Sprintf("invalid schedule interval %q: %v", schedule.Every, err))
+				continue
+			}
+			if interval.Minutes() < 1 {
+				d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedules[%d].every", name, i),
+					fmt.Sprintf("schedule interval %q is very short (< 1m)", schedule.Every))
+			}
+			if interval.Hours() > 24 {
+				// weekly/monthly are fine, just flag unusual custom values
+			}
 		}
 	}
 }

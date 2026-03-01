@@ -135,9 +135,8 @@ func TestSchedulerTickEnqueuesWhenAllowed(t *testing.T) {
 	cfg.Plugins = map[string]config.PluginConf{
 		"echo": {
 			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every:  "1m",
-				Jitter: 100 * time.Millisecond,
+			Schedules: []config.ScheduleConfig{
+				{Every: "1m", Jitter: 100 * time.Millisecond},
 			},
 			Retry:               &config.RetryConfig{MaxAttempts: 3},
 			CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
@@ -185,8 +184,8 @@ func TestSchedulerTickPollGuardSkipsEnqueue(t *testing.T) {
 	cfg.Plugins = map[string]config.PluginConf{
 		"echo": {
 			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every: "1m",
+			Schedules: []config.ScheduleConfig{
+				{Every: "1m"},
 			},
 			MaxOutstandingPolls: 1,
 			CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
@@ -221,9 +220,8 @@ func TestSchedulerTickRejectsScheduledHandle(t *testing.T) {
 	cfg.Plugins = map[string]config.PluginConf{
 		"echo": {
 			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every:   "1m",
-				Command: "handle",
+			Schedules: []config.ScheduleConfig{
+				{Every: "1m", Command: "handle"},
 			},
 		},
 	}
@@ -261,8 +259,8 @@ func TestSchedulerTickSkipsWhenNotDueAfterSuccess(t *testing.T) {
 	cfg.Plugins = map[string]config.PluginConf{
 		"echo": {
 			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every: "1h",
+			Schedules: []config.ScheduleConfig{
+				{Every: "1h"},
 			},
 		},
 	}
@@ -313,8 +311,8 @@ func TestSchedulerTickDedupeHitAdvancesNextRun(t *testing.T) {
 	cfg.Plugins = map[string]config.PluginConf{
 		"echo": {
 			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every: "1m",
+			Schedules: []config.ScheduleConfig{
+				{Every: "1m"},
 			},
 		},
 	}

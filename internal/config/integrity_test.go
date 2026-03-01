@@ -146,5 +146,5 @@ func setupIntegrityDir(t *testing.T, dir string) {
 	writeTestFile(t, filepath.Join(dir, "config.yaml"), "service:\n  name: test\n  tick_interval: 60s\nstate:\n  path: ./test.db\nplugin_roots:\n  - ./plugins\n")
 	writeTestFile(t, filepath.Join(dir, "tokens.yaml"), "tokens:\n  - name: admin\n    key: secret123\n")
 	os.MkdirAll(filepath.Join(dir, "plugins"), 0755)
-	writeTestFile(t, filepath.Join(dir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: true\n    schedule:\n      every: 5m\n")
+	writeTestFile(t, filepath.Join(dir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: true\n    schedules:\n      - id: default\n        every: 5m\n")
 }
