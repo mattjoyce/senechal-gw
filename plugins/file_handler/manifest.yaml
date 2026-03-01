@@ -30,4 +30,4 @@ commands:
     retry_safe: true
 config_keys:
   required: []
-  optional: [allowed_read_paths, allowed_write_paths]
+  optional: [allowed_read_paths, allowed_write_paths, default_output_dir]

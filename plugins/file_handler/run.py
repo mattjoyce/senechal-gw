@@ -165,11 +165,12 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
 
     # Determine output path
     output_path = pick(payload, context, "output_path")
-    output_dir = pick(payload, context, "output_dir")
+    output_dir = pick(payload, context, "output_dir") or config.get("default_output_dir", "").strip() or None
 
     if not output_path and not output_dir:
         return error_response(
-            "Missing required field 'output_path' or 'output_dir' in payload",
+            "Missing required field 'output_path' or 'output_dir' in payload. "
+            "Or set plugins.file_handler.config.default_output_dir in your config.",
             retry=False
         )
 
