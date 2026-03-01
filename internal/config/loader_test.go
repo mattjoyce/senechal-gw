@@ -196,7 +196,7 @@ plugins:
 			},
 		},
 		{
-			name: "schedule entry requires every",
+			name: "schedule entry requires every or cron",
 			yaml: `
 service:
   tick_interval: 30s
@@ -209,6 +209,58 @@ plugins:
     enabled: true
     schedules:
       - {}
+`,
+			wantErr: true,
+		},
+		{
+			name: "cron schedule is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - cron: "*/15 * * * *"
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid cron expression",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - cron: "61 * * * *"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule cannot set both every and cron",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        cron: "*/15 * * * *"
 `,
 			wantErr: true,
 		},

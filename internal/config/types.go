@@ -78,7 +78,8 @@ type PluginConf struct {
 // ScheduleConfig defines when a plugin command should be scheduled.
 type ScheduleConfig struct {
 	ID              string           `yaml:"id,omitempty"`
-	Every           string           `yaml:"every"` // e.g., "5m", "hourly", "daily"
+	Every           string           `yaml:"every,omitempty"` // e.g., "5m", "hourly", "daily"
+	Cron            string           `yaml:"cron,omitempty"`  // standard 5-field cron expression
 	Jitter          time.Duration    `yaml:"jitter,omitempty"`
 	Command         string           `yaml:"command,omitempty"`          // default: "poll"
 	Payload         map[string]any   `yaml:"payload,omitempty"`          // default: {}

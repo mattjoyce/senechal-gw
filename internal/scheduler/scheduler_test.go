@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -55,27 +56,33 @@ func TestCalculateJitteredInterval(t *testing.T) {
 	}
 }
 
-func TestParseScheduleEvery(t *testing.T) {
+func TestParseScheduleInterval(t *testing.T) {
 	tests := []struct {
 		name     string
 		every    string
+		cron     string
 		expected time.Duration
+		hasEvery bool
 		hasError bool
 	}{
-		{"5m", "5m", 5 * time.Minute, false},
-		{"hourly", "hourly", 1 * time.Hour, false},
-		{"2w", "2w", 14 * 24 * time.Hour, false},
-		{"unknown", "foo", 0, true},
+		{"5m", "5m", "", 5 * time.Minute, true, false},
+		{"hourly", "hourly", "", 1 * time.Hour, true, false},
+		{"2w", "2w", "", 14 * 24 * time.Hour, true, false},
+		{"cron", "", "*/15 * * * *", 0, false, false},
+		{"both", "5m", "*/15 * * * *", 0, false, true},
+		{"none", "", "", 0, false, true},
+		{"unknown", "foo", "", 0, false, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			duration, err := parseScheduleEvery(tt.every)
+			duration, hasEvery, err := parseScheduleInterval(tt.every, tt.cron)
 			if tt.hasError {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expected, duration)
+				assert.Equal(t, tt.hasEvery, hasEvery)
 			}
 		})
 	}
@@ -354,6 +361,96 @@ func TestSchedulerTickDedupeHitAdvancesNextRun(t *testing.T) {
 
 	s.tick(ctx)
 	assert.Contains(t, logBuf.String(), "Skipped enqueue due to dedupe hit")
+}
+
+func TestSchedulerTickCronNotDueWithFutureNextRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, logBuf := NewTestSlogger()
+
+	cronExpr := "* * * * *"
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	cfg.Service.JobLogRetention = 24 * time.Hour
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedules: []config.ScheduleConfig{
+				{Cron: cronExpr},
+			},
+		},
+	}
+
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	nextRunAt := time.Now().UTC().Add(2 * time.Minute)
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(&queue.ScheduleEntryState{
+		Plugin:     "echo",
+		ScheduleID: "default",
+		Command:    "poll",
+		Status:     queue.ScheduleEntryActive,
+		NextRunAt:  &nextRunAt,
+	}, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().LatestCompletedCommandResult(gomock.Any(), "echo", pollCommand, "ductile").Return(nil, nil)
+	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
+
+	s.tick(ctx)
+	assert.Contains(t, logBuf.String(), "Skipped scheduled job (not due)")
+}
+
+func TestSchedulerTickCronDueEnqueuesAndAdvancesNextRun(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockQueue := mocks.NewMockQueueService(ctrl)
+	slogger, _ := NewTestSlogger()
+
+	now := time.Now().UTC()
+	cronExpr := fmt.Sprintf("%d * * * *", now.Minute())
+
+	cfg := config.Defaults()
+	cfg.Service.Name = "ductile"
+	cfg.Service.TickInterval = 30 * time.Second
+	cfg.Service.JobLogRetention = 24 * time.Hour
+	cfg.Plugins = map[string]config.PluginConf{
+		"echo": {
+			Enabled: true,
+			Schedules: []config.ScheduleConfig{
+				{Cron: cronExpr},
+			},
+			CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
+			MaxOutstandingPolls: 1,
+		},
+	}
+
+	s := New(cfg, mockQueue, events.NewHub(64), slogger)
+	ctx := context.Background()
+
+	mockQueue.EXPECT().GetScheduleEntryState(gomock.Any(), "echo", "default").Return(nil, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().LatestCompletedCommandResult(gomock.Any(), "echo", pollCommand, "ductile").Return(nil, nil)
+	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
+	mockQueue.EXPECT().CountOutstandingJobs(gomock.Any(), "echo", pollCommand).Return(0, nil)
+	mockQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req queue.EnqueueRequest) (string, error) {
+		assert.Equal(t, "echo", req.Plugin)
+		assert.Equal(t, pollCommand, req.Command)
+		assert.NotNil(t, req.DedupeTTL)
+		assert.Equal(t, 30*time.Second, *req.DedupeTTL)
+		return "job-1", nil
+	})
+	mockQueue.EXPECT().UpsertScheduleEntryState(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, state queue.ScheduleEntryState) error {
+		assert.NotNil(t, state.NextRunAt)
+		assert.True(t, state.NextRunAt.After(now.Add(-1*time.Minute)))
+		return nil
+	})
+	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
+
+	s.tick(ctx)
 }
 
 func TestCircuitBreakerStateTransitions(t *testing.T) {

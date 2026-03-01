@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/scheduleexpr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -568,13 +569,26 @@ func validate(cfg *Config) error {
 }
 
 func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConfig) error {
-	if strings.TrimSpace(schedule.Every) == "" {
-		return fmt.Errorf("plugin %q: %s.every is required", pluginName, sourcePath)
+	hasEvery := strings.TrimSpace(schedule.Every) != ""
+	hasCron := strings.TrimSpace(schedule.Cron) != ""
+
+	if !hasEvery && !hasCron {
+		return fmt.Errorf("plugin %q: %s requires either every or cron", pluginName, sourcePath)
+	}
+	if hasEvery && hasCron {
+		return fmt.Errorf("plugin %q: %s cannot set both every and cron", pluginName, sourcePath)
 	}
 
-	// Validate schedule.every with flexible parser.
-	if _, err := ParseInterval(schedule.Every); err != nil {
-		return fmt.Errorf("plugin %q: %w", pluginName, err)
+	if hasEvery {
+		// Validate schedule.every with flexible parser.
+		if _, err := ParseInterval(schedule.Every); err != nil {
+			return fmt.Errorf("plugin %q: %w", pluginName, err)
+		}
+	}
+	if hasCron {
+		if _, err := scheduleexpr.ParseCron(schedule.Cron); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.cron: %w", pluginName, sourcePath, err)
+		}
 	}
 
 	command := strings.TrimSpace(schedule.Command)
