@@ -114,7 +114,7 @@ func Load(configPath string) (*Config, error) {
 }
 
 // DiscoverConfigDir finds the config directory by checking standard locations.
-// Priority order: --config-dir flag, $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile, ./config.yaml (legacy)
+// Priority order: --config-dir flag, $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile.
 func DiscoverConfigDir() (string, error) {
 	// 1. Check environment variable
 	if dir := os.Getenv("DUCTILE_CONFIG_DIR"); dir != "" {
@@ -138,13 +138,7 @@ func DiscoverConfigDir() (string, error) {
 		return systemConfigDir, nil
 	}
 
-	// 4. Fallback to legacy single-file config in current directory
-	legacyConfigPath := "./config.yaml"
-	if _, err := os.Stat(legacyConfigPath); err == nil {
-		return legacyConfigPath, nil
-	}
-
-	return "", fmt.Errorf("no config found (checked: $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile, ./config.yaml)")
+	return "", fmt.Errorf("no config found (checked: $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile)")
 }
 
 // DiscoverScopeDirs returns config directories that need .checksums updates.
