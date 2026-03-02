@@ -588,20 +588,27 @@ func (d *Dispatcher) ensureWorkspaceForJob(ctx context.Context, job *queue.Job) 
 }
 
 func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (map[string]any, error) {
+	out := make(map[string]any)
+	out["ductile_plugin"] = job.Plugin
+
 	if d.contexts == nil || job.EventContextID == nil {
-		return nil, nil
+		return out, nil
 	}
 
 	eventCtx, err := d.contexts.Get(ctx, *job.EventContextID)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]any)
-	if len(eventCtx.AccumulatedJSON) == 0 {
-		return out, nil
+	if len(eventCtx.AccumulatedJSON) > 0 {
+		if err := json.Unmarshal(eventCtx.AccumulatedJSON, &out); err != nil {
+			return nil, err
+		}
 	}
-	if err := json.Unmarshal(eventCtx.AccumulatedJSON, &out); err != nil {
-		return nil, err
+	if eventCtx.PipelineName != "" {
+		out["ductile_pipeline"] = eventCtx.PipelineName
+	}
+	if eventCtx.StepID != "" {
+		out["ductile_step_id"] = eventCtx.StepID
 	}
 	return out, nil
 }
@@ -665,6 +672,22 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 							next.Event.Payload[field] = val
 						}
 					}
+				}
+			}
+			if next.Event.Payload == nil {
+				next.Event.Payload = make(map[string]any)
+			}
+			if _, exists := next.Event.Payload["ductile_upstream_plugin"]; !exists {
+				next.Event.Payload["ductile_upstream_plugin"] = job.Plugin
+			}
+			if sourcePipeline != "" {
+				if _, exists := next.Event.Payload["ductile_upstream_pipeline"]; !exists {
+					next.Event.Payload["ductile_upstream_pipeline"] = sourcePipeline
+				}
+			}
+			if sourceStepID != "" {
+				if _, exists := next.Event.Payload["ductile_upstream_step_id"]; !exists {
+					next.Event.Payload["ductile_upstream_step_id"] = sourceStepID
 				}
 			}
 

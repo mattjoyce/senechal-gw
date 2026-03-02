@@ -203,6 +203,31 @@ def parse_retry_exit_codes(config: Dict[str, Any]) -> set[int]:
     return out
 
 
+def upstream_label(req: Dict[str, Any]) -> str:
+    ctx = req.get("context", {})
+    if not isinstance(ctx, dict):
+        return "unknown"
+
+    upstream_pipeline = str(ctx.get("ductile_upstream_pipeline", "")).strip()
+    upstream_plugin = str(ctx.get("ductile_upstream_plugin", "")).strip()
+    if upstream_pipeline and upstream_plugin:
+        return f"{upstream_pipeline}:{upstream_plugin}"
+    if upstream_plugin:
+        return upstream_plugin
+    if upstream_pipeline:
+        return upstream_pipeline
+
+    pipeline = str(ctx.get("ductile_pipeline", "")).strip()
+    plugin = str(ctx.get("ductile_plugin", "")).strip()
+    if pipeline and plugin:
+        return f"{pipeline}:{plugin}"
+    if plugin:
+        return plugin
+    if pipeline:
+        return pipeline
+    return "unknown"
+
+
 def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     config = req.get("config", {})
     if not isinstance(config, dict):
@@ -279,11 +304,12 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     stderr_text, stderr_truncated = truncate_text(completed.stderr or "", stderr_max)
     exit_code = int(completed.returncode)
     success = exit_code == 0
+    upstream = upstream_label(req)
 
     logs = [
         {
             "level": "info" if success else "error",
-            "message": f"command exited with code {exit_code} in {duration_ms}ms",
+            "message": f"command exited with code {exit_code} in {duration_ms}ms (upstream {upstream})",
         },
         {"level": "debug", "message": f"command: {command}"},
     ]

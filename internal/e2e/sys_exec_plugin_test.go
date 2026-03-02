@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func TestSysExecPlugin_HandleSuccessAndPayloadEnv(t *testing.T) {
 	}
 
 	resp, stderr, err := runSysExec(t, "handle", map[string]any{
-		"command":               `printf '%s' "$DUCTILE_PAYLOAD_NAME"`,
+		"command":                 `printf '%s' "$DUCTILE_PAYLOAD_NAME"`,
 		"include_output_in_event": true,
 	}, map[string]any{
 		"name": "matt",
@@ -107,6 +108,62 @@ func TestSysExecPlugin_HealthRequiresCommand(t *testing.T) {
 	}
 	if resp.Error == "" {
 		t.Fatalf("expected health error when command missing")
+	}
+}
+
+func TestSysExecPlugin_LogIncludesUpstreamPipelinePlugin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sys_exec plugin relies on /bin/sh semantics")
+	}
+
+	root := repoRoot(t)
+	script := filepath.Join(root, "plugins", "sys_exec", "run.py")
+	event := &protocol.Event{Type: "test.event", Payload: map[string]any{}}
+
+	req := &protocol.Request{
+		Protocol: 2,
+		JobID:    "sys-exec-test-job",
+		Command:  "handle",
+		Config: map[string]any{
+			"command": "echo ok",
+		},
+		State: map[string]any{},
+		Context: map[string]any{
+			"ductile_pipeline": "notify-discord-on-transcript",
+			"ductile_plugin":   "sys_exec",
+		},
+		WorkspaceDir: t.TempDir(),
+		Event:        event,
+		DeadlineAt:   time.Now().Add(30 * time.Second).UTC(),
+	}
+
+	var stdin bytes.Buffer
+	if err := protocol.EncodeRequest(&stdin, req); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, script)
+	cmd.Stdin = &stdin
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run sys_exec: %v (stderr=%q)", err, stderr.String())
+	}
+
+	resp, err := protocol.DecodeResponse(&stdout)
+	if err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Logs) == 0 {
+		t.Fatalf("expected logs in response")
+	}
+	if !strings.Contains(resp.Logs[0].Message, "upstream notify-discord-on-transcript:sys_exec") {
+		t.Fatalf("first log message = %q, want upstream pipeline:plugin", resp.Logs[0].Message)
 	}
 }
 
