@@ -157,6 +157,7 @@ def main() -> None:
             "repo_name": name,
             "full_name": repo.get("full_name"),
             "clone_url": clone_url,
+            "ssh_url": repo.get("ssh_url"),
             "clone_dir": str(clone_dir),
             "default_branch": repo.get("default_branch"),
             "pushed_at": repo.get("pushed_at") or repo.get("updated_at"),

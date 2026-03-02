@@ -83,6 +83,8 @@ plugins:
     enabled: true
     timeout: 5m
     max_attempts: 1
+    config:
+      prefer_ssh: true
 
   repo_policy:
     enabled: true
@@ -94,7 +96,7 @@ plugins:
     timeout: 4m
     max_attempts: 1
     config:
-      fabric_pattern: "ductile-microblog-changelog"
+      fabric_pattern: "~/.config/fabric/patterns/ductile-microblog-changelog.md"
       patterns_path: "~/.config/ductile/patterns"
 
   git_commit_push:
@@ -105,3 +107,4 @@ plugins:
       author_name: "ductile"
       author_email: "ductile@local"
       commit_message: "Update changelog [ductile-changelog]"
+      prefer_ssh: true

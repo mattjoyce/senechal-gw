@@ -22,7 +22,7 @@ Optional:
 ## Events
 Emits events:
 - `github_repo_sync.repo_discovered` for each eligible repo, with payload:
-  - `owner`, `owner_type`, `repo_name`, `full_name`, `clone_url`, `clone_dir`, `default_branch`, `pushed_at`
+  - `owner`, `owner_type`, `repo_name`, `full_name`, `clone_url`, `ssh_url`, `clone_dir`, `default_branch`, `pushed_at`
 - `github_repo_sync.completed` with payload fields:
   - `message`: Human summary string for notifications.
   - `owner`, `owner_type`, `clone_dir`

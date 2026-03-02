@@ -15,7 +15,7 @@ Accepts payload or context fields:
 ## Behavior
 - Lookback starts at the most recent of (7 days ago) or the last changelog update.
 - Skips vague commits and commits tagged `[ductile-changelog]`.
-- Uses a fabric pattern to turn commits into micro-blog bullets.
+- Uses a fabric pattern to turn commits into micro-blog bullets (absolute pattern path supported).
 
 ## Events
 Emits `changelog_microblog.completed` with payload:

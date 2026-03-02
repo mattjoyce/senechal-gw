@@ -68,6 +68,8 @@ def main() -> None:
 
     repo_name = pick(payload, context, "repo_name") or repo_path.name
     default_branch = pick(payload, context, "default_branch") or "main"
+    ssh_url = pick(payload, context, "ssh_url")
+    prefer_ssh = bool(config.get("prefer_ssh", False))
 
     status = run_git(["git", "status", "--porcelain"], cwd=repo_path)
     if status.returncode != 0:
@@ -174,6 +176,26 @@ def main() -> None:
 
     sha_result = run_git(["git", "rev-parse", "HEAD"], cwd=repo_path)
     commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else ""
+
+    if prefer_ssh and ssh_url:
+        remote_result = run_git(["git", "remote", "set-url", "origin", ssh_url], cwd=repo_path)
+        if remote_result.returncode != 0:
+            respond(
+                {
+                    "status": "error",
+                    "error": f"git remote set-url failed: {remote_result.stderr.strip()}",
+                    "retry": True,
+                    "logs": [
+                        {
+                            "level": "error",
+                            "message": "git remote set-url failed",
+                        }
+                    ],
+                }
+            )
+            return
+    elif prefer_ssh and not ssh_url:
+        warn = warn or "git_commit_push: prefer_ssh enabled but ssh_url missing"
 
     push_target = current_branch or default_branch
     push_result = run_git(["git", "push", "origin", push_target], cwd=repo_path)

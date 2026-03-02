@@ -18,6 +18,7 @@ def git_command(args, cwd: Path | None = None) -> subprocess.CompletedProcess:
 def main() -> None:
     request = json.load(sys.stdin)
     command = request.get("command") or "handle"
+    config = request.get("config") or {}
 
     if command == "health":
         respond(
@@ -39,18 +40,20 @@ def main() -> None:
     owner = field("owner")
     repo_name = field("repo_name")
     clone_url = field("clone_url")
+    ssh_url = field("ssh_url")
     clone_dir_raw = field("clone_dir") or "~/github.mattjoyce"
+    prefer_ssh = bool(config.get("prefer_ssh", False))
 
-    if not owner or not repo_name or not clone_url:
+    if not owner or not repo_name or not (clone_url or ssh_url):
         respond(
             {
                 "status": "error",
-                "error": "missing required payload fields (owner, repo_name, clone_url)",
+                "error": "missing required payload fields (owner, repo_name, clone_url/ssh_url)",
                 "retry": False,
                 "logs": [
                     {
                         "level": "error",
-                        "message": "missing required payload fields (owner, repo_name, clone_url)",
+                        "message": "missing required payload fields (owner, repo_name, clone_url/ssh_url)",
                     }
                 ],
             }
@@ -62,8 +65,39 @@ def main() -> None:
     repo_dir.parent.mkdir(parents=True, exist_ok=True)
 
     action = "fetched"
+    logs = []
+
+    def set_remote_to_ssh() -> bool:
+        if prefer_ssh and ssh_url:
+            result = git_command(["git", "-C", str(repo_dir), "remote", "set-url", "origin", ssh_url])
+            if result.returncode != 0:
+                logs.append(
+                    {
+                        "level": "error",
+                        "message": f"failed to set SSH remote for {repo_name}: {result.stderr.strip()}",
+                    }
+                )
+                return False
+        elif prefer_ssh and not ssh_url:
+            logs.append(
+                {
+                    "level": "warn",
+                    "message": f"prefer_ssh enabled but ssh_url missing for {repo_name}",
+                }
+            )
+        return True
 
     if repo_dir.exists() and (repo_dir / ".git").exists():
+        if not set_remote_to_ssh():
+            respond(
+                {
+                    "status": "error",
+                    "error": "failed to set SSH remote",
+                    "retry": True,
+                    "logs": logs,
+                }
+            )
+            return
         result = git_command(["git", "-C", str(repo_dir), "fetch", "--prune", "--quiet"])
         if result.returncode != 0:
             respond(
@@ -97,7 +131,8 @@ def main() -> None:
         return
     else:
         action = "cloned"
-        result = git_command(["git", "clone", "--quiet", clone_url, str(repo_dir)])
+        clone_source = ssh_url if prefer_ssh and ssh_url else (clone_url or ssh_url)
+        result = git_command(["git", "clone", "--quiet", clone_source, str(repo_dir)])
         if result.returncode != 0:
             respond(
                 {
@@ -131,10 +166,12 @@ def main() -> None:
                         "repo_name": repo_name,
                         "path": str(repo_dir),
                         "action": action,
+                        "clone_url": clone_url or "",
+                        "ssh_url": ssh_url or "",
                     },
                 }
             ],
-            "logs": [{"level": "info", "message": summary}],
+            "logs": logs + [{"level": "info", "message": summary}],
         }
     )
 

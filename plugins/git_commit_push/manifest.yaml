@@ -18,4 +18,4 @@ commands:
     retry_safe: true
 config_keys:
   required: []
-  optional: [author_name, author_email, commit_message]
+  optional: [author_name, author_email, commit_message, prefer_ssh]

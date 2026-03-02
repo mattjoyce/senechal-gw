@@ -11,6 +11,11 @@ Accepts payload or context fields:
 - `repo_path` or `path`
 - `repo_name`
 - `default_branch` (optional)
+- `ssh_url` (optional)
+
+## Configuration
+Optional:
+- `prefer_ssh`: Update origin to `ssh_url` before push.
 
 ## Behavior
 - Skips if working tree is clean.

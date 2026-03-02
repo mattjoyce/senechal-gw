@@ -234,9 +234,19 @@ def main() -> None:
     env = os.environ.copy()
     env["FABRIC_PATTERNS_PATH"] = os.path.expanduser(patterns_path)
 
+    pattern_arg = fabric_pattern
+    pattern_path = Path(os.path.expanduser(fabric_pattern))
+    if "/" in fabric_pattern or pattern_path.suffix == ".md":
+        if pattern_path.exists():
+            pattern_arg = str(pattern_path)
+    else:
+        candidate = Path(os.path.expanduser(patterns_path)) / f"{fabric_pattern}.md"
+        if candidate.exists():
+            pattern_arg = str(candidate)
+
     try:
         fabric_result = subprocess.run(
-            [fabric_bin, "--pattern", fabric_pattern],
+            [fabric_bin, "--pattern", pattern_arg],
             input=input_text,
             capture_output=True,
             text=True,
