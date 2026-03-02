@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -98,25 +97,17 @@ include:
 		t.Fatalf("runConfigHashUpdate() code = %d, stderr: %s", code, stderr)
 	}
 
-	if !strings.Contains(stdout, "Processing directory") {
+	if !strings.Contains(stdout, "Processing directory (v2 manifest)") {
 		t.Fatalf("stdout missing verbose directory progress: %s", stdout)
 	}
-	if !strings.Contains(stdout, "HASH tokens.yaml:") {
-		t.Fatalf("stdout missing tokens hash line: %s", stdout)
-	}
-	if !strings.Contains(stdout, "SKIP webhooks.yaml: not found (optional)") {
-		t.Fatalf("stdout missing optional skip line: %s", stdout)
+	if !strings.Contains(stdout, "DISCOVER [high-security]") {
+		t.Fatalf("stdout missing discovery lines: %s", stdout)
 	}
 	if !strings.Contains(stdout, "DRY-RUN .checksums:") {
 		t.Fatalf("stdout missing dry-run line: %s", stdout)
 	}
 	if !strings.Contains(stdout, "Dry run completed") {
 		t.Fatalf("stdout missing dry-run summary: %s", stdout)
-	}
-
-	hashPattern := regexp.MustCompile(`HASH tokens\.yaml: [a-f0-9]{64}`)
-	if !hashPattern.MatchString(stdout) {
-		t.Fatalf("stdout missing valid hash output: %s", stdout)
 	}
 
 	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); !os.IsNotExist(err) {

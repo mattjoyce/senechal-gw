@@ -17,15 +17,6 @@ func TestDiscoverConfigFiles(t *testing.T) {
 	writeTestFile(t, filepath.Join(tmpDir, "webhooks.yaml"), "webhooks: []\n")
 	writeTestFile(t, filepath.Join(tmpDir, "routes.yaml"), "routes: []\n")
 
-	// Create plugins directory with YAML files
-	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
-	writeTestFile(t, filepath.Join(tmpDir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: true\n")
-	writeTestFile(t, filepath.Join(tmpDir, "plugins", "withings.yaml"), "plugins:\n  withings:\n    enabled: true\n")
-
-	// Create pipelines directory
-	os.MkdirAll(filepath.Join(tmpDir, "pipelines"), 0755)
-	writeTestFile(t, filepath.Join(tmpDir, "pipelines", "wisdom.yaml"), "pipelines:\n  - name: wisdom\n")
-
 	// Create scopes directory
 	os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0755)
 	writeTestFile(t, filepath.Join(tmpDir, "scopes", "admin.json"), `{"scopes":["*"]}`)
@@ -47,18 +38,11 @@ func TestDiscoverConfigFiles(t *testing.T) {
 	if cf.Routes != filepath.Join(tmpDir, "routes.yaml") {
 		t.Errorf("Routes = %q", cf.Routes)
 	}
-	if len(cf.Plugins) != 2 {
-		t.Fatalf("len(Plugins) = %d, want 2", len(cf.Plugins))
+	if len(cf.Plugins) != 0 {
+		t.Fatalf("len(Plugins) = %d, want 0", len(cf.Plugins))
 	}
-	// Verify alphabetical order
-	if filepath.Base(cf.Plugins[0]) != "echo.yaml" {
-		t.Errorf("Plugins[0] = %q, want echo.yaml", filepath.Base(cf.Plugins[0]))
-	}
-	if filepath.Base(cf.Plugins[1]) != "withings.yaml" {
-		t.Errorf("Plugins[1] = %q, want withings.yaml", filepath.Base(cf.Plugins[1]))
-	}
-	if len(cf.Pipelines) != 1 {
-		t.Fatalf("len(Pipelines) = %d, want 1", len(cf.Pipelines))
+	if len(cf.Pipelines) != 0 {
+		t.Fatalf("len(Pipelines) = %d, want 0", len(cf.Pipelines))
 	}
 	if len(cf.Scopes) != 1 {
 		t.Fatalf("len(Scopes) = %d, want 1", len(cf.Scopes))
@@ -96,7 +80,6 @@ func TestConfigFilesFileTier(t *testing.T) {
 		Config:   "/etc/ductile/config.yaml",
 		Tokens:   "/etc/ductile/tokens.yaml",
 		Webhooks: "/etc/ductile/webhooks.yaml",
-		Plugins:  []string{"/etc/ductile/plugins/echo.yaml"},
 		Scopes:   []string{"/etc/ductile/scopes/admin.json"},
 	}
 
@@ -112,68 +95,20 @@ func TestConfigFilesFileTier(t *testing.T) {
 	if cf.FileTier(cf.Config) != TierOperational {
 		t.Error("config.yaml should be operational")
 	}
-	if cf.FileTier(cf.Plugins[0]) != TierOperational {
-		t.Error("plugins/*.yaml should be operational")
-	}
 }
 
 func TestConfigFilesAllFiles(t *testing.T) {
 	cf := &ConfigFiles{
-		Config:    "/etc/ductile/config.yaml",
-		Tokens:    "/etc/ductile/tokens.yaml",
-		Webhooks:  "/etc/ductile/webhooks.yaml",
-		Routes:    "/etc/ductile/routes.yaml",
-		Plugins:   []string{"/etc/ductile/plugins/echo.yaml"},
-		Pipelines: []string{"/etc/ductile/pipelines/test.yaml"},
-		Scopes:    []string{"/etc/ductile/scopes/admin.json"},
+		Config:   "/etc/ductile/config.yaml",
+		Tokens:   "/etc/ductile/tokens.yaml",
+		Webhooks: "/etc/ductile/webhooks.yaml",
+		Routes:   "/etc/ductile/routes.yaml",
+		Scopes:   []string{"/etc/ductile/scopes/admin.json"},
 	}
 
 	all := cf.AllFiles()
-	if len(all) != 7 {
-		t.Errorf("AllFiles() returned %d files, want 7", len(all))
-	}
-}
-
-func TestIsConfigSpecDir(t *testing.T) {
-	// Directory with config.yaml + plugins/ → true
-	tmpDir := t.TempDir()
-	writeTestFile(t, filepath.Join(tmpDir, "config.yaml"), "service:\n  name: test\n")
-	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
-
-	if !IsConfigSpecDir(tmpDir) {
-		t.Error("should detect directory with config.yaml + plugins/ as CONFIG_SPEC dir")
-	}
-
-	// Directory with config.yaml + pipelines/ → true
-	tmpDir1b := t.TempDir()
-	writeTestFile(t, filepath.Join(tmpDir1b, "config.yaml"), "service:\n  name: test\n")
-	os.MkdirAll(filepath.Join(tmpDir1b, "pipelines"), 0755)
-
-	if !IsConfigSpecDir(tmpDir1b) {
-		t.Error("should detect directory with config.yaml + pipelines/ as CONFIG_SPEC dir")
-	}
-
-	// Directory with only config.yaml → false (could be include-mode)
-	tmpDir2 := t.TempDir()
-	writeTestFile(t, filepath.Join(tmpDir2, "config.yaml"), "service:\n  name: test\n")
-
-	if IsConfigSpecDir(tmpDir2) {
-		t.Error("bare config.yaml without subdirectory indicators should not be CONFIG_SPEC dir")
-	}
-
-	// Directory with config.yaml + tokens.yaml but no subdir → false (include-mode)
-	tmpDir3 := t.TempDir()
-	writeTestFile(t, filepath.Join(tmpDir3, "config.yaml"), "include:\n  - tokens.yaml\n")
-	writeTestFile(t, filepath.Join(tmpDir3, "tokens.yaml"), "tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n")
-
-	if IsConfigSpecDir(tmpDir3) {
-		t.Error("config.yaml + tokens.yaml without subdirectory should not be CONFIG_SPEC dir")
-	}
-
-	// Empty directory → false
-	tmpDir4 := t.TempDir()
-	if IsConfigSpecDir(tmpDir4) {
-		t.Error("empty directory should not be CONFIG_SPEC dir")
+	if len(all) != 5 {
+		t.Errorf("AllFiles() returned %d files, want 5", len(all))
 	}
 }
 

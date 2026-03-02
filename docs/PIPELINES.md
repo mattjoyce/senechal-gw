@@ -22,7 +22,7 @@ Ductile uses a unique "Governance Hybrid" architecture to manage data as it flow
 
 ## 2. Pipeline DSL
 
-Pipelines are defined in YAML files located in `~/.config/ductile/pipelines/`.
+Pipelines are defined in YAML files referenced via `include:` in `config.yaml` (either individual files or directories).
 
 ### 2.1 Basic Syntax
 

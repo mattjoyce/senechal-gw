@@ -135,12 +135,8 @@ func TestCompileSpecsRejectsUnknownCallTarget(t *testing.T) {
 	}
 }
 
-func TestLoadAndCompileDirLoadsMultipleYAMLFiles(t *testing.T) {
+func TestLoadAndCompileFilesLoadsMultipleYAMLFiles(t *testing.T) {
 	configDir := t.TempDir()
-	pipelinesDir := filepath.Join(configDir, "pipelines")
-	if err := os.MkdirAll(pipelinesDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll(pipelines): %v", err)
-	}
 
 	rootYAML := `pipelines:
   - name: wisdom-chain
@@ -157,19 +153,18 @@ func TestLoadAndCompileDirLoadsMultipleYAMLFiles(t *testing.T) {
         uses: transcriber
 `
 
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "01-root.yaml"), []byte(rootYAML), 0o644); err != nil {
+	rootPath := filepath.Join(configDir, "01-root.yaml")
+	processPath := filepath.Join(configDir, "02-process.yaml")
+	if err := os.WriteFile(rootPath, []byte(rootYAML), 0o644); err != nil {
 		t.Fatalf("WriteFile(01-root.yaml): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "02-process.yaml"), []byte(processYAML), 0o644); err != nil {
+	if err := os.WriteFile(processPath, []byte(processYAML), 0o644); err != nil {
 		t.Fatalf("WriteFile(02-process.yaml): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "README.txt"), []byte("ignored"), 0o644); err != nil {
-		t.Fatalf("WriteFile(README.txt): %v", err)
-	}
 
-	set, err := LoadAndCompileDir(configDir)
+	set, err := LoadAndCompileFiles([]string{rootPath, processPath})
 	if err != nil {
-		t.Fatalf("LoadAndCompileDir() error = %v", err)
+		t.Fatalf("LoadAndCompileFiles() error = %v", err)
 	}
 	if len(set.Pipelines) != 2 {
 		t.Fatalf("pipeline count = %d, want 2", len(set.Pipelines))

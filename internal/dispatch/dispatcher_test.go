@@ -721,10 +721,6 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 		t.Fatalf("registry.Add(plugin-b): %v", err)
 	}
 
-	pipelinesDir := filepath.Join(tmpDir, "pipelines")
-	if err := os.MkdirAll(pipelinesDir, 0755); err != nil {
-		t.Fatalf("MkdirAll(pipelinesDir): %v", err)
-	}
 	pipelineYAML := `pipelines:
   - name: chain
     on: chain.start
@@ -732,13 +728,14 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
       - id: step_b
         uses: plugin-b
 `
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "chain.yaml"), []byte(pipelineYAML), 0644); err != nil {
-		t.Fatalf("WriteFile(chain.yaml): %v", err)
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
 	}
 
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
-		t.Fatalf("LoadFromConfigDir: %v", err)
+		t.Fatalf("LoadFromConfigFiles: %v", err)
 	}
 	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
 	wsManager, err := workspace.NewFSManager(workspaceBaseDir)

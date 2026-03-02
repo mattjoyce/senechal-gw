@@ -19,7 +19,7 @@ Ductile uses a **Graph-based Pipeline** model to orchestrate event flow. It sepa
 
 ## 2. Pipeline DSL
 
-Pipelines are defined in `pipelines.yaml` (or individual files in `pipelines/`).
+Pipelines are defined in YAML files referenced via `include:` in `config.yaml` (files or directories).
 
 ### 2.1 Syntax
 

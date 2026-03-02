@@ -26,18 +26,16 @@ func CollectConfigPaths(configPath string, cfg *Config) ([]string, error) {
 	paths := []string{absPath}
 
 	if info.IsDir() {
-		files, err := DiscoverConfigFiles(absPath)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, files.AllFiles()...)
+		configPath := filepath.Join(absPath, "config.yaml")
+		paths = append(paths, configPath)
 	} else {
-		if cfg != nil {
-			for f := range cfg.SourceFiles {
-				paths = append(paths, f)
-			}
-		}
 		paths = append(paths, filepath.Dir(absPath))
+	}
+
+	if cfg != nil {
+		for f := range cfg.SourceFiles {
+			paths = append(paths, f)
+		}
 	}
 
 	seen := make(map[string]struct{}, len(paths))

@@ -27,7 +27,7 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
 	}
 
-	// Check if path is directory (legacy multi-file discovery) or file
+	// Check if path is directory and resolve config.yaml
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("config file not found: %s\n"+
@@ -35,17 +35,6 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	if info.IsDir() {
-		// Check if this is a CONFIG_SPEC directory (has config.yaml + indicators)
-		if IsConfigSpecDir(absPath) {
-			cfg, warnings, err := LoadDir(absPath)
-			if err != nil {
-				return nil, err
-			}
-			// Log warnings (caller can inspect cfg for details)
-			_ = warnings
-			return cfg, nil
-		}
-		// Fallback: directory provided - look for config.yaml inside
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
@@ -161,10 +150,6 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 	}
 
 	if info.IsDir() {
-		// Directory mode: return the single root directory
-		if IsConfigSpecDir(absPath) {
-			return []string{absPath}, nil
-		}
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)

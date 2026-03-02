@@ -974,6 +974,7 @@ func runSystemSkills(args []string) int {
 
 	// Attempt to load config and registry.
 	var registry *plugin.Registry
+	var loadedConfig *config.Config
 	hasConfig := false
 	if *configPath != "" {
 		cfg, err := config.Load(*configPath)
@@ -986,6 +987,7 @@ func runSystemSkills(args []string) int {
 		} else {
 			if r, err := discoverRegistry(cfg, *configPath); err == nil {
 				registry = r
+				loadedConfig = cfg
 				hasConfig = true
 			}
 		}
@@ -1054,28 +1056,36 @@ func runSystemSkills(args []string) int {
 	}
 
 	// --- Pipeline Skills ---
-	routerEngine, err := router.LoadFromConfigDir(*configPath, registry, log.WithComponent("skills-export"))
-	if err == nil {
-		if r, ok := routerEngine.(*router.Router); ok {
-			pipelines := r.PipelineSummary()
-			if len(pipelines) > 0 {
-				sort.Slice(pipelines, func(i, j int) bool {
-					return pipelines[i].Name < pipelines[j].Name
-				})
-				fmt.Println("## Pipelines")
-				fmt.Println()
-				fmt.Println("Format: `<pipeline> m=<HTTP> p=<path> trigger=<trigger> mode=<sync|async> [timeout=<duration>]`")
-				fmt.Println()
-				for _, p := range pipelines {
-					mode := "async"
-					if p.ExecutionMode == "synchronous" {
-						mode = "sync"
-					}
-					fmt.Printf("- %s m=POST p=/pipeline/%s trigger=%q mode=%s", p.Name, p.Name, p.Trigger, mode)
-					if p.Timeout > 0 {
-						fmt.Printf(" timeout=%s", p.Timeout)
-					}
+	if loadedConfig != nil {
+		pipelineFiles := make([]string, 0, len(loadedConfig.SourceFiles))
+		for f := range loadedConfig.SourceFiles {
+			pipelineFiles = append(pipelineFiles, f)
+		}
+		sort.Strings(pipelineFiles)
+
+		routerEngine, err := router.LoadFromConfigFiles(pipelineFiles, registry, log.WithComponent("skills-export"))
+		if err == nil {
+			if r, ok := routerEngine.(*router.Router); ok {
+				pipelines := r.PipelineSummary()
+				if len(pipelines) > 0 {
+					sort.Slice(pipelines, func(i, j int) bool {
+						return pipelines[i].Name < pipelines[j].Name
+					})
+					fmt.Println("## Pipelines")
 					fmt.Println()
+					fmt.Println("Format: `<pipeline> m=<HTTP> p=<path> trigger=<trigger> mode=<sync|async> [timeout=<duration>]`")
+					fmt.Println()
+					for _, p := range pipelines {
+						mode := "async"
+						if p.ExecutionMode == "synchronous" {
+							mode = "sync"
+						}
+						fmt.Printf("- %s m=POST p=/pipeline/%s trigger=%q mode=%s", p.Name, p.Name, p.Trigger, mode)
+						if p.Timeout > 0 {
+							fmt.Printf(" timeout=%s", p.Timeout)
+						}
+						fmt.Println()
+					}
 				}
 			}
 		}
@@ -1735,7 +1745,13 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		return nil, err
 	}
 
-	routerEngine, err := router.LoadFromConfigDir(configDir, registry, logger)
+	pipelineFiles := make([]string, 0, len(cfg.SourceFiles))
+	for f := range cfg.SourceFiles {
+		pipelineFiles = append(pipelineFiles, f)
+	}
+	sort.Strings(pipelineFiles)
+
+	routerEngine, err := router.LoadFromConfigFiles(pipelineFiles, registry, logger)
 	if err != nil {
 		logger.Error("failed to load router pipelines", "config_dir", configDir, "error", err)
 		return nil, err
@@ -2509,8 +2525,8 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	for _, dir := range targetDirs {
-		// Check if this is a CONFIG_SPEC directory
-		if config.IsConfigSpecDir(dir) {
+		configPath := filepath.Join(dir, "config.yaml")
+		if _, err := os.Stat(configPath); err == nil {
 			files, err := config.DiscoverConfigFiles(dir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to discover config files in %s: %v\n", dir, err)
@@ -2540,28 +2556,31 @@ func runConfigHashUpdate(args []string) int {
 					fmt.Printf("  WROTE .checksums: %s\n", filepath.Join(dir, ".checksums"))
 				}
 			}
-		} else {
-			// Include-based mode
-			scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
-			report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-				return 1
+			continue
+		} else if err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Failed to access %s: %v\n", configPath, err)
+			return 1
+		}
+
+		scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
+			return 1
+		}
+		if isVerbose {
+			fmt.Printf("Processing directory: %s\n", dir)
+			for _, file := range report.Files {
+				if file.Exists {
+					fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
+					continue
+				}
+				fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
 			}
-			if isVerbose {
-				fmt.Printf("Processing directory: %s\n", dir)
-				for _, file := range report.Files {
-					if file.Exists {
-						fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
-						continue
-					}
-					fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
-				}
-				if dryRun {
-					fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
-				} else {
-					fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
-				}
+			if dryRun {
+				fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
+			} else {
+				fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
 			}
 		}
 	}

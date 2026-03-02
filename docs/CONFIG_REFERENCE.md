@@ -10,19 +10,15 @@ This document defines the configuration structure, integrity verification, and r
 
 ## 1. Directory Structure
 
-Ductile uses a "Nagios-style" configuration directory, typically located at `~/.config/ductile/`.
+Ductile uses a configuration directory, typically located at `~/.config/ductile/`. Only
+`config.yaml` is implicitly loaded; all other files must be referenced via `include:`.
 
 ```
 ~/.config/ductile/
 ├── config.yaml                  # [Operational] Service-level settings
-├── webhooks.yaml                # [High Security] Webhook endpoints & secrets
-├── tokens.yaml                  # [High Security] API token registry
-├── routes.yaml                  # [Operational] Global routing rules
-├── plugins/                     # [Operational] Modular plugin configs
-│   ├── echo.yaml
-│   └── withings.yaml
-├── pipelines/                   # [Operational] Modular pipeline definitions
-│   └── wisdom.yaml
+├── webhooks.yaml                # [High Security] Webhook endpoints & secrets (include explicitly)
+├── tokens.yaml                  # [High Security] API token registry (include explicitly)
+├── routes.yaml                  # [Operational] Global routing rules (include explicitly)
 └── scopes/                      # [High Security] Token scope definitions
     ├── admin-cli.json
     └── github-integration.json
@@ -37,7 +33,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 | Tier | Files | Missing/Mismatch Behavior |
 | :--- | :--- | :--- |
 | **High Security** | `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` | **Hard Fail**: System refuses to start (EX_CONFIG). |
-| **Operational** | `config.yaml`, `plugins/*.yaml`, `pipelines/*.yaml`, `routes.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
+| **Operational** | `config.yaml`, `routes.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
 
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
@@ -52,7 +48,7 @@ At runtime, the gateway compiles all discovered files into a single, monolithic 
 
 ### 3.1 Merge Logic
 - **Root First**: `config.yaml` is loaded first as the base.
-- **Sequential Grafting**: Modular files from `plugins/` and `pipelines/` are grafted onto the monolith in alphabetical order.
+- **Explicit Includes**: Additional files are loaded from the `include:` list (and any directories listed there) in order.
 - **Precedence**: Later entries override earlier ones (n-1 branching).
 - **Matching Branches**:
     - **Maps (e.g., `plugins:`)**: Keys are merged. Duplicate keys are overridden by the later file.
@@ -62,11 +58,14 @@ At runtime, the gateway compiles all discovered files into a single, monolithic 
 ### 3.2 Modular Example
 **config.yaml (Root)**
 ```yaml
+include:
+  - pipelines.yaml
+
 service:
   name: my-gateway
 ```
 
-**pipelines/wisdom.yaml**
+**pipelines.yaml**
 ```yaml
 pipelines:
   - name: video-wisdom
@@ -114,7 +113,7 @@ state:
   path: ./data/state.db
 ```
 
-Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml` (or the config directory in CONFIG_SPEC mode).
+Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.
 
 `plugin_roots` is the multi-root setting.
 
@@ -122,7 +121,7 @@ Discovery behavior:
 - Duplicate roots are ignored after first occurrence.
 - Roots are scanned in order; if duplicate plugin names exist across roots, the first discovered plugin is kept and later duplicates are ignored.
 
-### 4.2 plugins/*.yaml (Plugin definitions)
+### 4.2 Plugin definitions (included file)
 ```yaml
 plugins:
   echo:

@@ -1919,9 +1919,8 @@ func runConfigInit(args []string) int {
 	}
 
 	pluginsDir := filepath.Join(configDir, "plugins")
-	pipelinesDir := filepath.Join(configDir, "pipelines")
 	scopesDir := filepath.Join(configDir, "scopes")
-	for _, dir := range []string{pluginsDir, pipelinesDir, scopesDir} {
+	for _, dir := range []string{pluginsDir, scopesDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create directory %s: %v\n", dir, err)
 			return 1
@@ -2267,7 +2266,7 @@ const (
 )
 
 func createConfigBackup(configDir, outputPath string) ([]string, error) {
-	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "pipelines", "scopes"}
+	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "scopes"}
 	// #nosec G304 -- output path is operator-controlled local input.
 	archiveFile, err := os.Create(outputPath)
 	if err != nil {

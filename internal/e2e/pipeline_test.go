@@ -26,10 +26,9 @@ func TestEndToEndPipeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "ductile.db")
 	pluginsDir := filepath.Join(tmpDir, "plugins")
-	pipelinesDir := filepath.Join(tmpDir, "pipelines")
 	workspacesDir := filepath.Join(tmpDir, "workspaces")
 
-	for _, dir := range []string{pluginsDir, pipelinesDir, workspacesDir} {
+	for _, dir := range []string{pluginsDir, workspacesDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatalf("failed to create dir %s: %v", dir, err)
 		}
@@ -107,13 +106,14 @@ except Exception as e:
       - id: step_notify
         uses: notifier
 `
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "chain.yaml"), []byte(pipelineYAML), 0644); err != nil {
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
 		t.Fatalf("failed to write pipeline: %v", err)
 	}
 
 	// 4. Discover and Load
 	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...any) {})
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
 		t.Fatalf("failed to load router: %v", err)
 	}

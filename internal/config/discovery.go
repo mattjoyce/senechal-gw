@@ -16,6 +16,10 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 		return nil, fmt.Errorf("failed to resolve config dir %q: %w", configDir, err)
 	}
 
+	if info, err := os.Stat(absDir); err == nil && !info.IsDir() {
+		absDir = filepath.Dir(absDir)
+	}
+
 	cf := &ConfigFiles{Root: absDir}
 
 	// config.yaml is mandatory
@@ -36,23 +40,6 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 		cf.Routes = path
 	}
 
-	// Walk plugins/*.yaml
-	cf.Plugins, err = walkYAMLDir(filepath.Join(absDir, "plugins"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk plugins/: %w", err)
-	}
-
-	// Walk pipelines/*.yaml
-	cf.Pipelines, err = walkYAMLDir(filepath.Join(absDir, "pipelines"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk pipelines/: %w", err)
-	}
-	// Also include top-level pipelines.yaml if it exists
-	if path := filepath.Join(absDir, "pipelines.yaml"); fileExists(path) {
-		cf.Pipelines = append(cf.Pipelines, path)
-		sort.Strings(cf.Pipelines)
-	}
-
 	// Walk scopes/*.json
 	cf.Scopes, err = walkJSONDir(filepath.Join(absDir, "scopes"))
 	if err != nil {
@@ -60,27 +47,6 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 	}
 
 	return cf, nil
-}
-
-// IsConfigSpecDir returns true if the directory looks like a CONFIG_SPEC directory.
-// A CONFIG_SPEC directory must have config.yaml plus at least one subdirectory indicator
-// (plugins/ or pipelines/). Named files alone (tokens.yaml, webhooks.yaml) are not
-// sufficient, as they could also appear in include-based configurations.
-func IsConfigSpecDir(dir string) bool {
-	configPath := filepath.Join(dir, "config.yaml")
-	if !fileExists(configPath) {
-		return false
-	}
-
-	// Only subdirectories are unambiguous indicators of directory mode
-	if dirExists(filepath.Join(dir, "plugins")) {
-		return true
-	}
-	if dirExists(filepath.Join(dir, "pipelines")) {
-		return true
-	}
-
-	return false
 }
 
 // walkYAMLDir returns sorted absolute paths of *.yaml files in dir.

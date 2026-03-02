@@ -54,7 +54,7 @@ curl -N -H "Authorization: Bearer <token>" http://localhost:8080/events
 
 ## 3. Configuration Management
 
-Ductile uses a tiered directory model for configuration. The source of truth is typically `~/.config/ductile/`.
+Ductile loads `config.yaml` from the config directory (typically `~/.config/ductile/`) and merges any files listed under `include:`.
 
 ### Administrative Commands
 Use the `config` noun for surgical administration:

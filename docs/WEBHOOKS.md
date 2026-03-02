@@ -11,15 +11,7 @@ This document summarizes how webhooks work in Ductile and how to configure them 
 
 ## Configuration Model
 
-Ductile supports two config modes:
-
-### 1) Directory mode
-
-If the config directory contains `config.yaml` plus a `plugins/` or `pipelines/` directory, Ductile operates in **directory mode** and automatically loads `webhooks.yaml` from the config root.
-
-### 2) Include mode (most common locally)
-
-If `config.yaml` has an `include:` list, **only** files listed there are merged. In this mode you must explicitly include `webhooks.yaml`:
+Only `config.yaml` is loaded automatically. Any webhook configuration must be referenced via the `include:` list:
 
 ```yaml
 include:

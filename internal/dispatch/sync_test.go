@@ -36,8 +36,6 @@ echo '{"status":"ok","result":"done","logs":[{"level":"info","message":"done"}]}
 
 	// Create pipeline
 	tmpDir := filepath.Dir(pluginsDir)
-	pipelinesDir := filepath.Join(tmpDir, "pipelines")
-	os.MkdirAll(pipelinesDir, 0755)
 	pipelineYAML := `pipelines:
   - name: test-pipeline
     on: test.event
@@ -45,11 +43,12 @@ echo '{"status":"ok","result":"done","logs":[{"level":"info","message":"done"}]}
       - id: step_b
         uses: plugin-b
 `
-	os.WriteFile(filepath.Join(pipelinesDir, "test.yaml"), []byte(pipelineYAML), 0644)
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644)
 
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
-		t.Fatalf("LoadFromConfigDir: %v", err)
+		t.Fatalf("LoadFromConfigFiles: %v", err)
 	}
 	disp.router = routerEngine
 	disp.registry = registry

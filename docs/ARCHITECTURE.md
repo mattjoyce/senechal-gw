@@ -934,11 +934,11 @@ For the complete configuration specification, including file formats, merge logi
 
 ### 13.2 Key Principles
 
-- **Directory-Based Modularity:** Configuration is split into `config.yaml`, `webhooks.yaml`, `tokens.yaml`, and modular directories for `plugins/` and `pipelines/`.
+- **Include-Based Modularity:** Configuration is loaded from `config.yaml` plus any files or directories listed in `include:`.
 - **Multi-Root Plugin Discovery:** `plugin_roots` is the source of truth; roots are scanned in order and first match wins on duplicate plugin names.
-- **Pipeline Discovery Flow:** Pipelines are loaded from both `pipelines/*.yaml` (alphabetical) and optional top-level `pipelines.yaml`.
-- **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
-- **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
+- **Pipeline Discovery Flow:** Pipelines are loaded from included YAML files (or include directories) that define `pipelines:` entries.
+- **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/routes) log warnings if hashes are missing or mismatched.
+- **Monolithic Grafting:** At runtime, all included files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
 - **Default Permissions:** Config directories and workspaces are created with `0700`. Config files and lock files default to `0600`; operators may relax permissions explicitly for shared environments.
 - **Secret Redaction:** CLI config inspection outputs redact token keys and webhook secrets; secrets are only shown at creation time.

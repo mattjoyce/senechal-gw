@@ -23,9 +23,9 @@ type Router struct {
 
 var _ Engine = (*Router)(nil)
 
-// LoadFromConfigDir loads pipelines from <configDir>/pipelines and builds a Router.
-func LoadFromConfigDir(configDir string, registry *plugin.Registry, logger *slog.Logger) (Engine, error) {
-	set, err := dsl.LoadAndCompileDir(configDir)
+// LoadFromConfigFiles loads pipelines from the provided config files and builds a Router.
+func LoadFromConfigFiles(paths []string, registry *plugin.Registry, logger *slog.Logger) (Engine, error) {
+	set, err := dsl.LoadAndCompileFiles(paths)
 	if err != nil {
 		return nil, err
 	}
