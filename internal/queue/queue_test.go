@@ -287,6 +287,72 @@ UPDATE job_queue SET status = ?, attempt = 3, created_at = ?, started_at = ?, co
 	}
 }
 
+func TestListJobLogsFilters(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "api",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	stderr := "stderr output"
+	lastErr := "Boom"
+	result := json.RawMessage(`{"status":"error","error":"Boom"}`)
+	if err := q.CompleteWithResult(context.Background(), id, StatusFailed, result, &lastErr, &stderr); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	since := time.Now().UTC().Add(-1 * time.Minute)
+	until := time.Now().UTC().Add(1 * time.Minute)
+	status := StatusFailed
+
+	filter := JobLogFilter{
+		Plugin:        "echo",
+		Status:        &status,
+		Query:         "boom",
+		Since:         &since,
+		Until:         &until,
+		Limit:         10,
+		IncludeResult: true,
+	}
+
+	logs, total, err := q.ListJobLogs(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("ListJobLogs: %v", err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("expected 1 log, got total=%d len=%d", total, len(logs))
+	}
+	if logs[0].JobID != id {
+		t.Fatalf("job_id mismatch: got %q want %q", logs[0].JobID, id)
+	}
+	if logs[0].LastError == nil || *logs[0].LastError != lastErr {
+		t.Fatalf("last_error mismatch: %#v", logs[0].LastError)
+	}
+	if logs[0].Stderr == nil || *logs[0].Stderr != stderr {
+		t.Fatalf("stderr mismatch: %#v", logs[0].Stderr)
+	}
+	if string(logs[0].Result) != string(result) {
+		t.Fatalf("result mismatch: got %s want %s", string(logs[0].Result), string(result))
+	}
+}
+
 func TestQueueDequeueRespectsNextRetryAtStrictly(t *testing.T) {
 	t.Parallel()
 

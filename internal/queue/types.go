@@ -59,6 +59,36 @@ type ListJobsFilter struct {
 	Limit   int
 }
 
+// JobLogFilter defines optional filters for listing job logs.
+type JobLogFilter struct {
+	JobID         string
+	Plugin        string
+	Command       string
+	Status        *Status
+	SubmittedBy   string
+	Query         string
+	Since         *time.Time
+	Until         *time.Time
+	Limit         int
+	IncludeResult bool
+}
+
+// JobLogEntry represents a stored job log record for audit/query.
+type JobLogEntry struct {
+	JobID       string
+	LogID       string
+	Plugin      string
+	Command     string
+	Status      Status
+	Attempt     int
+	SubmittedBy string
+	CreatedAt   time.Time
+	CompletedAt time.Time
+	LastError   *string
+	Stderr      *string
+	Result      json.RawMessage
+}
+
 type CircuitState string
 
 const (
