@@ -241,39 +241,52 @@ func buildPipelineList(catalog []PipelineCatalogEntry, pipelines map[string]*Pip
 	return items
 }
 
-func renderPipelines(items []PipelineListItem, selected int, theme Theme, width int) string {
-	innerWidth := width - 4
+func renderPipelines(items []PipelineListItem, selected int, theme Theme, width int, height int) string {
+	innerWidth := width - 2
 
 	if len(items) == 0 {
 		content := lipgloss.JoinVertical(lipgloss.Left,
-			theme.Title.Render("PIPELINES"),
 			theme.Dim.Render("  No pipeline activity yet..."),
 		)
-		return theme.Border.Width(innerWidth).Render(content)
+		return theme.Border.Width(innerWidth).Height(height).Render(content)
+	}
+
+	// Viewport logic
+	visibleHeight := height - 2 // internal height minus borders
+	if visibleHeight < 1 {
+		visibleHeight = 1
+	}
+
+	// Simple scroll logic: keep selected in view
+	start := 0
+	if selected >= visibleHeight {
+		start = selected - visibleHeight + 1
 	}
 
 	var lines []string
-	for i, item := range items {
-		line := renderPipelineRow(i+1, item, i == selected, theme)
+	for i := start; i < len(items) && len(lines) < visibleHeight; i++ {
+		line := renderPipelineRow(i+1, items[i], i == selected, theme, width-4)
 		lines = append(lines, line)
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		append([]string{theme.Title.Render("PIPELINES")}, lines...)...,
-	)
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
 
-	return theme.Border.Width(innerWidth).Render(content)
+	// Add scrollbar if needed
+	if len(items) > visibleHeight {
+		content = renderWithScrollbar(content, start, len(items), visibleHeight, theme)
+	}
+
+	return theme.Border.Width(innerWidth).Height(height).Render(content)
 }
 
-func renderPipelineRow(num int, item PipelineListItem, isSelected bool, theme Theme) string {
+func renderPipelineRow(num int, item PipelineListItem, isSelected bool, theme Theme, width int) string {
 	activeCount := 0
 	if item.State != nil {
 		activeCount = len(item.State.ActiveJobs)
 	}
 
 	statusStr := pipelineStatus(item, theme, activeCount)
-	lastRunStr := pipelineLastRun(item, theme)
-
+	
 	nameStyle := lipgloss.NewStyle()
 	if isSelected {
 		nameStyle = nameStyle.Bold(true).
@@ -283,114 +296,76 @@ func renderPipelineRow(num int, item PipelineListItem, isSelected bool, theme Th
 		nameStyle = theme.StatusDead
 	}
 
-	nameText := nameStyle.Render(fmt.Sprintf("%-24s", item.Entry.Name))
+	maxNameLen := width - 20
+	if maxNameLen < 10 {
+		maxNameLen = 10
+	}
+	name := item.Entry.Name
+	if len(name) > maxNameLen {
+		name = name[:maxNameLen-3] + "..."
+	}
+	nameText := nameStyle.Render(fmt.Sprintf("%-*s", maxNameLen, name))
 
-	var line strings.Builder
-	line.WriteString(fmt.Sprintf(" %d. %s  %s  %s",
-		num,
-		nameText,
-		statusStr,
-		lastRunStr,
-	))
+	line := fmt.Sprintf(" %d. %s %s", num, nameText, statusStr)
 
-	if activeCount > 0 && item.State != nil {
+	// If selected, show one active job if any
+	if isSelected && activeCount > 0 && item.State != nil {
+		// Just show the first one to save space in the list view
+		var firstJob *JobState
 		for _, job := range item.State.ActiveJobs {
-			duration := "-"
-			if !job.StartTime.IsZero() {
-				duration = time.Since(job.StartTime).Round(time.Millisecond).String()
-			}
-
-			jobID := job.ID
+			firstJob = job
+			break
+		}
+		if firstJob != nil {
+			jobID := firstJob.ID
 			if len(jobID) > 8 {
 				jobID = jobID[:8]
 			}
-
-			step := job.Plugin
-			if job.Command != "" {
-				step = job.Plugin + "/" + job.Command
-			}
-
-			jobLine := fmt.Sprintf("    └─ Job %s: %s %s",
-				theme.Highlight.Render(jobID),
-				step,
-				theme.Dim.Render(duration),
-			)
-			line.WriteString("\n" + jobLine)
+			line += fmt.Sprintf("\n    └─ %s %s", theme.Highlight.Render(jobID), firstJob.Plugin)
 		}
 	}
 
-	return line.String()
+	return line
 }
 
-func renderPipelineDetails(items []PipelineListItem, selected int, theme Theme, width int) string {
-	innerWidth := width - 4
-
-	if len(items) == 0 {
-		content := lipgloss.JoinVertical(lipgloss.Left,
-			theme.Title.Render("PIPELINE DETAILS"),
-			theme.Dim.Render("  No pipeline configuration loaded."),
-		)
-		return theme.Border.Width(innerWidth).Render(content)
+func renderWithScrollbar(content string, start, total, visible int, theme Theme) string {
+	if total <= visible {
+		return content
 	}
 
-	if selected < 0 || selected >= len(items) {
-		selected = 0
+	scrollbarHeight := visible
+	thumbHeight := int(float64(visible) * float64(visible) / float64(total))
+	if thumbHeight < 1 {
+		thumbHeight = 1
 	}
 
-	item := items[selected]
-	entry := item.Entry
-
-	lines := []string{
-		theme.Title.Render("PIPELINE DETAILS"),
-		fmt.Sprintf(" Name: %s", theme.Highlight.Render(entry.Name)),
-		fmt.Sprintf(" Type: %s", entry.Kind),
+	thumbStart := int(float64(start) * float64(visible) / float64(total))
+	if thumbStart+thumbHeight > scrollbarHeight {
+		thumbStart = scrollbarHeight - thumbHeight
 	}
 
-	statusText := pipelineStatus(item, theme, activeJobCount(item))
-	lines = append(lines, fmt.Sprintf(" Status: %s", statusText))
-
-	if !entry.Enabled {
-		lines = append(lines, fmt.Sprintf(" Enabled: %s", theme.StatusDead.Render("no")))
-	} else {
-		lines = append(lines, fmt.Sprintf(" Enabled: %s", theme.StatusOK.Render("yes")))
-	}
-
-	if item.State != nil && !item.State.LastRun.IsZero() {
-		ago := time.Since(item.State.LastRun).Round(time.Second)
-		lines = append(lines, fmt.Sprintf(" Last run: %s", formatAgo(ago)))
-	}
-	if item.State != nil && item.State.LastEventType != "" {
-		lines = append(lines, fmt.Sprintf(" Last event: %s", item.State.LastEventType))
-	}
-	if item.State != nil && item.State.LastJobID != "" {
-		lines = append(lines, fmt.Sprintf(" Last job: %s", truncateJobID(item.State.LastJobID)))
-	}
-
-	switch entry.Kind {
-	case "pipeline":
-		if entry.Trigger != "" {
-			lines = append(lines, fmt.Sprintf(" Trigger: %s", entry.Trigger))
+	var sb strings.Builder
+	lines := strings.Split(content, "\n")
+	for i := 0; i < visible; i++ {
+		line := ""
+		if i < len(lines) {
+			line = lines[i]
 		}
-		if entry.ExecutionMode != "" {
-			lines = append(lines, fmt.Sprintf(" Mode: %s", entry.ExecutionMode))
+
+		char := "│"
+		if i >= thumbStart && i < thumbStart+thumbHeight {
+			char = theme.Highlight.Render("┃")
+		} else {
+			char = theme.Dim.Render("│")
 		}
-		if entry.Timeout > 0 {
-			lines = append(lines, fmt.Sprintf(" Timeout: %s", entry.Timeout))
-		}
-		if entry.StepCount > 0 {
-			lines = append(lines, fmt.Sprintf(" Steps: %d", entry.StepCount))
-		}
-	case "plugin":
-		if entry.Uses != "" {
-			lines = append(lines, fmt.Sprintf(" Uses: %s", entry.Uses))
-		}
-		if entry.ScheduleCount > 0 {
-			lines = append(lines, fmt.Sprintf(" Schedules: %d", entry.ScheduleCount))
-		}
+
+		// Ensure line is padded to width before adding scrollbar
+		// This is tricky with lipgloss, so we just append.
+		// The parent border will handle the overall width.
+		sb.WriteString(line + " " + char + "\n")
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	return theme.Border.Width(innerWidth).Render(content)
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 func activeJobCount(item PipelineListItem) int {
@@ -409,21 +384,15 @@ func truncateJobID(jobID string) string {
 
 func pipelineStatus(item PipelineListItem, theme Theme, activeCount int) string {
 	if !item.Entry.Enabled {
-		return theme.StatusDead.Render("[disabled]")
+		return theme.StatusDead.Render("[off]")
 	}
 	if activeCount > 0 {
-		return theme.StatusRunning.Render(fmt.Sprintf("[%d active]", activeCount))
+		return theme.StatusRunning.Render(fmt.Sprintf("[%da]", activeCount))
 	}
-	return theme.Dim.Render("[idle]")
-}
-
-func pipelineLastRun(item PipelineListItem, theme Theme) string {
-	if item.State == nil || item.State.LastRun.IsZero() {
-		return ""
+	if item.State != nil && !item.State.LastRun.IsZero() {
+		return statusIcon(item.State.LastStatus, theme)
 	}
-	ago := time.Since(item.State.LastRun).Round(time.Second)
-	icon := statusIcon(item.State.LastStatus, theme)
-	return fmt.Sprintf("Last: %s %s", formatAgo(ago), icon)
+	return theme.Dim.Render("[id]")
 }
 
 func statusIcon(status string, theme Theme) string {
@@ -435,16 +404,16 @@ func statusIcon(status string, theme Theme) string {
 	case "timed_out":
 		return theme.StatusFailed.Render("⏱")
 	default:
-		return ""
+		return "•"
 	}
 }
 
 func formatAgo(d time.Duration) string {
 	if d < time.Minute {
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
 	if d < time.Hour {
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}
-	return fmt.Sprintf("%dh ago", int(d.Hours()))
+	return fmt.Sprintf("%dh", int(d.Hours()))
 }

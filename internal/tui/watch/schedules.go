@@ -142,58 +142,64 @@ func applyScheduleSnapshot(schedules map[string]*ScheduleState, snap schedulerSn
 	}
 }
 
-func renderSchedules(schedules map[string]*ScheduleState, theme Theme, width int) string {
-	innerWidth := width - 4
+func renderSchedules(schedules map[string]*ScheduleState, theme Theme, width int, height int, scroll int) string {
+	innerWidth := width - 2
 
 	if len(schedules) == 0 {
 		content := lipgloss.JoinVertical(lipgloss.Left,
-			theme.Title.Render("SCHEDULES"),
 			theme.Dim.Render("  No schedule state observed yet..."),
 		)
-		return theme.Border.Width(innerWidth).Render(content)
+		return theme.Border.Width(innerWidth).Height(height).Render(content)
+	}
+
+	visibleHeight := height - 2
+	if visibleHeight < 1 {
+		visibleHeight = 1
 	}
 
 	keys := sortedScheduleKeys(schedules)
-	var lines []string
-	for i, key := range keys {
-		if i >= 8 {
-			break
-		}
-		lines = append(lines, renderScheduleRow(schedules[key], theme))
+	if scroll >= len(keys) {
+		scroll = len(keys) - 1
+	}
+	if scroll < 0 {
+		scroll = 0
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		append([]string{theme.Title.Render("SCHEDULES")}, lines...)...,
-	)
-	return theme.Border.Width(innerWidth).Render(content)
+	var lines []string
+	for i := scroll; i < len(keys) && len(lines) < visibleHeight; i++ {
+		lines = append(lines, renderScheduleRow(schedules[keys[i]], theme, width-4))
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
+	if len(keys) > visibleHeight {
+		content = renderWithScrollbar(content, scroll, len(keys), visibleHeight, theme)
+	}
+
+	return theme.Border.Width(innerWidth).Height(height).Render(content)
 }
 
-func renderScheduleRow(s *ScheduleState, theme Theme) string {
-	status := theme.Dim.Render("[unknown]")
+func renderScheduleRow(s *ScheduleState, theme Theme, width int) string {
+	status := theme.Dim.Render("[unk]")
 	switch s.Status {
 	case "scheduled":
-		status = theme.StatusRunning.Render("[scheduled]")
+		status = theme.StatusRunning.Render("[sch]")
 	case "waiting":
-		status = theme.Highlight.Render("[waiting]")
+		status = theme.Highlight.Render("[wai]")
 	case "skipped":
-		status = theme.StatusFailed.Render("[skipped]")
+		status = theme.StatusFailed.Render("[ski]")
 	}
 
-	nextRun := "next: -"
+	name := fmt.Sprintf("%s/%s", s.Plugin, s.Command)
+	if len(name) > width-25 {
+		name = name[:width-28] + "..."
+	}
+
+	nextRun := "-"
 	if !s.NextRunAt.IsZero() {
-		nextRun = fmt.Sprintf("next: %s (%s)",
-			s.NextRunAt.Local().Format("15:04:05"),
-			formatCountdown(time.Until(s.NextRunAt)),
-		)
+		nextRun = formatCountdown(time.Until(s.NextRunAt))
 	}
 
-	reason := ""
-	if s.Reason != "" && s.Reason != "not_due" {
-		reason = " " + theme.Dim.Render("reason="+s.Reason)
-	}
-
-	name := fmt.Sprintf("%s/%s [%s]", s.Plugin, s.Command, s.ScheduleID)
-	return fmt.Sprintf(" %-28s %s %s%s", name, status, theme.Dim.Render(nextRun), reason)
+	return fmt.Sprintf(" %-*s %s %s", width-15, name, status, theme.Dim.Render(nextRun))
 }
 
 func scheduleKey(plugin, scheduleID, command string) string {
@@ -211,14 +217,14 @@ func sortedScheduleKeys(schedules map[string]*ScheduleState) []string {
 
 func formatCountdown(until time.Duration) string {
 	if until <= 0 {
-		return "due now"
+		return "due"
 	}
 	until = until.Round(time.Second)
 	if until < time.Minute {
-		return fmt.Sprintf("in %ds", int(until.Seconds()))
+		return fmt.Sprintf("%ds", int(until.Seconds()))
 	}
 	if until < time.Hour {
-		return fmt.Sprintf("in %dm%02ds", int(until.Minutes()), int(until.Seconds())%60)
+		return fmt.Sprintf("%dm", int(until.Minutes()))
 	}
-	return fmt.Sprintf("in %dh%02dm", int(until.Hours()), int(until.Minutes())%60)
+	return fmt.Sprintf("%dh", int(until.Hours()))
 }
