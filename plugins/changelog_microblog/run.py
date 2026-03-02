@@ -157,6 +157,8 @@ def main() -> None:
         return
 
     repo_name = pick(payload, context, "repo_name") or repo_path.name
+    ssh_url = pick(payload, context, "ssh_url")
+    clone_url = pick(payload, context, "clone_url")
 
     now = dt.datetime.now(dt.timezone.utc)
     default_start = now - dt.timedelta(days=7)
@@ -220,6 +222,8 @@ def main() -> None:
                             "entry_date": now.date().isoformat(),
                             "entry_text": "",
                             "since": start_iso,
+                            "ssh_url": ssh_url or "",
+                            "clone_url": clone_url or "",
                         },
                     }
                 ],
@@ -301,6 +305,8 @@ def main() -> None:
                             "entry_date": now.date().isoformat(),
                             "entry_text": "",
                             "since": start_iso,
+                            "ssh_url": ssh_url or "",
+                            "clone_url": clone_url or "",
                         },
                     }
                 ],
@@ -335,6 +341,8 @@ def main() -> None:
                             "entry_date": entry_date,
                             "entry_text": entry_text,
                             "since": start_iso,
+                            "ssh_url": ssh_url or "",
+                            "clone_url": clone_url or "",
                         },
                     }
                 ],
@@ -360,6 +368,8 @@ def main() -> None:
                         "entry_date": entry_date,
                         "entry_text": entry_text,
                         "since": start_iso,
+                        "ssh_url": ssh_url or "",
+                        "clone_url": clone_url or "",
                     },
                 }
             ],

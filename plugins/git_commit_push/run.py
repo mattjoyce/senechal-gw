@@ -43,6 +43,22 @@ def rewrite_ssh_url(url: str | None, alias_host: str) -> str | None:
     return url
 
 
+def https_to_ssh_alias(url: str | None, alias_host: str) -> str | None:
+    if not url or not alias_host:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if parsed.hostname not in {"github.com", "www.github.com"}:
+        return None
+    path = parsed.path.lstrip("/")
+    if not path:
+        return None
+    if not path.endswith(".git"):
+        path = f"{path}.git"
+    return f"git@{alias_host}:{path}"
+
+
 def main() -> None:
     request = json.load(sys.stdin)
     command = request.get("command") or "handle"
@@ -198,6 +214,14 @@ def main() -> None:
 
     sha_result = run_git(["git", "rev-parse", "HEAD"], cwd=repo_path)
     commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else ""
+
+    if prefer_ssh and not ssh_url_effective:
+        origin_url = run_git(["git", "remote", "get-url", "origin"], cwd=repo_path)
+        if origin_url.returncode == 0:
+            candidate = origin_url.stdout.strip()
+            ssh_url_effective = rewrite_ssh_url(candidate, ssh_alias_host)
+            if not ssh_url_effective or ssh_url_effective == candidate:
+                ssh_url_effective = https_to_ssh_alias(candidate, ssh_alias_host)
 
     if prefer_ssh and ssh_url_effective:
         remote_result = run_git(
