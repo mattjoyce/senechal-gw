@@ -101,6 +101,7 @@ def main() -> None:
     clone_dir = Path(os.path.expanduser(config.get("clone_dir", "~/github.mattjoyce")))
     lookback_days = int(config.get("lookback_days", 730))
     include_private = bool(config.get("include_private", False))
+    include_forks = bool(config.get("include_forks", True))
     token = config.get("github_token")
     token_env = config.get("github_token_env", "GITHUB_TOKEN")
     if not token:
@@ -128,7 +129,11 @@ def main() -> None:
         )
         return
 
-    visible_repos = [repo for repo in repos if include_private or not repo.get("private")]
+    visible_repos = [
+        repo
+        for repo in repos
+        if (include_private or not repo.get("private")) and (include_forks or not repo.get("fork"))
+    ]
 
     events: List[Dict[str, Any]] = []
     queued = 0

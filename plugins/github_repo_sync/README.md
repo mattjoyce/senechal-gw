@@ -18,6 +18,7 @@ Optional:
 - `include_private`: Include private repos (default: false).
 - `github_token`: GitHub token value.
 - `github_token_env`: Environment variable name to read the token from (default: `GITHUB_TOKEN`).
+- `include_forks`: Include forked repos (default: true).
 
 ## Events
 Emits events:

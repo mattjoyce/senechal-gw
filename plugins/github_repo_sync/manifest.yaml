@@ -23,4 +23,4 @@ commands:
     retry_safe: true
 config_keys:
   required: [owner]
-  optional: [owner_type, clone_dir, lookback_days, include_private, github_token, github_token_env]
+  optional: [owner_type, clone_dir, lookback_days, include_private, include_forks, github_token, github_token_env]

@@ -77,6 +77,7 @@ plugins:
       clone_dir: "~/github.mattjoyce"
       lookback_days: 730
       include_private: false
+      include_forks: false
       github_token_env: "RO_GITHUB_TOKEN"
 
   git_repo_sync:
