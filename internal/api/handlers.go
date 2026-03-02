@@ -59,6 +59,21 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func (s *Server) handleSystemReload(w http.ResponseWriter, r *http.Request) {
+	if s.reloadFunc == nil {
+		s.writeError(w, http.StatusNotImplemented, "reload not supported")
+		return
+	}
+
+	resp, err := s.reloadFunc(r.Context())
+	if err != nil {
+		s.writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
 // handlePipelineTrigger handles POST /pipeline/{pipeline}
 // Explicitly triggers a named pipeline.
 func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {

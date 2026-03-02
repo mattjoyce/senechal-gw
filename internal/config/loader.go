@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"maps"
 	"os"
@@ -226,13 +227,8 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 			return fmt.Errorf("include[%d]: failed to resolve path %q: %w", i, includePath, err)
 		}
 
-		// Check for cycles
-		if visited[absPath] {
-			return fmt.Errorf("include[%d]: circular dependency detected: %s", i, absPath)
-		}
-
-		// Check if file exists - HARD FAIL with good UX
-		if _, err := os.Stat(absPath); err != nil {
+		info, err := os.Stat(absPath)
+		if err != nil {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("include[%d]: file not found: %s\n"+
 					"Referenced from: %s\n"+
@@ -241,42 +237,142 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 			return fmt.Errorf("include[%d]: failed to access file %s: %w", i, absPath, err)
 		}
 
-		visited[absPath] = true
-
-		// Load included file
-		// #nosec G304 -- config include paths are operator-controlled local inputs.
-		includedData, _ := os.ReadFile(absPath)
-		var includedNode yaml.Node
-		if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
-			cfg.SourceFiles[absPath] = &includedNode
-		}
-
-		includedCfg, err := loadConfigFile(absPath, visited)
-		if err != nil {
-			return fmt.Errorf("include[%d] (%s): %w", i, includePath, err)
-		}
-
-		// Special handling for scope files with non-YAML-serialisable fields
-		if filepath.Base(absPath) == "tokens.yaml" {
-			if err := graftTokens(cfg, absPath); err != nil {
-				return fmt.Errorf("include[%d] (%s): %w", i, includePath, err)
+		if info.IsDir() {
+			files, err := walkDirWithExt(absPath, ".yaml")
+			if err != nil {
+				return fmt.Errorf("include[%d] (%s): failed to read directory: %w", i, includePath, err)
 			}
-		}
-
-		// Deep merge included config into main config
-		if err := deepMergeConfig(cfg, includedCfg); err != nil {
-			return fmt.Errorf("include[%d] (%s): merge failed: %w", i, includePath, err)
-		}
-
-		// If included file has its own includes, recursively load them
-		if len(includedCfg.Include) > 0 {
-			includedBaseDir := filepath.Dir(absPath)
-			if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
-				return err
+			for _, file := range files {
+				if err := loadIncludeFile(cfg, i, includePath, file, visited); err != nil {
+					return err
+				}
 			}
+			continue
+		}
+
+		if err := loadIncludeFile(cfg, i, includePath, absPath, visited); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath string, visited map[string]bool) error {
+	if visited[absPath] {
+		return fmt.Errorf("include[%d]: circular dependency detected: %s", includeIndex, absPath)
+	}
+	visited[absPath] = true
+
+	// Load included file
+	// #nosec G304 -- config include paths are operator-controlled local inputs.
+	includedData, _ := os.ReadFile(absPath)
+	var includedNode yaml.Node
+	if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
+		cfg.SourceFiles[absPath] = &includedNode
+	}
+
+	includedCfg, err := loadConfigFile(absPath, visited)
+	if err != nil {
+		return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
+	}
+
+	// Special handling for scope files with non-YAML-serialisable fields
+	if filepath.Base(absPath) == "tokens.yaml" {
+		if err := graftTokens(cfg, absPath); err != nil {
+			return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
+		}
+	}
+
+	// Deep merge included config into main config
+	if err := deepMergeConfig(cfg, includedCfg); err != nil {
+		return fmt.Errorf("include[%d] (%s): merge failed: %w", includeIndex, includePath, err)
+	}
+
+	// If included file has its own includes, recursively load them
+	if len(includedCfg.Include) > 0 {
+		includedBaseDir := filepath.Dir(absPath)
+		if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func loadEnvIncludes(path string, data []byte) error {
+	var envCfg struct {
+		EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars"`
+	}
+	if err := yaml.Unmarshal(data, &envCfg); err != nil {
+		return fmt.Errorf("failed to parse environment_vars from %s: %w", path, err)
+	}
+	if len(envCfg.EnvironmentVars.Include) == 0 {
+		return nil
+	}
+
+	baseDir := filepath.Dir(path)
+	for i, includePath := range envCfg.EnvironmentVars.Include {
+		resolved := interpolateEnv(includePath)
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(baseDir, resolved)
+		}
+		absPath, err := filepath.Abs(resolved)
+		if err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: failed to resolve path %q: %w", i, includePath, err)
+		}
+		if _, err := os.Stat(absPath); err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: file not found: %s", i, absPath)
+		}
+		if err := loadEnvFile(absPath); err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func loadEnvFile(path string) error {
+	// #nosec G304 -- env include paths are operator-controlled local inputs.
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open env file %s: %w", path, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("invalid env line %d in %s", lineNo, path)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" {
+			return fmt.Errorf("invalid env line %d in %s", lineNo, path)
+		}
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("failed to set env %s from %s: %w", key, path, err)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read env file %s: %w", path, err)
+	}
 	return nil
 }
 
@@ -287,6 +383,10 @@ func loadConfigFile(path string, visited map[string]bool) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	if err := loadEnvIncludes(path, data); err != nil {
+		return nil, err
 	}
 
 	// Apply environment variable interpolation

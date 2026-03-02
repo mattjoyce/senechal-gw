@@ -150,6 +150,17 @@ func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
 	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
 }
 
+func newTestServerWithReload(q *mockQueue, reg *mockRegistry, reload func(context.Context) (ReloadResponse, error)) *Server {
+	logger := slog.Default()
+	config := Config{
+		Listen:     "localhost:8080",
+		Tokens:     []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
+		ReloadFunc: reload,
+	}
+	hub := events.NewHub(10)
+	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
+}
+
 func TestHandleRoot_NoAuth(t *testing.T) {
 	server := newTestServer(&mockQueue{}, &mockRegistry{})
 
@@ -785,5 +796,52 @@ func TestHandlePipelineTrigger_PartialEnqueueReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "partially enqueued") {
 		t.Fatalf("expected partial enqueue error, got: %s", rr.Body.String())
+	}
+}
+
+func TestHandleSystemReload_OK(t *testing.T) {
+	reloaded := false
+	reloadFn := func(ctx context.Context) (ReloadResponse, error) {
+		reloaded = true
+		return ReloadResponse{Status: "ok", ReloadedAt: "2026-03-02T00:00:00Z"}, nil
+	}
+
+	server := newTestServerWithReload(&mockQueue{}, &mockRegistry{}, reloadFn)
+	req := httptest.NewRequest(http.MethodPost, "/system/reload", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	resp := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+	var payload ReloadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Status != "ok" {
+		t.Fatalf("expected status ok, got %q", payload.Status)
+	}
+	if !reloaded {
+		t.Fatal("reload function was not called")
+	}
+}
+
+func TestHandleSystemReload_Error(t *testing.T) {
+	reloadFn := func(ctx context.Context) (ReloadResponse, error) {
+		return ReloadResponse{Status: "error", Message: "locked"}, errors.New("locked")
+	}
+
+	server := newTestServerWithReload(&mockQueue{}, &mockRegistry{}, reloadFn)
+	req := httptest.NewRequest(http.MethodPost, "/system/reload", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	resp := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", resp.Code)
+	}
+	if !strings.Contains(resp.Body.String(), "locked") {
+		t.Fatalf("expected error response, got: %s", resp.Body.String())
 	}
 }

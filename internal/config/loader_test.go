@@ -974,6 +974,94 @@ plugins:
 	}
 }
 
+func TestLoadIncludeDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	includeDir := filepath.Join(tmpDir, "includes")
+	if err := os.MkdirAll(includeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+include:
+  - includes
+
+service:
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pluginsA := `
+plugins:
+  alpha:
+    enabled: true
+`
+	pluginsB := `
+plugins:
+  beta:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(includeDir, "a.yaml"), []byte(pluginsA), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(includeDir, "b.yaml"), []byte(pluginsB), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(filepath.Join(tmpDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if _, ok := cfg.Plugins["alpha"]; !ok {
+		t.Error("alpha plugin not loaded from include directory")
+	}
+	if _, ok := cfg.Plugins["beta"]; !ok {
+		t.Error("beta plugin not loaded from include directory")
+	}
+}
+
+func TestLoadEnvironmentVarsInclude(t *testing.T) {
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+	if err := os.WriteFile(envPath, []byte("DUCTILE_TEST_NAME=envtest\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("DUCTILE_TEST_NAME")
+	t.Cleanup(func() { _ = os.Unsetenv("DUCTILE_TEST_NAME") })
+
+	configYAML := `
+environment_vars:
+  include:
+    - .env
+
+service:
+  name: ${DUCTILE_TEST_NAME}
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(filepath.Join(tmpDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.Service.Name != "envtest" {
+		t.Fatalf("Service.Name = %q, want %q", cfg.Service.Name, "envtest")
+	}
+}
+
 // TestLoadMissingIncludeFile tests hard fail when included file is missing.
 func TestLoadMissingIncludeFile(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -64,6 +64,7 @@ type Config struct {
 	BinaryPath        string
 	Version           string
 	RuntimeConfig     *config.Config
+	ReloadFunc        func(context.Context) (ReloadResponse, error)
 }
 
 // Server represents the HTTP API server
@@ -79,6 +80,7 @@ type Server struct {
 	startedAt     time.Time
 	events        *events.Hub
 	syncSemaphore chan struct{}
+	reloadFunc    func(context.Context) (ReloadResponse, error)
 }
 
 // New creates a new API server instance
@@ -97,6 +99,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		startedAt:     time.Now(),
 		events:        hub,
 		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
+		reloadFunc:    config.ReloadFunc,
 	}
 }
 
@@ -168,6 +171,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
+		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 	})
 
 	return r

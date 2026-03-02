@@ -138,6 +138,13 @@ type PluginSummary struct {
 	Commands    []string `json:"commands"`
 }
 
+// ReloadResponse is returned by POST /system/reload.
+type ReloadResponse struct {
+	Status     string `json:"status"`
+	ReloadedAt string `json:"reloaded_at,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
 // SkillsIndexResponse is returned by GET /skills.
 type SkillsIndexResponse struct {
 	Skills []SkillSummary `json:"skills"`

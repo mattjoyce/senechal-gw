@@ -10,19 +10,25 @@ import (
 
 // Config represents the complete ductile configuration.
 type Config struct {
-	Include     []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
-	Service     ServiceConfig         `yaml:"service"`
-	State       StateConfig           `yaml:"state"`
-	Database    StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
-	API         APIConfig             `yaml:"api,omitempty"`
-	PluginRoots []string              `yaml:"plugin_roots,omitempty"`
-	Plugins     map[string]PluginConf `yaml:"plugins"`
-	Routes      []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
-	Webhooks    *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
-	SourceFiles map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
-	Tokens      []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
-	Pipelines   []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
-	ConfigDir   string                `yaml:"-"`                  // Directory mode: root config directory
+	Include         []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
+	EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars,omitempty"`
+	Service         ServiceConfig         `yaml:"service"`
+	State           StateConfig           `yaml:"state"`
+	Database        StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
+	API             APIConfig             `yaml:"api,omitempty"`
+	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
+	Plugins         map[string]PluginConf `yaml:"plugins"`
+	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
+	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
+	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
+	Tokens          []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
+	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
+	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
+}
+
+// EnvironmentVarsConfig defines env file includes for interpolation.
+type EnvironmentVarsConfig struct {
+	Include []string `yaml:"include,omitempty"`
 }
 
 // ServiceConfig defines core service settings.

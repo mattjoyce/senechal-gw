@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -249,6 +251,7 @@ System Commands:
   system start      Start the integration gateway in foreground
   system status     Show global gateway health
   system reset      Reset a plugin/connector circuit breaker
+  system reload     Reload configuration in a running gateway
   system watch      Real-time diagnostic monitoring TUI
   system skills     Export capability registry (Skills) as LLM-readable Markdown
 
@@ -318,6 +321,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemReset(actionArgs)
+	case "reload":
+		if hasHelpFlag(actionArgs) {
+			printSystemReloadHelp()
+			return 0
+		}
+		return runSystemReload(actionArgs)
 	case "skills":
 		return runSystemSkills(actionArgs)
 	case "watch":
@@ -762,7 +771,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status, reset, watch")
+	fmt.Fprintln(w, "Actions: start, status, reset, reload, watch")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -797,6 +806,11 @@ func printSystemStatusHelp() {
 func printSystemResetHelp() {
 	fmt.Println("Usage: ductile system reset <plugin> [--config PATH]")
 	fmt.Println("Reset scheduler poll circuit breaker state for a plugin.")
+}
+
+func printSystemReloadHelp() {
+	fmt.Println("Usage: ductile system reload [--config PATH] [--api-url URL] [--api-key TOKEN] [--json]")
+	fmt.Println("Reload configuration in a running gateway (SIGHUP or API).")
 }
 
 func runSystemReset(actionArgs []string) int {
@@ -850,6 +864,94 @@ func runSystemReset(actionArgs []string) int {
 	}
 
 	fmt.Printf("Reset circuit breaker for %s (poll)\n", pluginName)
+	return 0
+}
+
+func runSystemReload(actionArgs []string) int {
+	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	apiURL := fs.String("api-url", "", "API base URL (optional)")
+	apiKey := fs.String("api-key", "", "API key (optional)")
+	jsonOut := fs.Bool("json", false, "Output JSON response")
+	if err := fs.Parse(actionArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if *apiURL != "" {
+		key := strings.TrimSpace(*apiKey)
+		if key == "" {
+			key = strings.TrimSpace(os.Getenv("DUCTILE_API_KEY"))
+		}
+		if key == "" {
+			fmt.Fprintln(os.Stderr, "API key required for reload (set --api-key or DUCTILE_API_KEY)")
+			return 1
+		}
+		endpoint := strings.TrimRight(*apiURL, "/") + "/system/reload"
+		req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to build request: %v\n", err)
+			return 1
+		}
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Reload request failed: %v\n", err)
+			return 1
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(os.Stderr, "Reload failed (%d): %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+			return 1
+		}
+		if *jsonOut {
+			fmt.Println(string(body))
+			return 0
+		}
+		var result api.ReloadResponse
+		if err := json.Unmarshal(body, &result); err == nil && result.Status != "" {
+			fmt.Printf("Reloaded at %s\n", result.ReloadedAt)
+			if result.Message != "" {
+				fmt.Printf("%s\n", result.Message)
+			}
+			return 0
+		}
+		fmt.Println(string(body))
+		return 0
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+	pidPath := getPIDLockPath(cfg)
+	pid, err := readPIDFromFile(pidPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read PID: %v\n", err)
+		return 1
+	}
+	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to signal PID %d: %v\n", pid, err)
+		return 1
+	}
+	if *jsonOut {
+		resp := api.ReloadResponse{Status: "ok", Message: fmt.Sprintf("SIGHUP sent to %d", pid)}
+		raw, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Println(string(raw))
+		return 0
+	}
+	fmt.Printf("Reload signal sent to PID %d\n", pid)
 	return 0
 }
 
@@ -1342,60 +1444,168 @@ func runPluginRun(args []string) int {
 	return 0
 }
 
-func runStart(args []string) int {
-	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
-		return 1
-	}
+type runtimeState struct {
+	cfg          *config.Config
+	configPath   string
+	logger       *slog.Logger
+	registry     *plugin.Registry
+	router       router.Engine
+	scheduler    *scheduler.Scheduler
+	dispatcher   *dispatch.Dispatcher
+	apiServer    *api.Server
+	webhook      *webhook.Server
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	errCh        chan error
+	db           *sql.DB
+	configSource string
+}
 
-	configSource := "explicit"
-	if *configPath == "" {
-		if os.Getenv("DUCTILE_CONFIG_DIR") != "" {
-			configSource = "env:DUCTILE_CONFIG_DIR"
-		} else {
-			configSource = "auto-discovered"
-		}
-		discovered, err := config.DiscoverConfigDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "no config found: %v\nHint: create ~/.config/ductile/config.yaml or use --config\n", err)
-			return 1
-		}
-		*configPath = discovered
-	}
+type reloadManager struct {
+	mu           sync.Mutex
+	configPath   string
+	configSource string
+	runtime      *runtimeState
+	errCh        chan error
+	reloadFunc   func(context.Context) (api.ReloadResponse, error)
+}
 
-	cfg, err := config.Load(*configPath)
+func (rt *runtimeState) Stop() {
+	if rt == nil {
+		return
+	}
+	if rt.scheduler != nil {
+		rt.scheduler.Stop()
+	}
+	if rt.cancel != nil {
+		rt.cancel()
+	}
+	rt.wg.Wait()
+	if rt.db != nil {
+		_ = rt.db.Close()
+	}
+}
+
+func (rm *reloadManager) Stop() {
+	rm.mu.Lock()
+	rt := rm.runtime
+	rm.runtime = nil
+	rm.mu.Unlock()
+	if rt == nil {
+		return
+	}
+	rt.Stop()
+}
+
+func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error) {
+	rm.mu.Lock()
+	oldRuntime := rm.runtime
+	rm.mu.Unlock()
+	if oldRuntime == nil {
+		return api.ReloadResponse{Status: "error", Message: "runtime not available"}, fmt.Errorf("runtime not available")
+	}
+	oldCfg := oldRuntime.cfg
+
+	newCfg, err := config.Load(rm.configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		return 1
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+	if err := verifyReloadIntegrity(rm.configPath); err != nil {
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+	if err := validateReloadableFields(oldCfg, newCfg); err != nil {
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 
+	oldRuntime.logger.Info("reloading config")
+	oldRuntime.Stop()
+
+	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
+	if err != nil {
+		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
+		restored, restoreErr := buildRuntime(oldCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
+		if restoreErr == nil {
+			rm.mu.Lock()
+			rm.runtime = restored
+			rm.mu.Unlock()
+		}
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+
+	rm.mu.Lock()
+	rm.runtime = runtime
+	rm.mu.Unlock()
+
+	return api.ReloadResponse{
+		Status:     "ok",
+		ReloadedAt: time.Now().UTC().Format(time.RFC3339),
+		Message:    "configuration reloaded",
+	}, nil
+}
+
+func validateReloadableFields(oldCfg, newCfg *config.Config) error {
+	if oldCfg.State.Path != newCfg.State.Path {
+		return fmt.Errorf("config reload rejected: changes to state.path require a full restart")
+	}
+	if oldCfg.API.Listen != newCfg.API.Listen {
+		return fmt.Errorf("config reload rejected: changes to api.listen require a full restart")
+	}
+	oldWebhookListen := ""
+	newWebhookListen := ""
+	if oldCfg.Webhooks != nil {
+		oldWebhookListen = oldCfg.Webhooks.Listen
+	}
+	if newCfg.Webhooks != nil {
+		newWebhookListen = newCfg.Webhooks.Listen
+	}
+	if oldWebhookListen != newWebhookListen {
+		return fmt.Errorf("config reload rejected: changes to webhooks.listen require a full restart")
+	}
+	return nil
+}
+
+func verifyReloadIntegrity(configPath string) error {
+	configDir := configPath
+	if stat, err := os.Stat(configPath); err == nil && !stat.IsDir() {
+		configDir = filepath.Dir(configPath)
+	}
+	files, err := config.DiscoverConfigFiles(configDir)
+	if err != nil {
+		return fmt.Errorf("config reload rejected: unlocked changes detected")
+	}
+	result, err := config.VerifyIntegrity(configDir, files)
+	if err != nil || !result.Passed {
+		return fmt.Errorf("config reload rejected: unlocked changes detected")
+	}
+	return nil
+}
+
+func buildRuntime(cfg *config.Config, configPath string, configSource string, reloadFunc func(context.Context) (api.ReloadResponse, error), errCh chan error) (*runtimeState, error) {
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
 
-	configPaths, err := config.CollectConfigPaths(*configPath, cfg)
+	configPaths, err := config.CollectConfigPaths(configPath, cfg)
 	if err != nil {
 		logger.Error("config symlink scan failed", "error", err)
-		return 1
+		return nil, err
 	}
 	symlinkWarnings, err := config.DetectSymlinks(configPaths)
 	if err != nil {
 		logger.Error("config symlink scan failed", "error", err)
-		return 1
+		return nil, err
 	}
 	for _, warning := range symlinkWarnings {
 		logger.Warn("symlink detected", "path", warning.Path, "resolved", warning.Resolved)
 	}
 	if len(symlinkWarnings) > 0 && !cfg.Service.AllowSymlinks {
-		logger.Error("symlinks detected in config paths but not allowed", "count", len(symlinkWarnings))
-		return 1
+		return nil, fmt.Errorf("symlinks detected in config paths but not allowed")
 	}
 
-	pluginRoots, err := resolvePluginRoots(cfg, *configPath)
+	pluginRoots, err := resolvePluginRoots(cfg, configPath)
 	if err != nil {
 		logger.Error("plugin root resolution failed", "error", err)
-		return 1
+		return nil, err
 	}
 	registry, err := plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
 		switch level {
@@ -1411,12 +1621,12 @@ func runStart(args []string) int {
 	}, plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks})
 	if err != nil {
 		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
-		return 1
+		return nil, err
 	}
 	aliases, err := plugin.ApplyAliases(registry, cfg.Plugins)
 	if err != nil {
 		logger.Error("plugin aliasing failed", "error", err)
-		return 1
+		return nil, err
 	}
 	for _, alias := range aliases {
 		logger.Info("plugin alias registered", "plugin", alias.Name, "uses", alias.Uses)
@@ -1424,11 +1634,11 @@ func runStart(args []string) int {
 
 	// Preflight: report which config files were loaded
 	{
-		logger.Info("config loaded", "path", *configPath, "source", configSource)
+		logger.Info("config loaded", "path", configPath, "source", configSource)
 
-		configDir := *configPath
-		if info, err := os.Stat(*configPath); err == nil && !info.IsDir() {
-			configDir = filepath.Dir(*configPath)
+		configDir := configPath
+		if info, err := os.Stat(configPath); err == nil && !info.IsDir() {
+			configDir = filepath.Dir(configPath)
 		}
 
 		var sourceFiles []string
@@ -1463,18 +1673,15 @@ func runStart(args []string) int {
 	if cfg.Service.StrictMode {
 		logger.Info("strict mode enabled, performing pre-flight checks")
 
-		// 1. Check integrity (checksums)
-		files, err := config.DiscoverConfigFiles(*configPath)
+		files, err := config.DiscoverConfigFiles(configPath)
 		if err == nil {
-			result, err := config.VerifyIntegrity(*configPath, files)
+			result, err := config.VerifyIntegrity(configPath, files)
 			if err != nil || !result.Passed {
 				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
-				return 1
+				return nil, fmt.Errorf("integrity check failed")
 			}
 		}
 
-		// 2. Perform "doctor" validation
-		// registry was built during preflight — reuse it here.
 		doc := doctor.New(cfg, registry)
 		report := doc.Validate()
 		if !report.Valid {
@@ -1482,34 +1689,23 @@ func runStart(args []string) int {
 			for _, e := range report.Errors {
 				logger.Error("config error", "detail", e)
 			}
-			return 1
+			return nil, fmt.Errorf("configuration validation failed")
 		}
 
-		// 3. Ensure tokens are present if API is enabled
 		if cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
 			logger.Error("no API tokens configured (strict mode requires at least one token when API is enabled)")
-			return 1
+			return nil, fmt.Errorf("no API tokens configured")
 		}
 	}
 
-	logger.Info("ductile starting", "version", version, "config", *configPath)
-
-	pidLockPath := getPIDLockPath(cfg)
-	pidLock, err := lock.AcquirePIDLock(pidLockPath)
-	if err != nil {
-		logger.Error("failed to acquire PID lock (another instance may be running)", "path", pidLockPath, "error", err)
-		return 1
-	}
-	defer pidLock.Release()
-	logger.Info("acquired PID lock", "path", pidLockPath)
+	logger.Info("ductile starting", "version", version, "config", configPath)
 
 	ctx := context.Background()
 	db, err := storage.OpenSQLite(ctx, cfg.State.Path)
 	if err != nil {
 		logger.Error("failed to open database", "path", cfg.State.Path, "error", err)
-		return 1
+		return nil, err
 	}
-	defer db.Close()
 	logger.Info("database opened", "path", cfg.State.Path)
 
 	q := queue.New(
@@ -1521,29 +1717,28 @@ func runStart(args []string) int {
 	contextStore := state.NewContextStore(db)
 	hub := events.NewHub(256)
 
-	// registry was discovered during preflight.
 	logger.Info("plugin discovery complete", "count", len(registry.All()))
 	if err := validateScheduledCommands(cfg, registry); err != nil {
 		logger.Error("invalid scheduled command configuration", "error", err)
-		return 1
+		return nil, err
 	}
 
-	configDir := *configPath
+	configDir := configPath
 	if stat, err := os.Stat(configDir); err != nil || !stat.IsDir() {
-		configDir = filepath.Dir(*configPath)
+		configDir = filepath.Dir(configPath)
 	}
 
 	wsBaseDir := filepath.Join(filepath.Dir(cfg.State.Path), "workspaces")
 	wsManager, err := workspace.NewFSManager(wsBaseDir)
 	if err != nil {
 		logger.Error("failed to initialize workspace manager", "base_dir", wsBaseDir, "error", err)
-		return 1
+		return nil, err
 	}
 
 	routerEngine, err := router.LoadFromConfigDir(configDir, registry, logger)
 	if err != nil {
 		logger.Error("failed to load router pipelines", "config_dir", configDir, "error", err)
-		return 1
+		return nil, err
 	}
 	if r, ok := routerEngine.(*router.Router); ok {
 		pipelines := r.PipelineSummary()
@@ -1553,6 +1748,19 @@ func runStart(args []string) int {
 		}
 	}
 
+	rt := &runtimeState{
+		cfg:          cfg,
+		configPath:   configPath,
+		logger:       logger,
+		registry:     registry,
+		router:       routerEngine,
+		errCh:        errCh,
+		db:           db,
+		configSource: configSource,
+	}
+
+	rt.ctx, rt.cancel = context.WithCancel(context.Background())
+
 	sched := scheduler.New(cfg, q, hub, logger, scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
 		plug, ok := registry.Get(pluginName)
 		if !ok {
@@ -1560,25 +1768,19 @@ func runStart(args []string) int {
 		}
 		return plug.SupportsCommand(commandName)
 	}))
+	rt.scheduler = sched
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	rt.dispatcher = disp
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
+		return nil, fmt.Errorf("scheduler: %w", err)
+	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	errCh := make(chan error, 3)
-
+	rt.wg.Add(1)
 	go func() {
-		if err := sched.Start(ctx); err != nil && err != context.Canceled {
-			errCh <- fmt.Errorf("scheduler: %w", err)
-		}
-	}()
-
-	go func() {
-		if err := disp.Start(ctx); err != nil && err != context.Canceled {
-			errCh <- fmt.Errorf("dispatcher: %w", err)
+		defer rt.wg.Done()
+		if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
+			rt.errCh <- fmt.Errorf("dispatcher: %w", err)
 		}
 	}()
 
@@ -1600,15 +1802,19 @@ func runStart(args []string) int {
 			Tokens:            tokens,
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
-			ConfigPath:        *configPath,
+			ConfigPath:        configPath,
 			BinaryPath:        binaryPath,
 			Version:           version,
 			RuntimeConfig:     cfg,
+			ReloadFunc:        reloadFunc,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
+		rt.apiServer = apiServer
+		rt.wg.Add(1)
 		go func() {
-			if err := apiServer.Start(ctx); err != nil && err != context.Canceled {
-				errCh <- fmt.Errorf("api: %w", err)
+			defer rt.wg.Done()
+			if err := apiServer.Start(rt.ctx); err != nil && err != context.Canceled {
+				rt.errCh <- fmt.Errorf("api: %w", err)
 			}
 		}()
 		logger.Info("API server enabled", "listen", cfg.API.Listen)
@@ -1622,32 +1828,104 @@ func runStart(args []string) int {
 		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, tokensMap)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
-			return 1
+			return nil, err
 		}
 
 		webhookServer := webhook.New(webhookConfig, q, log.WithComponent("webhook"))
+		rt.webhook = webhookServer
+		rt.wg.Add(1)
 		go func() {
-			if err := webhookServer.Start(ctx); err != nil && err != context.Canceled {
-				errCh <- fmt.Errorf("webhook: %w", err)
+			defer rt.wg.Done()
+			if err := webhookServer.Start(rt.ctx); err != nil && err != context.Canceled {
+				rt.errCh <- fmt.Errorf("webhook: %w", err)
 			}
 		}()
 		logger.Info("webhook server enabled", "listen", webhookConfig.Listen, "endpoints", len(webhookConfig.Endpoints))
 	}
 
-	logger.Info("ductile running (press Ctrl+C to stop)")
+	return rt, nil
+}
 
-	select {
-	case sig := <-sigCh:
-		logger.Info("received shutdown signal", "signal", sig)
-		cancel()
-	case err := <-errCh:
-		logger.Error("component failed", "error", err)
-		cancel()
+func runStart(args []string) int {
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
 	}
 
-	logger.Info("ductile stopped")
-	return 0
+	configSource := "explicit"
+	if *configPath == "" {
+		if os.Getenv("DUCTILE_CONFIG_DIR") != "" {
+			configSource = "env:DUCTILE_CONFIG_DIR"
+		} else {
+			configSource = "auto-discovered"
+		}
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "no config found: %v\nHint: create ~/.config/ductile/config.yaml or use --config\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	pidLockPath := getPIDLockPath(cfg)
+	pidLock, err := lock.AcquirePIDLock(pidLockPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to acquire PID lock (another instance may be running): %v\n", err)
+		return 1
+	}
+	defer pidLock.Release()
+
+	manager := &reloadManager{
+		configPath:   *configPath,
+		configSource: configSource,
+		errCh:        make(chan error, 4),
+	}
+	manager.reloadFunc = manager.Reload
+
+	runtime, err := buildRuntime(cfg, *configPath, configSource, manager.reloadFunc, manager.errCh)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start runtime: %v\n", err)
+		return 1
+	}
+	manager.runtime = runtime
+
+	logger := runtime.logger
+	logger.Info("acquired PID lock", "path", pidLockPath)
+	logger.Info("ductile running (press Ctrl+C to stop)")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	for {
+		select {
+		case sig := <-sigCh:
+			if sig == syscall.SIGHUP {
+				if _, err := manager.Reload(context.Background()); err != nil {
+					logger.Error("config reload failed", "error", err)
+				} else {
+					logger.Info("config reloaded successfully")
+				}
+				continue
+			}
+			logger.Info("received shutdown signal", "signal", sig)
+			manager.Stop()
+			logger.Info("ductile stopped")
+			return 0
+		case err := <-manager.errCh:
+			logger.Error("component failed", "error", err)
+			manager.Stop()
+			logger.Info("ductile stopped")
+			return 1
+		}
+	}
 }
 
 type systemStatusCheck struct {
@@ -2306,4 +2584,18 @@ func getPIDLockPath(cfg *config.Config) string {
 	ext := filepath.Ext(dbBase)
 	nameWithoutExt := dbBase[:len(dbBase)-len(ext)]
 	return filepath.Join(dbDir, nameWithoutExt+".pid")
+}
+
+func readPIDFromFile(path string) (int, error) {
+	// #nosec G304 -- pid lock path is operator-controlled local input.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read pid file %s: %w", path, err)
+	}
+	raw := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid pid in %s", path)
+	}
+	return pid, nil
 }

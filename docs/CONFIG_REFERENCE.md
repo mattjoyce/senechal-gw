@@ -81,6 +81,12 @@ pipelines:
   - name: video-wisdom
 ```
 
+### 3.3 Directory includes
+
+`include:` entries may point at directories. Ductile loads `*.yaml` files
+from that directory (non-recursive) in alphabetical order and merges them
+as if they were listed explicitly.
+
 ---
 
 ## 4. File Formats
@@ -183,3 +189,17 @@ Scopes are explicit:
 Interpolation of `${VAR}` syntax happens **after** integrity verification but **before** YAML parsing.
 - Secrets must never be stored in YAML files; use environment variables.
 - Interpolation is **forbidden** in file paths (e.g., `include:` or directory walking) to ensure a static, verifiable tree.
+
+### 6.1 Environment file includes
+
+You can preload env vars from `.env` files before interpolation:
+
+```yaml
+environment_vars:
+  include:
+    - .env
+```
+
+Notes:
+- Paths are resolved relative to the file declaring the include.
+- Existing process environment variables are not overridden.
