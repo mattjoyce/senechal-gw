@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 
 def respond(payload: Dict[str, Any]) -> None:
@@ -13,6 +14,25 @@ def respond(payload: Dict[str, Any]) -> None:
 
 def git_command(args, cwd: Path | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=str(cwd) if cwd else None, capture_output=True, text=True)
+
+
+def rewrite_ssh_url(url: str | None, alias_host: str) -> str | None:
+    if not url:
+        return None
+    if not alias_host or alias_host == "github.com":
+        return url
+    if url.startswith("git@"):
+        if ":" in url:
+            user_host, path = url.split(":", 1)
+            user, _host = user_host.split("@", 1)
+            return f"{user}@{alias_host}:{path}"
+    if url.startswith("ssh://"):
+        parsed = urlparse(url)
+        if parsed.hostname:
+            user = parsed.username or "git"
+            path = parsed.path.lstrip("/")
+            return f"ssh://{user}@{alias_host}/{path}"
+    return url
 
 
 def main() -> None:
@@ -43,6 +63,8 @@ def main() -> None:
     ssh_url = field("ssh_url")
     clone_dir_raw = field("clone_dir") or "~/github.mattjoyce"
     prefer_ssh = bool(config.get("prefer_ssh", False))
+    ssh_alias_host = config.get("ssh_alias_host", "github.com-ductile")
+    ssh_url_effective = rewrite_ssh_url(ssh_url, ssh_alias_host) if prefer_ssh else ssh_url
 
     if not owner or not repo_name or not (clone_url or ssh_url):
         respond(
@@ -68,8 +90,10 @@ def main() -> None:
     logs = []
 
     def set_remote_to_ssh() -> bool:
-        if prefer_ssh and ssh_url:
-            result = git_command(["git", "-C", str(repo_dir), "remote", "set-url", "origin", ssh_url])
+        if prefer_ssh and ssh_url_effective:
+            result = git_command(
+                ["git", "-C", str(repo_dir), "remote", "set-url", "origin", ssh_url_effective]
+            )
             if result.returncode != 0:
                 logs.append(
                     {
@@ -78,7 +102,7 @@ def main() -> None:
                     }
                 )
                 return False
-        elif prefer_ssh and not ssh_url:
+        elif prefer_ssh and not ssh_url_effective:
             logs.append(
                 {
                     "level": "warn",
@@ -131,7 +155,7 @@ def main() -> None:
         return
     else:
         action = "cloned"
-        clone_source = ssh_url if prefer_ssh and ssh_url else (clone_url or ssh_url)
+        clone_source = ssh_url_effective if prefer_ssh and ssh_url_effective else (clone_url or ssh_url)
         result = git_command(["git", "clone", "--quiet", clone_source, str(repo_dir)])
         if result.returncode != 0:
             respond(
@@ -167,7 +191,7 @@ def main() -> None:
                         "path": str(repo_dir),
                         "action": action,
                         "clone_url": clone_url or "",
-                        "ssh_url": ssh_url or "",
+                        "ssh_url": (ssh_url_effective or ssh_url or ""),
                     },
                 }
             ],

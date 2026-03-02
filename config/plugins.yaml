@@ -85,6 +85,7 @@ plugins:
     max_attempts: 1
     config:
       prefer_ssh: true
+      ssh_alias_host: "github.com-ductile"
 
   repo_policy:
     enabled: true
@@ -108,3 +109,4 @@ plugins:
       author_email: "ductile@local"
       commit_message: "Update changelog [ductile-changelog]"
       prefer_ssh: true
+      ssh_alias_host: "github.com-ductile"

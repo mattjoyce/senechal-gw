@@ -16,6 +16,7 @@ Accepts payload or context fields:
 ## Configuration
 Optional:
 - `prefer_ssh`: Update origin to `ssh_url` before push.
+- `ssh_alias_host`: SSH host alias to use instead of github.com (default: `github.com-ductile`).
 
 ## Behavior
 - Skips if working tree is clean.

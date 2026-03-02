@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 
 def respond(payload: Dict[str, Any]) -> None:
@@ -21,6 +22,25 @@ def pick(payload: Dict[str, Any], context: Dict[str, Any], key: str) -> Optional
 
 def run_git(args, cwd: Path, env: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, env=env)
+
+
+def rewrite_ssh_url(url: str | None, alias_host: str) -> str | None:
+    if not url:
+        return None
+    if not alias_host or alias_host == "github.com":
+        return url
+    if url.startswith("git@"):
+        if ":" in url:
+            user_host, path = url.split(":", 1)
+            user, _host = user_host.split("@", 1)
+            return f"{user}@{alias_host}:{path}"
+    if url.startswith("ssh://"):
+        parsed = urlparse(url)
+        if parsed.hostname:
+            user = parsed.username or "git"
+            path = parsed.path.lstrip("/")
+            return f"ssh://{user}@{alias_host}/{path}"
+    return url
 
 
 def main() -> None:
@@ -70,6 +90,8 @@ def main() -> None:
     default_branch = pick(payload, context, "default_branch") or "main"
     ssh_url = pick(payload, context, "ssh_url")
     prefer_ssh = bool(config.get("prefer_ssh", False))
+    ssh_alias_host = config.get("ssh_alias_host", "github.com-ductile")
+    ssh_url_effective = rewrite_ssh_url(ssh_url, ssh_alias_host) if prefer_ssh else ssh_url
 
     status = run_git(["git", "status", "--porcelain"], cwd=repo_path)
     if status.returncode != 0:
@@ -177,8 +199,10 @@ def main() -> None:
     sha_result = run_git(["git", "rev-parse", "HEAD"], cwd=repo_path)
     commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else ""
 
-    if prefer_ssh and ssh_url:
-        remote_result = run_git(["git", "remote", "set-url", "origin", ssh_url], cwd=repo_path)
+    if prefer_ssh and ssh_url_effective:
+        remote_result = run_git(
+            ["git", "remote", "set-url", "origin", ssh_url_effective], cwd=repo_path
+        )
         if remote_result.returncode != 0:
             respond(
                 {
@@ -194,7 +218,7 @@ def main() -> None:
                 }
             )
             return
-    elif prefer_ssh and not ssh_url:
+    elif prefer_ssh and not ssh_url_effective:
         warn = warn or "git_commit_push: prefer_ssh enabled but ssh_url missing"
 
     push_target = current_branch or default_branch

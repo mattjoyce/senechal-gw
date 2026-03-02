@@ -17,6 +17,7 @@ Expected fields from the triggering event:
 ## Configuration
 Optional:
 - `prefer_ssh`: Use `ssh_url` when available and update origin to SSH.
+- `ssh_alias_host`: SSH host alias to use instead of github.com (default: `github.com-ductile`).
 
 ## Events
 Emits `git_repo_sync.completed` with payload fields:
