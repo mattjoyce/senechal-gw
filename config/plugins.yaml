@@ -83,3 +83,25 @@ plugins:
     enabled: true
     timeout: 5m
     max_attempts: 1
+
+  repo_policy:
+    enabled: true
+    timeout: 2m
+    max_attempts: 1
+
+  changelog_microblog:
+    enabled: true
+    timeout: 4m
+    max_attempts: 1
+    config:
+      fabric_pattern: "ductile-microblog-changelog"
+      patterns_path: "~/.config/ductile/patterns"
+
+  git_commit_push:
+    enabled: true
+    timeout: 5m
+    max_attempts: 1
+    config:
+      author_name: "ductile"
+      author_email: "ductile@local"
+      commit_message: "Update changelog [ductile-changelog]"

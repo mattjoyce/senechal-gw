@@ -1,0 +1,21 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: git_commit_push
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Commit and push repo changes (README/CHANGELOG) with ductile author."
+commands:
+  - name: handle
+    type: write
+    description: "Commit and push README/CHANGELOG changes."
+    idempotent: false
+    retry_safe: true
+  - name: health
+    type: read
+    description: "Return health status."
+    idempotent: true
+    retry_safe: true
+config_keys:
+  required: []
+  optional: [author_name, author_email, commit_message]
