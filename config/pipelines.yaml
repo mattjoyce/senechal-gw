@@ -17,3 +17,15 @@ pipelines:
         uses: fabric
       - id: write
         uses: file_handler
+
+  - name: github-repo-sync
+    on: github_repo_sync.repo_discovered
+    steps:
+      - id: sync
+        uses: git_repo_sync
+
+  - name: github-repo-sync-notify
+    on: github_repo_sync.completed
+    steps:
+      - id: notify
+        uses: discord_notify

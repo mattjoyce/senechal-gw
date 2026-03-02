@@ -62,3 +62,24 @@ plugins:
           emit_mode: aggregate
           emit_initial: false
           min_stable_age: 1s
+
+  github_repo_sync:
+    enabled: true
+    schedules:
+      - id: daily-early
+        cron: "0 6 * * *"
+        timezone: "Australia/Sydney"
+    timeout: 10m
+    max_attempts: 1
+    config:
+      owner: "mattjoyce"
+      owner_type: "user"
+      clone_dir: "~/github.mattjoyce"
+      lookback_days: 730
+      include_private: false
+      github_token_env: "GITHUB_TOKEN"
+
+  git_repo_sync:
+    enabled: true
+    timeout: 5m
+    max_attempts: 1
