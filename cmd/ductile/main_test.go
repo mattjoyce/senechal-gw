@@ -1224,3 +1224,25 @@ plugins: {}
 		}
 	})
 }
+
+func TestResolveConfigDirFromFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("service: {}\nstate: {path: ./state.db}\nplugins: {}\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	resolved := resolveConfigDir(configPath)
+	if resolved != tmpDir {
+		t.Fatalf("resolveConfigDir(file) = %q, want %q", resolved, tmpDir)
+	}
+}
+
+func TestResolveConfigDirFromDirectoryPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	resolved := resolveConfigDir(tmpDir)
+	if resolved != tmpDir {
+		t.Fatalf("resolveConfigDir(dir) = %q, want %q", resolved, tmpDir)
+	}
+}

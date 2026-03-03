@@ -1575,11 +1575,16 @@ func validateReloadableFields(oldCfg, newCfg *config.Config) error {
 	return nil
 }
 
-func verifyReloadIntegrity(configPath string) error {
+func resolveConfigDir(configPath string) string {
 	configDir := configPath
 	if stat, err := os.Stat(configPath); err == nil && !stat.IsDir() {
 		configDir = filepath.Dir(configPath)
 	}
+	return configDir
+}
+
+func verifyReloadIntegrity(configPath string) error {
+	configDir := resolveConfigDir(configPath)
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
 		return fmt.Errorf("config reload rejected: unlocked changes detected")
@@ -1646,10 +1651,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	{
 		logger.Info("config loaded", "path", configPath, "source", configSource)
 
-		configDir := configPath
-		if info, err := os.Stat(configPath); err == nil && !info.IsDir() {
-			configDir = filepath.Dir(configPath)
-		}
+		configDir := resolveConfigDir(configPath)
 
 		var sourceFiles []string
 		for f := range cfg.SourceFiles {
@@ -1683,9 +1685,10 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	if cfg.Service.StrictMode {
 		logger.Info("strict mode enabled, performing pre-flight checks")
 
-		files, err := config.DiscoverConfigFiles(configPath)
+		configDir := resolveConfigDir(configPath)
+		files, err := config.DiscoverConfigFiles(configDir)
 		if err == nil {
-			result, err := config.VerifyIntegrity(configPath, files)
+			result, err := config.VerifyIntegrity(configDir, files)
 			if err != nil || !result.Passed {
 				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
 				return nil, fmt.Errorf("integrity check failed")
