@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mattjoyce/ductile/schemas/plugins.schema.json",
-  "title": "Ductile Plugins",
-  "description": "Schema for ductile plugins.yaml — standalone plugin configuration file (multi-file mode).",
+  "title": "Ductile Plugins File",
+  "description": "Schema for ductile plugins.yaml. In multi-file mode this is loaded via include and deep-merged, so it may contain only 'plugins' or any other mergeable top-level keys.",
   "type": "object",
   "properties": {
     "plugins": {
@@ -11,6 +11,11 @@
       "additionalProperties": {
         "$ref": "config.schema.json#/$defs/PluginConf"
       }
+    },
+    "include": {
+      "type": "array",
+      "description": "Further files to merge.",
+      "items": { "type": "string" }
     }
   },
   "required": ["plugins"],
