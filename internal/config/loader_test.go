@@ -58,8 +58,14 @@ plugins:
 					t.Error("schedules[0].every not parsed")
 				}
 				// Check defaults applied
+				if cfg.Service.MaxWorkers != 1 {
+					t.Errorf("default service.max_workers not applied: got %d", cfg.Service.MaxWorkers)
+				}
 				if echo.Retry == nil || echo.Retry.MaxAttempts != 4 {
 					t.Error("default retry config not applied")
+				}
+				if echo.Parallelism != 1 {
+					t.Errorf("default plugin parallelism not applied: got %d", echo.Parallelism)
 				}
 			},
 		},
@@ -87,6 +93,66 @@ plugins:
 					t.Fatalf("unexpected effective roots: %v", roots)
 				}
 			},
+		},
+		{
+			name: "service max_workers and plugin parallelism parsed",
+			yaml: `
+service:
+  tick_interval: 60s
+  max_workers: 4
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+    parallelism: 3
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				if cfg.Service.MaxWorkers != 4 {
+					t.Fatalf("service.max_workers = %d, want 4", cfg.Service.MaxWorkers)
+				}
+				echo := cfg.Plugins["echo"]
+				if echo.Parallelism != 3 {
+					t.Fatalf("echo.parallelism = %d, want 3", echo.Parallelism)
+				}
+			},
+		},
+		{
+			name: "plugin parallelism over service max_workers fails validation",
+			yaml: `
+service:
+  tick_interval: 60s
+  max_workers: 2
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+    parallelism: 3
+`,
+			wantErr: true,
+		},
+		{
+			name: "plugin parallelism below 1 fails validation",
+			yaml: `
+service:
+  tick_interval: 60s
+  max_workers: 2
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+    parallelism: -1
+`,
+			wantErr: true,
 		},
 		{
 			name: "invalid plugin_roots entries fail validation",
@@ -856,6 +922,7 @@ func TestValidate(t *testing.T) {
 				Service: ServiceConfig{
 					TickInterval: 60 * time.Second,
 					LogLevel:     "info",
+					MaxWorkers:   1,
 				},
 				State:       StateConfig{Path: "./test.db"},
 				PluginRoots: []string{"./plugins"},
@@ -880,11 +947,44 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid max workers",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 60 * time.Second,
+					LogLevel:     "info",
+					MaxWorkers:   0,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "plugin parallelism exceeds max workers",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 60 * time.Second,
+					LogLevel:     "info",
+					MaxWorkers:   2,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+				Plugins: map[string]PluginConf{
+					"test": {
+						Enabled:     true,
+						Parallelism: 3,
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid log level",
 			cfg: &Config{
 				Service: ServiceConfig{
 					TickInterval: 60 * time.Second,
 					LogLevel:     "trace",
+					MaxWorkers:   1,
 				},
 				State:       StateConfig{Path: "./test.db"},
 				PluginRoots: []string{"./plugins"},

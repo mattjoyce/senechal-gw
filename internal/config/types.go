@@ -39,6 +39,7 @@ type ServiceConfig struct {
 	LogFormat       string        `yaml:"log_format"`
 	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
 	JobLogRetention time.Duration `yaml:"job_log_retention"`
+	MaxWorkers      int           `yaml:"max_workers,omitempty"`
 	StrictMode      bool          `yaml:"strict_mode"`
 	AllowSymlinks   bool          `yaml:"allow_symlinks"`
 }
@@ -79,6 +80,7 @@ type PluginConf struct {
 	Timeouts            *TimeoutsConfig       `yaml:"timeouts,omitempty"`
 	CircuitBreaker      *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty"`
 	MaxOutstandingPolls int                   `yaml:"max_outstanding_polls,omitempty"`
+	Parallelism         int                   `yaml:"parallelism,omitempty"`
 }
 
 // ScheduleConfig defines when a plugin command should be scheduled.
@@ -365,6 +367,7 @@ func Defaults() *Config {
 			LogFormat:       "json",
 			DedupeTTL:       24 * time.Hour,
 			JobLogRetention: 30 * 24 * time.Hour,
+			MaxWorkers:      1,
 			AllowSymlinks:   false,
 		},
 		State: StateConfig{
@@ -418,5 +421,6 @@ func DefaultPluginConf() PluginConf {
 			ResetAfter: 30 * time.Minute,
 		},
 		MaxOutstandingPolls: 1,
+		Parallelism:         1,
 	}
 }
