@@ -7,15 +7,6 @@ import os
 import urllib.request
 import math
 
-def get_input():
-    if len(sys.argv) > 1:
-        try:
-            return json.loads(sys.argv[1])
-        except json.JSONDecodeError:
-            print(json.dumps({"error": "invalid JSON input"}), file=sys.stderr)
-            sys.exit(1)
-    return {}
-
 def emit_event(name, data):
     print(json.dumps({"event": {"name": name, "data": data}}))
 
@@ -57,25 +48,34 @@ def do_net(url):
         return 0, str(e)
 
 def main():
-    command = os.environ.get("DUCTILE_COMMAND", "health")
-    input_data = get_input()
+    raw_input = sys.stdin.read()
+    
+    input_data = {}
+    if raw_input:
+        try:
+            input_data = json.loads(raw_input)
+        except json.JSONDecodeError:
+            sys.exit(1)
+
+    command = input_data.get("command", "health")
     payload = input_data.get("payload", {})
     state = input_data.get("state", {})
 
-    result = {"status": "ok"}
+    result_data = {"status": "ok"}
     events = []
+    state_updates = {}
 
     if command == "cpu":
         duration = payload.get("duration_seconds", 5)
         actual = do_cpu(duration)
-        result = {"result": "calculations complete", "actual_duration": actual}
+        result_data = {"result": "calculations complete", "actual_duration": actual}
         
     elif command == "io":
         size = payload.get("size_mb", 10)
         # Safety cap
         if size > 1000: size = 1000 
         digest, duration = do_io(size)
-        result = {
+        result_data = {
             "hash": digest, 
             "write_speed_mbps": size / duration if duration > 0 else 0
         }
@@ -83,9 +83,9 @@ def main():
     elif command == "net":
         url = payload.get("url", "https://www.google.com")
         code, size = do_net(url)
-        result = {"status_code": code, "bytes_received": size if isinstance(size, int) else 0}
+        result_data = {"status_code": code, "bytes_received": size if isinstance(size, int) else 0}
         if isinstance(size, str):
-            result["error"] = size
+            result_data["error"] = size
 
     elif command == "state":
         iterations = payload.get("iterations", 10)
@@ -94,20 +94,33 @@ def main():
         for i in range(iterations):
             current_count += 1
             # Emit event every step to test event stream load
-            emit_event("stress.state_increment", {"step": i, "total": current_count})
+            # In V2, we can collect them and return in the 'events' field
+            events.append({
+                "type": "stress.state_increment",
+                "payload": {"step": i, "total": current_count}
+            })
         
-        result = {"final_count": current_count}
-        # Update state for next run
-        result["state"] = {"count": current_count}
+        result_data = {"final_count": current_count}
+        state_updates = {"count": current_count}
 
     elif command == "health":
-        result = {"status": "ok", "version": "0.1.0"}
+        result_data = {"status": "ok", "version": "0.1.0"}
 
     else:
-        print(json.dumps({"error": f"unknown command: {command}"}), file=sys.stderr)
+        print(json.dumps({
+            "status": "error",
+            "error": f"unknown command: {command}"
+        }))
         sys.exit(1)
 
-    print(json.dumps({"result": result}))
+    # Return valid Protocol V2 response
+    response = {
+        "status": "ok",
+        "result": json.dumps(result_data),
+        "events": events,
+        "state_updates": state_updates
+    }
+    print(json.dumps(response))
 
 if __name__ == "__main__":
     main()
