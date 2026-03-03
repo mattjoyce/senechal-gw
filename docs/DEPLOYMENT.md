@@ -60,8 +60,7 @@ config file sets global options and includes the others by relative path.
 log_level: info
 
 state:
-  database:
-    path: ./data/ductile.db
+  path: ./data/ductile.db
 
 plugin_roots:
   - /path/to/ductile/plugins
