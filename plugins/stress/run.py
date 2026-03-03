@@ -23,8 +23,9 @@ def do_cpu(duration):
     start = time.time()
     count = 0
     while time.time() - start < duration:
-        # Some heavy math
-        math.sqrt(math.factorial(1000))
+        # Some heavy math that won't overflow easily
+        for i in range(1000):
+            _ = math.sin(i) * math.cos(i) * math.tan(i)
         count += 1
     return time.time() - start
 
