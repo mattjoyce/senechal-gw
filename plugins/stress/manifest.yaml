@@ -1,0 +1,48 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: stress
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "A resource stress-testing plugin for benchmarking and parallelism validation."
+commands:
+  - name: cpu
+    type: read
+    description: "Perform heavy calculations for a specified duration."
+    input_schema:
+      duration_seconds: integer
+    output_schema:
+      result: string
+      actual_duration: number
+
+  - name: io
+    type: write
+    description: "Write a large file, hash it, and delete it."
+    input_schema:
+      size_mb: integer
+    output_schema:
+      hash: string
+      write_speed_mbps: number
+
+  - name: net
+    type: read
+    description: "Fetch a generic URL to test network concurrency."
+    input_schema:
+      url: string
+    output_schema:
+      status_code: integer
+      bytes_received: integer
+
+  - name: state
+    type: write
+    description: "Rapidly update plugin state to test SQLite contention."
+    input_schema:
+      iterations: integer
+    output_schema:
+      final_count: integer
+
+  - name: health
+    type: read
+    description: "Standard health check."
+    idempotent: true
+    retry_safe: true
