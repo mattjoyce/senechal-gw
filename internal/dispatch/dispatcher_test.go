@@ -860,3 +860,237 @@ func filterEventsByType(eventsIn []events.Event, typ string) []events.Event {
 	}
 	return out
 }
+
+func TestDispatcher_Start_ParallelExecution(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	// Plugin that sleeps 1s then succeeds — long enough to observe concurrency
+	script := `#!/bin/bash
+read input
+sleep 1
+echo '{"status":"ok","result":"done"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "slow", script)
+	registry.Add(plug)
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Service.MaxWorkers = 3
+	cfg.Plugins["slow"] = config.PluginConf{
+		Enabled:     true,
+		Parallelism: 3,
+		Timeouts:    &config.TimeoutsConfig{Poll: 10 * time.Second},
+	}
+
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enqueue 3 jobs
+	for i := 0; i < 3; i++ {
+		if _, err := q.Enqueue(ctx, queue.EnqueueRequest{
+			Plugin: "slow", Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	// Start dispatcher in background
+	dispErr := make(chan error, 1)
+	go func() { dispErr <- disp.Start(ctx) }()
+
+	// Wait for all 3 to complete — if parallel, ~1s; if serial, ~3s
+	start := time.Now()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for parallel jobs")
+		case <-time.After(200 * time.Millisecond):
+			var completed int
+			db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed)
+			if completed >= 3 {
+				elapsed := time.Since(start)
+				cancel()
+				<-dispErr
+				// If truly parallel: ~1s. If serial: ~3s. Accept up to 2.5s.
+				if elapsed > 2500*time.Millisecond {
+					t.Fatalf("jobs took %v — likely serial, not parallel", elapsed)
+				}
+				t.Logf("3 parallel jobs completed in %v", elapsed)
+				return
+			}
+		}
+	}
+}
+
+func TestDispatcher_Start_PerPluginParallelismCap(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	// Plugin that sleeps 1s
+	script := `#!/bin/bash
+read input
+sleep 1
+echo '{"status":"ok","result":"done"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "capped", script)
+	registry.Add(plug)
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Service.MaxWorkers = 4
+	cfg.Plugins["capped"] = config.PluginConf{
+		Enabled:     true,
+		Parallelism: 1, // Only 1 at a time despite 4 workers
+		Timeouts:    &config.TimeoutsConfig{Poll: 10 * time.Second},
+	}
+
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enqueue 2 jobs
+	for i := 0; i < 2; i++ {
+		if _, err := q.Enqueue(ctx, queue.EnqueueRequest{
+			Plugin: "capped", Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	dispErr := make(chan error, 1)
+	go func() { dispErr <- disp.Start(ctx) }()
+
+	start := time.Now()
+	deadline := time.After(8 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for capped jobs")
+		case <-time.After(200 * time.Millisecond):
+			var completed int
+			db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed)
+			if completed >= 2 {
+				elapsed := time.Since(start)
+				cancel()
+				<-dispErr
+				// With parallelism=1, 2 jobs should take ~2s (serial)
+				if elapsed < 1800*time.Millisecond {
+					t.Fatalf("jobs took %v — should be serial with parallelism=1", elapsed)
+				}
+				t.Logf("2 serial-capped jobs completed in %v", elapsed)
+				return
+			}
+		}
+	}
+}
+
+func TestDispatcher_Start_SerialDefaultBackcompat(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	script := `#!/bin/bash
+read input
+sleep 1
+echo '{"status":"ok","result":"done"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "serial", script)
+	registry.Add(plug)
+
+	// Default config: max_workers=1, parallelism=1
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["serial"] = config.PluginConf{
+		Enabled:  true,
+		Timeouts: &config.TimeoutsConfig{Poll: 10 * time.Second},
+	}
+
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enqueue 2 jobs
+	for i := 0; i < 2; i++ {
+		if _, err := q.Enqueue(ctx, queue.EnqueueRequest{
+			Plugin: "serial", Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	dispErr := make(chan error, 1)
+	go func() { dispErr <- disp.Start(ctx) }()
+
+	start := time.Now()
+	deadline := time.After(8 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for serial jobs")
+		case <-time.After(200 * time.Millisecond):
+			var completed int
+			db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed)
+			if completed >= 2 {
+				elapsed := time.Since(start)
+				cancel()
+				<-dispErr
+				// Default serial: 2 jobs at 1s each ≈ 2s minimum
+				if elapsed < 1800*time.Millisecond {
+					t.Fatalf("jobs took %v — should be serial with default config", elapsed)
+				}
+				t.Logf("2 default-serial jobs completed in %v", elapsed)
+				return
+			}
+		}
+	}
+}

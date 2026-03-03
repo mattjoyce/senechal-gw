@@ -37,6 +37,13 @@ const (
 	nonRetryableExitCode = 78
 )
 
+// workerResult is sent by a worker goroutine when it finishes executing a job.
+type workerResult struct {
+	jobID    string
+	plugin   string
+	dedupeKey string // empty if job had no dedupe key
+}
+
 // Dispatcher dequeues jobs and executes them by spawning plugin subprocesses.
 type Dispatcher struct {
 	queue     *queue.Queue
@@ -80,48 +87,131 @@ func New(
 	}
 }
 
-// Start runs the main dispatch loop. It dequeues jobs serially and executes them one at a time.
+// Start runs the main dispatch loop with bounded concurrency. It tracks active
+// workers globally and per-plugin, filling available slots each tick or when a
+// worker completes. When cfg.Service.MaxWorkers == 1 (the default) this behaves
+// identically to the original serial dispatcher.
+//
 // This is a blocking call that runs until ctx is cancelled.
 func (d *Dispatcher) Start(ctx context.Context) error {
-	d.logger.Info("dispatch loop started")
+	maxWorkers := d.cfg.Service.MaxWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = 1
+	}
+
+	d.logger.Info("dispatch loop started", "max_workers", maxWorkers)
 	defer d.logger.Info("dispatch loop stopped")
 
-	ticker := time.NewTicker(1 * time.Second) // Poll queue every second
+	// Concurrency tracking — only accessed by the coordinator goroutine (no lock needed).
+	activeTotal := 0
+	activeByPlugin := make(map[string]int)
+	activeKeys := make(map[string]struct{})
+
+	workerDone := make(chan workerResult, maxWorkers)
+
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	// fillWorkers tries to dequeue eligible jobs until all worker slots are full
+	// or no eligible work remains.
+	fillWorkers := func() {
+		for activeTotal < maxWorkers {
+			// Build skip list: plugins at their parallelism cap
+			var skipPlugins []string
+			for pluginName, count := range activeByPlugin {
+				limit := d.pluginParallelism(pluginName)
+				if count >= limit {
+					skipPlugins = append(skipPlugins, pluginName)
+				}
+			}
+
+			// Build active concurrency keys list
+			var activeKeySlice []string
+			for k := range activeKeys {
+				activeKeySlice = append(activeKeySlice, k)
+			}
+
+			job, err := d.queue.DequeueEligible(ctx, skipPlugins, activeKeySlice)
+			if err != nil {
+				d.logger.Error("failed to dequeue eligible job", "error", err)
+				return
+			}
+			if job == nil {
+				return // No eligible work
+			}
+
+			// Track this worker
+			activeTotal++
+			activeByPlugin[job.Plugin]++
+			dedupeKey := ""
+			if job.DedupeKey != nil {
+				dedupeKey = *job.DedupeKey
+				activeKeys[dedupeKey] = struct{}{}
+			}
+
+			d.logger.Debug("dispatching job",
+				"job_id", job.ID,
+				"plugin", job.Plugin,
+				"active_total", activeTotal,
+				"active_plugin", activeByPlugin[job.Plugin],
+			)
+
+			// Launch worker goroutine
+			go func(j *queue.Job, dk string) {
+				d.executeJob(ctx, j)
+				workerDone <- workerResult{
+					jobID:     j.ID,
+					plugin:    j.Plugin,
+					dedupeKey: dk,
+				}
+			}(job, dedupeKey)
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			// Attempt to dequeue and execute one job
-			if err := d.processNextJob(ctx); err != nil {
-				d.logger.Error("failed to process job", "error", err)
-				// Continue processing - don't crash the loop on individual job errors
+			// Drain active workers before returning
+			d.logger.Info("dispatch loop shutting down, draining workers", "active", activeTotal)
+			for activeTotal > 0 {
+				res := <-workerDone
+				activeTotal--
+				activeByPlugin[res.plugin]--
+				if res.dedupeKey != "" {
+					delete(activeKeys, res.dedupeKey)
+				}
 			}
+			return ctx.Err()
+
+		case res := <-workerDone:
+			activeTotal--
+			activeByPlugin[res.plugin]--
+			if activeByPlugin[res.plugin] <= 0 {
+				delete(activeByPlugin, res.plugin)
+			}
+			if res.dedupeKey != "" {
+				delete(activeKeys, res.dedupeKey)
+			}
+			// A slot freed up — try to fill
+			fillWorkers()
+
+		case <-ticker.C:
+			fillWorkers()
 		}
 	}
+}
+
+// pluginParallelism returns the effective parallelism limit for a plugin.
+func (d *Dispatcher) pluginParallelism(pluginName string) int {
+	if pc, ok := d.cfg.Plugins[pluginName]; ok && pc.Parallelism > 0 {
+		return pc.Parallelism
+	}
+	return 1
 }
 
 // ExecuteJob runs a single job by spawning the plugin subprocess.
 func (d *Dispatcher) ExecuteJob(ctx context.Context, job *queue.Job) {
 	d.executeJob(ctx, job)
-}
-
-// processNextJob dequeues the next job and executes it.
-func (d *Dispatcher) processNextJob(ctx context.Context) error {
-	job, err := d.queue.Dequeue(ctx)
-	if err != nil {
-		return fmt.Errorf("dequeue: %w", err)
-	}
-	if job == nil {
-		// Queue is empty, nothing to do
-		return nil
-	}
-
-	// Execute the job
-	d.executeJob(ctx, job)
-	return nil
 }
 
 // executeJob runs a single job by spawning the plugin subprocess.
