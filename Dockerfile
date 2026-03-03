@@ -51,4 +51,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD [ -f /app/ductile.pid ] || exit 1
 
 # Default command
-CMD ["./ductile", "start"]
+CMD ["./ductile", "system", "start"]

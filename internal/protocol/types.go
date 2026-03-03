@@ -6,14 +6,16 @@ import "time"
 type Request struct {
 	Protocol     int            `json:"protocol"`
 	JobID        string         `json:"job_id"`
-	Command      string         `json:"command"` // poll | handle | health | init
+	Command      string         `json:"command"` // poll | handle | health | init | custom
 	Config       map[string]any `json:"config"`
 	State        map[string]any `json:"state"`
+	Payload      map[string]any `json:"payload,omitempty"`
 	Context      map[string]any `json:"context,omitempty"`
 	WorkspaceDir string         `json:"workspace_dir,omitempty"`
 	Event        *Event         `json:"event,omitempty"` // only for handle command
 	DeadlineAt   time.Time      `json:"deadline_at"`
 }
+
 
 // Response represents the protocol v2 response envelope received from plugins via stdout.
 type Response struct {
