@@ -1011,3 +1011,173 @@ func TestQueueEnqueueDedupeTTLOverride(t *testing.T) {
 		t.Fatal("second enqueue returned empty job id")
 	}
 }
+
+func TestDequeueEligibleSkipsPlugins(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	// Enqueue jobs for two plugins in order: alpha, beta, alpha
+	for _, p := range []string{"alpha", "beta", "alpha"} {
+		if _, err := q.Enqueue(ctx, EnqueueRequest{
+			Plugin: p, Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %s: %v", p, err)
+		}
+	}
+
+	// Skip alpha — should get beta
+	j, err := q.DequeueEligible(ctx, []string{"alpha"}, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.Plugin != "beta" {
+		t.Fatalf("expected beta, got %v", j)
+	}
+
+	// Skip alpha again — no eligible jobs left (beta already claimed)
+	j2, err := q.DequeueEligible(ctx, []string{"alpha"}, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible 2: %v", err)
+	}
+	if j2 != nil {
+		t.Fatalf("expected nil, got %v", j2)
+	}
+
+	// No skip — should get first alpha
+	j3, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible 3: %v", err)
+	}
+	if j3 == nil || j3.Plugin != "alpha" {
+		t.Fatalf("expected alpha, got %v", j3)
+	}
+}
+
+func TestDequeueEligibleSkipsConcurrencyKeys(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	keyA := "git_repo_sync:owner/repoA"
+	keyB := "git_repo_sync:owner/repoB"
+
+	// Enqueue: repoA first, then repoB
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "git_repo_sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyA,
+	}); err != nil {
+		t.Fatalf("Enqueue A: %v", err)
+	}
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "git_repo_sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyB,
+	}); err != nil {
+		t.Fatalf("Enqueue B: %v", err)
+	}
+
+	// Block keyA — should get repoB
+	j, err := q.DequeueEligible(ctx, nil, []string{keyA})
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.DedupeKey == nil || *j.DedupeKey != keyB {
+		t.Fatalf("expected repoB key, got %v", j)
+	}
+
+	// Block keyA still — no eligible (repoB already claimed)
+	j2, err := q.DequeueEligible(ctx, nil, []string{keyA})
+	if err != nil {
+		t.Fatalf("DequeueEligible 2: %v", err)
+	}
+	if j2 != nil {
+		t.Fatalf("expected nil, got %v", j2)
+	}
+}
+
+func TestDequeueEligibleEmptyFiltersMatchesDequeue(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	id, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "echo", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	j, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.ID != id {
+		t.Fatalf("expected job %s, got %v", id, j)
+	}
+}
+
+func TestDequeueEligibleCombinedFilters(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	keyX := "sync:repoX"
+
+	// Job 1: plugin alpha (will be skipped)
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "alpha", Command: "poll", SubmittedBy: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Job 2: plugin beta with keyX (key will be blocked)
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "beta", Command: "handle", SubmittedBy: "test", DedupeKey: &keyX,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Job 3: plugin beta without key (should be picked)
+	id3, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "beta", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := q.DequeueEligible(ctx, []string{"alpha"}, []string{keyX})
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.ID != id3 {
+		t.Fatalf("expected job %s (beta no-key), got %v", id3, j)
+	}
+}
