@@ -191,6 +191,11 @@ func loadPlugin(name, pluginPath, pluginsDir string, allowSymlinks bool, logger 
 		return nil, fmt.Errorf("trust validation failed: %w", err)
 	}
 
+	concurrencySafe := true
+	if manifest.ConcurrencySafe != nil {
+		concurrencySafe = *manifest.ConcurrencySafe
+	}
+
 	return &Plugin{
 		ManifestSpec:    manifest.ManifestSpec,
 		ManifestVersion: manifest.ManifestVersion,
@@ -200,6 +205,7 @@ func loadPlugin(name, pluginPath, pluginsDir string, allowSymlinks bool, logger 
 		Protocol:        manifest.Protocol,
 		Version:         manifest.Version,
 		Description:     manifest.Description,
+		ConcurrencySafe: concurrencySafe,
 		Commands:        manifest.Commands,
 		ConfigKeys:      manifest.ConfigKeys,
 	}, nil

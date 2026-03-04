@@ -5,6 +5,7 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.py
 description: "Scheduled single-file watcher that emits events on create/modify/delete transitions"
+concurrency_safe: false
 commands:
   - name: poll
     type: write

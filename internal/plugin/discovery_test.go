@@ -566,3 +566,66 @@ commands:
 		t.Fatalf("GetWriteCommands() = %v, want [poll]", got)
 	}
 }
+
+func TestDiscover_ConcurrencySafe_DefaultTrue(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "safe-default")
+	os.Mkdir(pluginDir, 0755)
+
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: safe-default
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+`
+	os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+	os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0755)
+
+	reg, err := Discover(dir, func(level, msg string, args ...any) {})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	p, ok := reg.Get("safe-default")
+	if !ok {
+		t.Fatalf("plugin not discovered")
+	}
+	if !p.ConcurrencySafe {
+		t.Fatalf("expected default ConcurrencySafe=true when manifest field omitted")
+	}
+}
+
+func TestDiscover_ConcurrencySafe_FalseHint(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "serial-plugin")
+	os.Mkdir(pluginDir, 0755)
+
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: serial-plugin
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+concurrency_safe: false
+commands:
+  - name: poll
+    type: write
+`
+	os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+	os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0755)
+
+	reg, err := Discover(dir, func(level, msg string, args ...any) {})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	p, ok := reg.Get("serial-plugin")
+	if !ok {
+		t.Fatalf("plugin not discovered")
+	}
+	if p.ConcurrencySafe {
+		t.Fatalf("expected ConcurrencySafe=false from manifest hint")
+	}
+}

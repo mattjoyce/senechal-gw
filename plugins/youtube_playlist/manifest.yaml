@@ -5,6 +5,7 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.py
 description: "Poll a YouTube playlist feed and emit new video events."
+concurrency_safe: false
 commands:
   - name: poll
     type: write

@@ -1094,3 +1094,33 @@ echo '{"status":"ok","result":"done"}'
 		}
 	}
 }
+
+func TestDispatcher_PluginParallelism_RespectsConcurrencySafeHint(t *testing.T) {
+	disp, _, _, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	unsafePlugin := &plugin.Plugin{Name: "unsafe", ConcurrencySafe: false}
+	safePlugin := &plugin.Plugin{Name: "safe", ConcurrencySafe: true}
+	disp.registry.Add(unsafePlugin)
+	disp.registry.Add(safePlugin)
+
+	disp.cfg.Service.MaxWorkers = 6
+	disp.cfg.Plugins["unsafe"] = config.PluginConf{Enabled: true, Parallelism: 1}
+	disp.cfg.Plugins["safe"] = config.PluginConf{Enabled: true, Parallelism: 6}
+
+	if got := disp.pluginParallelism("unsafe"); got != 1 {
+		t.Fatalf("unsafe plugin default should be serial, got %d", got)
+	}
+
+	if got := disp.pluginParallelism("safe"); got != 6 {
+		t.Fatalf("safe plugin should use configured parallelism, got %d", got)
+	}
+
+	// Explicit operator override: allow unsafe plugin >1.
+	pc := disp.cfg.Plugins["unsafe"]
+	pc.Parallelism = 4
+	disp.cfg.Plugins["unsafe"] = pc
+	if got := disp.pluginParallelism("unsafe"); got != 4 {
+		t.Fatalf("unsafe plugin override should be honored, got %d", got)
+	}
+}

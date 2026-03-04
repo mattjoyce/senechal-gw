@@ -5,6 +5,7 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.py
 description: "Scheduled directory watcher that emits aggregate or per-file change events"
+concurrency_safe: false
 commands:
   - name: poll
     type: write

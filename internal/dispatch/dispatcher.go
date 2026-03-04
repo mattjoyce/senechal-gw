@@ -202,11 +202,24 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 }
 
 // pluginParallelism returns the effective parallelism limit for a plugin.
+//
+// If a plugin manifest declares concurrency_safe: false, it runs serial by
+// default (limit=1). Operators can still explicitly override via config by
+// setting plugins.<name>.parallelism > 1.
 func (d *Dispatcher) pluginParallelism(pluginName string) int {
+	limit := 1
 	if pc, ok := d.cfg.Plugins[pluginName]; ok && pc.Parallelism > 0 {
-		return pc.Parallelism
+		limit = pc.Parallelism
 	}
-	return 1
+
+	if plug, ok := d.registry.Get(pluginName); ok && !plug.ConcurrencySafe {
+		if limit <= 1 {
+			return 1
+		}
+		// Explicit operator override via config (>1) is honored.
+	}
+
+	return limit
 }
 
 // ExecuteJob runs a single job by spawning the plugin subprocess.
