@@ -209,6 +209,15 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		DeadlineAt:   deadline,
 	}
 
+	// Include payload if present
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &req.Payload); err != nil {
+			// If it's a 'handle' command, it might be a protocol.Event wrapper
+			// We try to unmarshal into Payload first, if it's just a JSON object.
+			jobLogger.Debug("payload is not a simple JSON object, attempting event unmarshal for handle")
+		}
+	}
+
 	// For handle command, parse and include event payload
 	if job.Command == "handle" && len(job.Payload) > 0 {
 		var event protocol.Event

@@ -12,6 +12,30 @@ import (
 
 const defaultHeartbeatInterval = time.Minute
 
+// Column identifies the left or right side of the main layout.
+type Column int
+
+const (
+	ColLeft Column = iota
+	ColRight
+)
+
+// TabLeft identifies the active tab in the left column.
+type TabLeft int
+
+const (
+	TabPipelines TabLeft = iota
+	TabScheduler
+)
+
+// TabRight identifies the active tab in the right column.
+type TabRight int
+
+const (
+	TabEvents TabRight = iota
+	TabInspector
+)
+
 // Model is the main BubbleTea model for the watch TUI.
 type Model struct {
 	apiURL string
@@ -34,7 +58,13 @@ type Model struct {
 
 	// UI state
 	theme            Theme
+	focusedCol       Column
+	activeTabL       TabLeft
+	activeTabR       TabRight
 	selectedPipeline int
+	pipelineScroll   int
+	scheduleScroll   int
+	eventScroll      int
 
 	// Communication
 	hubEvents chan events.Event
@@ -57,6 +87,9 @@ func New(apiURL, apiKey string, cfg *config.Config) *Model {
 		heartbeat:        NewHeartbeat(),
 		spinner:          NewSpinner(),
 		theme:            NewDefaultTheme(),
+		focusedCol:       ColLeft,
+		activeTabL:       TabPipelines,
+		activeTabR:       TabEvents,
 		selectedPipeline: 0,
 	}
 }
@@ -78,15 +111,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "tab":
+			if m.focusedCol == ColLeft {
+				m.focusedCol = ColRight
+			} else {
+				m.focusedCol = ColLeft
+			}
+		case "1":
+			m.activeTabL = TabPipelines
+			m.focusedCol = ColLeft
+		case "2":
+			m.activeTabL = TabScheduler
+			m.focusedCol = ColLeft
+		case "3":
+			m.activeTabR = TabEvents
+			m.focusedCol = ColRight
+		case "4":
+			m.activeTabR = TabInspector
+			m.focusedCol = ColRight
+
 		case "up", "k":
-			if m.selectedPipeline > 0 {
-				m.selectedPipeline--
-			}
+			m.handleUp()
 		case "down", "j":
-			items := buildPipelineList(m.pipelineCatalog, m.pipelines)
-			if m.selectedPipeline < len(items)-1 {
-				m.selectedPipeline++
-			}
+			m.handleDown()
 		}
 
 	case tea.WindowSizeMsg:
@@ -109,8 +156,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update event log (newest first)
 		m.eventLog = append([]events.Event{e}, m.eventLog...)
-		if len(m.eventLog) > 50 {
-			m.eventLog = m.eventLog[:50]
+		if len(m.eventLog) > 100 {
+			m.eventLog = m.eventLog[:100]
 		}
 
 		// Update spinner
@@ -149,9 +196,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sseDisconnectedMsg:
 		m.health.Connected = false
 		m.lastError = "SSE disconnected, reconnecting..."
-		// Reconnect after a short delay; the existing receiveNextEvent
-		// goroutine is still waiting on the channel and will pick up
-		// events from the new subscription.
 		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 			return reconnectMsg{}
 		})
@@ -161,7 +205,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.lastError = msg.Error()
-		// Retry health in 5s
 		return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 			return fetchHealth(m.apiURL, m.apiKey)
 		})
@@ -170,21 +213,83 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleUp() {
+	if m.focusedCol == ColLeft {
+		if m.activeTabL == TabPipelines {
+			if m.selectedPipeline > 0 {
+				m.selectedPipeline--
+			}
+		} else if m.activeTabL == TabScheduler {
+			if m.scheduleScroll > 0 {
+				m.scheduleScroll--
+			}
+		}
+	} else {
+		if m.activeTabR == TabEvents {
+			if m.eventScroll > 0 {
+				m.eventScroll--
+			}
+		}
+	}
+}
+
+func (m *Model) handleDown() {
+	if m.focusedCol == ColLeft {
+		if m.activeTabL == TabPipelines {
+			items := buildPipelineList(m.pipelineCatalog, m.pipelines)
+			if m.selectedPipeline < len(items)-1 {
+				m.selectedPipeline++
+			}
+		} else if m.activeTabL == TabScheduler {
+			m.scheduleScroll++
+		}
+	} else {
+		if m.activeTabR == TabEvents {
+			m.eventScroll++
+		}
+	}
+}
+
 func (m Model) View() string {
 	if m.width == 0 {
 		return "Initializing Overwatch..."
 	}
 
-	items := buildPipelineList(m.pipelineCatalog, m.pipelines)
-	selected := m.selectedPipeline
-	if selected >= len(items) && len(items) > 0 {
-		selected = len(items) - 1
+	header := renderHeader(m.health, m.heartbeat, m.spinner, m.theme, m.width, defaultHeartbeatInterval, m.apiURL)
+
+	// Calculate panel sizes
+	mainHeight := m.height - lipgloss.Height(header) - 3 // footer and margin
+	colWidth := (m.width - 4) / 2
+
+	// Render Left Column
+	var leftBody string
+	var leftTabs string
+	switch m.activeTabL {
+	case TabPipelines:
+		leftTabs = m.renderTabs([]string{"[1] Pipelines", "[2] Scheduler"}, 0, m.focusedCol == ColLeft)
+		items := buildPipelineList(m.pipelineCatalog, m.pipelines)
+		leftBody = renderPipelines(items, m.selectedPipeline, m.theme, colWidth, mainHeight-2)
+	case TabScheduler:
+		leftTabs = m.renderTabs([]string{"[1] Pipelines", "[2] Scheduler"}, 1, m.focusedCol == ColLeft)
+		leftBody = renderSchedules(m.schedules, m.theme, colWidth, mainHeight-2, m.scheduleScroll)
 	}
 
-	header := renderHeader(m.health, m.heartbeat, m.spinner, m.theme, m.width, defaultHeartbeatInterval, m.apiURL)
-	pipelines := renderPipelines(items, selected, m.theme, m.width)
-	details := renderPipelineDetails(items, selected, m.theme, m.width)
-	schedules := renderSchedules(m.schedules, m.theme, m.width)
+	// Render Right Column
+	var rightBody string
+	var rightTabs string
+	switch m.activeTabR {
+	case TabEvents:
+		rightTabs = m.renderTabs([]string{"[3] Events", "[4] Inspector"}, 0, m.focusedCol == ColRight)
+		rightBody = renderEventStream(m.eventLog, m.theme, colWidth, mainHeight-2, m.eventScroll)
+	case TabInspector:
+		rightTabs = m.renderTabs([]string{"[3] Events", "[4] Inspector"}, 1, m.focusedCol == ColRight)
+		rightBody = m.renderInspector(colWidth, mainHeight-2)
+	}
+
+	leftPanel := lipgloss.JoinVertical(lipgloss.Left, leftTabs, leftBody)
+	rightPanel := lipgloss.JoinVertical(lipgloss.Left, rightTabs, rightBody)
+
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 
 	// Error bar
 	var errBar string
@@ -194,28 +299,37 @@ func (m Model) View() string {
 
 	help := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("241")).
-		Render(" [q] Quit • [↑/↓] Navigate Pipelines")
+		Render(" [q] Quit • [Tab] Switch Column • [1-4] Tabs • [↑/↓] Scroll")
 
-	availableHeight := m.height - 2
-	usedHeight := lipgloss.Height(header) + lipgloss.Height(pipelines) + lipgloss.Height(details) + lipgloss.Height(schedules) + lipgloss.Height(help)
-	if errBar != "" {
-		usedHeight += lipgloss.Height(errBar)
-	}
-
-	eventHeight := availableHeight - usedHeight
-	maxEvents := eventHeight - 3
-	if maxEvents < 1 {
-		maxEvents = 1
-	}
-	eventStream := renderEventStream(m.eventLog, m.theme, m.width, maxEvents)
-
-	parts := []string{header, pipelines, details, schedules, eventStream}
+	parts := []string{header, mainContent}
 	if errBar != "" {
 		parts = append(parts, errBar)
 	}
 	parts = append(parts, help)
 
-	return lipgloss.NewStyle().Margin(1, 2).Render(
+	return lipgloss.NewStyle().Margin(1, 1).Render(
 		lipgloss.JoinVertical(lipgloss.Left, parts...),
 	)
+}
+
+func (m Model) renderTabs(labels []string, activeIndex int, isFocused bool) string {
+	var tabs []string
+	for i, label := range labels {
+		style := m.theme.TabInactive
+		if i == activeIndex {
+			style = m.theme.TabActive
+			if !isFocused {
+				// Dim the active tab if its column isn't focused
+				style = style.Copy().Background(lipgloss.Color("240"))
+			}
+		}
+		tabs = append(tabs, style.Render(label))
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+}
+
+func (m Model) renderInspector(width, height int) string {
+	// Placeholder for now
+	content := m.theme.Dim.Render("  Job Inspector - select a job to see details")
+	return m.theme.Border.Width(width - 2).Height(height).Render(content)
 }
