@@ -10,6 +10,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o ductile ./cmd/ductile
 
 install: build
+	systemctl --user stop ductile-local
 	cp ductile $(BINARY)
-	systemctl --user restart ductile-local
+	systemctl --user start ductile-local
 	rm ductile

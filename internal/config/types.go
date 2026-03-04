@@ -1,6 +1,7 @@
 package config
 
 import (
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -367,7 +368,7 @@ func Defaults() *Config {
 			LogFormat:       "json",
 			DedupeTTL:       24 * time.Hour,
 			JobLogRetention: 30 * 24 * time.Hour,
-			MaxWorkers:      1,
+			MaxWorkers:      max(1, runtime.NumCPU()-1),
 			AllowSymlinks:   false,
 		},
 		State: StateConfig{

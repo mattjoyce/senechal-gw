@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -58,14 +59,15 @@ plugins:
 					t.Error("schedules[0].every not parsed")
 				}
 				// Check defaults applied
-				if cfg.Service.MaxWorkers != 1 {
-					t.Errorf("default service.max_workers not applied: got %d", cfg.Service.MaxWorkers)
+				expectedWorkers := max(1, runtime.NumCPU()-1)
+				if cfg.Service.MaxWorkers != expectedWorkers {
+					t.Errorf("default service.max_workers not applied: got %d, want %d", cfg.Service.MaxWorkers, expectedWorkers)
 				}
 				if echo.Retry == nil || echo.Retry.MaxAttempts != 4 {
 					t.Error("default retry config not applied")
 				}
-				if echo.Parallelism != 1 {
-					t.Errorf("default plugin parallelism not applied: got %d", echo.Parallelism)
+				if echo.Parallelism != expectedWorkers {
+					t.Errorf("default plugin parallelism not applied: got %d, want %d", echo.Parallelism, expectedWorkers)
 				}
 			},
 		},

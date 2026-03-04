@@ -98,7 +98,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Apply plugin defaults
 	for name, pluginConf := range cfg.Plugins {
-		merged := mergePluginDefaults(pluginConf)
+		merged := mergePluginDefaults(pluginConf, cfg.Service.MaxWorkers)
 		cfg.Plugins[name] = merged
 	}
 
@@ -878,7 +878,8 @@ func checkUnresolvedEnvVars(data map[string]any, pluginName string) error {
 }
 
 // mergePluginDefaults applies default values to plugin config where not specified.
-func mergePluginDefaults(plugin PluginConf) PluginConf {
+// maxWorkers is the resolved service.max_workers value, used as the default parallelism.
+func mergePluginDefaults(plugin PluginConf, maxWorkers int) PluginConf {
 	defaults := DefaultPluginConf()
 
 	if plugin.Retry == nil {
@@ -897,7 +898,7 @@ func mergePluginDefaults(plugin PluginConf) PluginConf {
 		plugin.MaxOutstandingPolls = defaults.MaxOutstandingPolls
 	}
 	if plugin.Parallelism == 0 {
-		plugin.Parallelism = defaults.Parallelism
+		plugin.Parallelism = maxWorkers
 	}
 
 	return plugin
