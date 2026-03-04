@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mattjoyce/ductile/schemas/config.schema.json",
   "title": "Ductile Configuration",
-  "description": "Schema for ductile config.yaml — the main configuration file for the Ductile automation service.",
+  "description": "Schema for ductile config.yaml — the main configuration file for the Ductile automation service. Note: cross-field rules such as plugins.<name>.parallelism <= service.max_workers are enforced by runtime validation, not purely by JSON Schema.",
   "type": "object",
   "properties": {
     "include": {
@@ -238,7 +238,7 @@
         },
         "parallelism": {
           "type": "integer",
-          "description": "Maximum concurrent jobs for this plugin. Must be <= service.max_workers.",
+          "description": "Maximum concurrent jobs for this plugin. Runtime validation enforces parallelism <= service.max_workers (cross-field constraint).",
           "minimum": 1,
           "default": 1
         }
