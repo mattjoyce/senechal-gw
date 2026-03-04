@@ -167,7 +167,11 @@ def main() -> None:
             "default_branch": repo.get("default_branch"),
             "pushed_at": repo.get("pushed_at") or repo.get("updated_at"),
         }
-        events.append({"type": "github_repo_sync.repo_discovered", "payload": payload})
+        events.append({
+            "type": "github_repo_sync.repo_discovered",
+            "dedupe_key": f"git_repo_sync:{owner}/{name}",
+            "payload": payload,
+        })
         queued += 1
 
     total = len(visible_repos)

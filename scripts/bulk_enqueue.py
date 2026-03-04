@@ -5,6 +5,7 @@ import json
 import argparse
 import datetime
 import os
+import sys
 
 def main():
     parser = argparse.ArgumentParser(description="Bulk enqueue jobs into Ductile SQLite database.")

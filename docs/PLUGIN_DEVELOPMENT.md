@@ -230,6 +230,7 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.sh
 description: "A demonstration plugin that echoes input." # Used by LLM operators
+concurrency_safe: true # Optional; default true. Set false for functional-state plugins.
 commands:
   - name: poll
     type: write
@@ -247,6 +248,7 @@ commands:
 - `manifest_spec`: Required manifest schema identifier. Current supported value: `ductile.plugin`.
 - `manifest_version`: Required manifest schema version. Current supported value: `1`.
 - `description`: A human-readable (and LLM-readable) summary of what the plugin or command does.
+- `concurrency_safe`: Optional boolean concurrency hint. Default is `true`. Set `false` for plugins whose correctness depends on serialized execution (e.g. functional state snapshots). Runtime behavior: `false` plugins run serial by default unless operator explicitly overrides `plugins.<name>.parallelism > 1` in config.
 - `type`: `read` (no side effects) or `write` (mutates state or external systems). This determines the token scope required to invoke it.
 - `input_schema` / `output_schema`: (Optional) JSON Schema describing the command's expected payload and result.
 

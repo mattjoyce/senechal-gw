@@ -532,6 +532,9 @@ func applyConfigDefaults(cfg *Config) *Config {
 	if cfg.Service.JobLogRetention == 0 {
 		cfg.Service.JobLogRetention = defaults.Service.JobLogRetention
 	}
+	if cfg.Service.MaxWorkers == 0 {
+		cfg.Service.MaxWorkers = defaults.Service.MaxWorkers
+	}
 
 	// Handle database alias
 	if cfg.State.Path == "" && cfg.Database.Path != "" {
@@ -596,6 +599,9 @@ func validate(cfg *Config) error {
 	if cfg.Service.TickInterval <= 0 {
 		return fmt.Errorf("service.tick_interval must be positive")
 	}
+	if cfg.Service.MaxWorkers <= 0 {
+		return fmt.Errorf("service.max_workers must be positive")
+	}
 
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLogLevels[cfg.Service.LogLevel] {
@@ -642,6 +648,17 @@ func validate(cfg *Config) error {
 
 		if plugin.Schedule != nil {
 			return fmt.Errorf("plugin %q: schedule is no longer supported; use schedules[]", name)
+		}
+
+		parallelism := plugin.Parallelism
+		if parallelism == 0 {
+			parallelism = DefaultPluginConf().Parallelism
+		}
+		if parallelism < 1 {
+			return fmt.Errorf("plugin %q: parallelism must be >= 1", name)
+		}
+		if parallelism > cfg.Service.MaxWorkers {
+			return fmt.Errorf("plugin %q: parallelism (%d) cannot exceed service.max_workers (%d)", name, parallelism, cfg.Service.MaxWorkers)
 		}
 
 		// Validate schedule entries if present (plugins without schedules are API-triggered only).
@@ -878,6 +895,9 @@ func mergePluginDefaults(plugin PluginConf) PluginConf {
 
 	if plugin.MaxOutstandingPolls == 0 {
 		plugin.MaxOutstandingPolls = defaults.MaxOutstandingPolls
+	}
+	if plugin.Parallelism == 0 {
+		plugin.Parallelism = defaults.Parallelism
 	}
 
 	return plugin

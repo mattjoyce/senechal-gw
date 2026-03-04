@@ -126,6 +126,7 @@ type Manifest struct {
 	Protocol        int         `yaml:"protocol"`
 	Entrypoint      string      `yaml:"entrypoint"`
 	Description     string      `yaml:"description,omitempty"`
+	ConcurrencySafe *bool       `yaml:"concurrency_safe,omitempty"`
 	Commands        Commands    `yaml:"commands"`
 	ConfigKeys      *ConfigKeys `yaml:"config_keys,omitempty"`
 }
@@ -146,6 +147,7 @@ type Plugin struct {
 	Protocol        int      // Protocol version.
 	Version         string   // Plugin version.
 	Description     string   // Human-readable description.
+	ConcurrencySafe bool     // Manifest concurrency safety hint (default true when unspecified).
 	Commands        Commands // Supported commands (poll, handle, health, init).
 	ConfigKeys      *ConfigKeys
 }

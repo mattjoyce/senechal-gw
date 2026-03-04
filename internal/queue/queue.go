@@ -251,14 +251,50 @@ LIMIT 1;
 // Dequeue claims the oldest queued job and marks it running. Returns (nil, nil)
 // if the queue is empty.
 func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
+	return q.DequeueEligible(ctx, nil, nil)
+}
+
+// DequeueEligible claims the oldest queued job whose plugin is NOT in
+// skipPlugins and whose dedupe_key is NOT in activeConcurrencyKeys. This
+// allows the dispatcher to skip plugins that have reached their parallelism
+// cap and prevent concurrent execution of jobs sharing a concurrency key
+// (e.g. same repo target).
+//
+// When both slices are empty the behavior is identical to Dequeue.
+// Returns (nil, nil) when no eligible job exists.
+func (q *Queue) DequeueEligible(ctx context.Context, skipPlugins []string, activeConcurrencyKeys []string) (*Job, error) {
 	now := time.Now().UTC()
 	nowS := now.Format(time.RFC3339Nano)
 
-	row := q.db.QueryRowContext(ctx, `
+	// Build the dynamic WHERE clause and args.
+	args := []any{StatusQueued, nowS}
+
+	pluginFilter := ""
+	if len(skipPlugins) > 0 {
+		placeholders := make([]string, len(skipPlugins))
+		for i, p := range skipPlugins {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		pluginFilter = " AND plugin NOT IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	keyFilter := ""
+	if len(activeConcurrencyKeys) > 0 {
+		placeholders := make([]string, len(activeConcurrencyKeys))
+		for i, k := range activeConcurrencyKeys {
+			placeholders[i] = "?"
+			args = append(args, k)
+		}
+		keyFilter = " AND (dedupe_key IS NULL OR dedupe_key NOT IN (" + strings.Join(placeholders, ",") + "))"
+	}
+
+	query := `
 WITH next AS (
   SELECT id
   FROM job_queue
-  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)
+  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)` +
+		pluginFilter + keyFilter + `
   ORDER BY created_at ASC, rowid ASC
   LIMIT 1
 )
@@ -267,9 +303,15 @@ SET status = ?, started_at = ?
 WHERE id IN (SELECT id FROM next)
 RETURNING
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id;
-`, StatusQueued, nowS, StatusRunning, nowS)
+  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id;`
 
+	args = append(args, StatusRunning, nowS)
+
+	return q.scanDequeuedJob(q.db.QueryRowContext(ctx, query, args...))
+}
+
+// scanDequeuedJob scans a single RETURNING row from a dequeue CTE into a Job.
+func (q *Queue) scanDequeuedJob(row *sql.Row) (*Job, error) {
 	var (
 		j              Job
 		payload        sql.NullString
