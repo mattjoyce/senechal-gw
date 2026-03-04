@@ -26,10 +26,6 @@ type Theme struct {
 	TickerActive   lipgloss.Style
 	TickerInactive lipgloss.Style
 	Progress       lipgloss.Style
-
-	// Tabs
-	TabActive   lipgloss.Style
-	TabInactive lipgloss.Style
 }
 
 func NewDefaultTheme() Theme {
@@ -58,15 +54,5 @@ func NewDefaultTheme() Theme {
 		TickerActive:   lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00")),
 		TickerInactive: lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")),
 		Progress:       lipgloss.NewStyle().Foreground(lipgloss.Color("#61AFEF")),
-
-		TabActive: lipgloss.NewStyle().
-			Background(purple).
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Padding(0, 1).
-			Bold(true),
-		TabInactive: lipgloss.NewStyle().
-			Background(lipgloss.Color("#353535")).
-			Foreground(lipgloss.Color("#888888")).
-			Padding(0, 1),
 	}
 }

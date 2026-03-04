@@ -9,42 +9,39 @@ import (
 	"github.com/mattjoyce/ductile/internal/events"
 )
 
-func renderEventStream(eventLog []events.Event, theme Theme, width int, height int, scroll int) string {
-	innerWidth := width - 2
+func renderEventStream(eventLog []events.Event, theme Theme, width int, maxEvents int) string {
+	innerWidth := width - 4
 
 	if len(eventLog) == 0 {
 		content := lipgloss.JoinVertical(lipgloss.Left,
+			theme.Title.Render("EVENT STREAM"),
 			theme.Dim.Render("  Waiting for events..."),
 		)
-		return theme.Border.Width(innerWidth).Height(height).Render(content)
+		return theme.Border.Width(innerWidth).Render(content)
 	}
 
-	visibleHeight := height - 2
-	if visibleHeight < 1 {
-		visibleHeight = 1
-	}
-
-	if scroll >= len(eventLog) {
-		scroll = len(eventLog) - 1
-	}
-	if scroll < 0 {
-		scroll = 0
+	if maxEvents < 1 {
+		maxEvents = 1
 	}
 
 	var lines []string
-	for i := scroll; i < len(eventLog) && len(lines) < visibleHeight; i++ {
-		lines = append(lines, formatEvent(eventLog[i], theme, width-10))
+	for i, e := range eventLog {
+		if i >= maxEvents {
+			break
+		}
+		lines = append(lines, formatEvent(e, theme))
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-	if len(eventLog) > visibleHeight {
-		content = renderWithScrollbar(content, scroll, len(eventLog), visibleHeight, theme)
-	}
+	eventsText := lipgloss.NewStyle().Padding(0, 1).Render(strings.Join(lines, "\n"))
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		theme.Title.Render("EVENT STREAM"),
+		eventsText,
+	)
 
-	return theme.Border.Width(innerWidth).Height(height).Render(content)
+	return theme.Border.Width(innerWidth).Render(content)
 }
 
-func formatEvent(e events.Event, theme Theme, width int) string {
+func formatEvent(e events.Event, theme Theme) string {
 	ts := theme.Dim.Render(e.At.Format("15:04:05"))
 
 	// Color the event type based on category
@@ -62,22 +59,10 @@ func formatEvent(e events.Event, theme Theme, width int) string {
 		typeStyle = theme.Dim
 	}
 
-	typeWidth := 15
-	typeName := e.Type
-	if len(typeName) > typeWidth {
-		typeName = typeName[:typeWidth-2] + ".."
-	}
-	typeName = typeStyle.Render(fmt.Sprintf("%-*s", typeWidth, typeName))
+	typeName := typeStyle.Render(fmt.Sprintf("%-20s", e.Type))
 
 	// Extract brief description from data
 	desc := extractEventDesc(e)
-	maxDescLen := width - typeWidth - 10
-	if maxDescLen < 5 {
-		maxDescLen = 5
-	}
-	if len(desc) > maxDescLen {
-		desc = desc[:maxDescLen-3] + "..."
-	}
 
 	return fmt.Sprintf("%s %s %s", ts, typeName, desc)
 }
