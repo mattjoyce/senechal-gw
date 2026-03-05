@@ -74,7 +74,7 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Core language | Go | Single binary, easy deployment, natural subprocess spawning |
 | Plugin coupling | Subprocess (JSON over stdin/stdout) | Language-agnostic, fault-isolated, drop-in plugins |
 | Scheduling | Heartbeat with fuzzy intervals | Human-friendly, avoids thundering herd |
-| Execution | Serial FIFO dispatch | Simple, predictable, no concurrency bugs |
+| Execution | Bounded Worker Pool | High-throughput, resource-safe, per-plugin concurrency caps |
 | Routing | Config-declared, fan-out, exact match | Plugins stay dumb, core controls flow |
 | Pipeline Execution | Async by default; Sync opt-in | Preserves event-driven core while enabling interactive results |
 | State | SQLite | Proven, zero-ops, single JSON blob per plugin |
@@ -148,9 +148,13 @@ queued → running → succeeded
 
 ### 3.5 Dispatch
 
-**Serial, single lane.** One job at a time, FIFO. No priority lanes. No concurrency.
+**Bounded Worker Pool.** Ductile uses a global worker pool to process jobs in parallel. This ensures high throughput while preventing resource exhaustion.
 
-Revisit condition: daily job count exceeds 500, or median queue wait time exceeds 30 seconds — with data to back it up.
+- **Global Limit:** Controlled by `service.max_workers` (defaults to `CPU-1`).
+- **Plugin Parallelism:** Each plugin can define a `parallelism` limit in its configuration. If a plugin is not marked as `concurrency_safe: true` in its manifest, it defaults to a parallelism of 1 (serial execution).
+- **Smart Dequeue:** The scheduler and dispatcher skip jobs for plugins that have reached their active parallelism cap, ensuring the worker pool remains available for other tasks.
+
+Revisit condition: sustained queue wait times exceed 60 seconds with all workers saturated.
 
 ### 3.6 Deduplication
 
