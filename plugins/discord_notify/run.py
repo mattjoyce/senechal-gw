@@ -3,15 +3,37 @@
 
 Posts messages to a Discord channel via incoming webhook.
 Reads message content from payload fields: message, content, result, or title.
+Supports message_template config key with {field.path} dot-notation substitution.
 Protocol v2: reads JSON from stdin, writes JSON to stdout.
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
+
+
+def resolve_template(template: str, payload: Dict[str, Any]) -> str:
+    """Render {field.path} placeholders using dot-notation lookup in payload.
+
+    Missing or non-string-convertible fields render as empty string.
+    Returns the rendered string (may be empty if all fields missing).
+    """
+    def replacer(match: re.Match) -> str:
+        path = match.group(1)
+        value: Any = payload
+        for part in path.split("."):
+            if isinstance(value, dict):
+                value = value.get(part)
+            else:
+                value = None
+                break
+        return str(value) if value is not None else ""
+
+    return re.sub(r"\{([^}]+)\}", replacer, template)
 
 
 def pick(payload: Dict[str, Any], context: Dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -68,8 +90,21 @@ def handle_command(
             "No webhook_url configured. Add to plugin config.", retry=False
         )
 
-    content = pick(payload, context, "message", "content", "result", default=None)
+    content = pick(payload, context, "message", "content", default=None)
     title = pick(payload, context, "title", default=None)
+
+    if not content and not title:
+        # Try message_template before falling back to result/default_message.
+        # This prevents internal pipeline result strings from leaking into Discord
+        # when the caller has explicitly configured a template.
+        template = str(config.get("message_template") or "").strip()
+        if template:
+            rendered = resolve_template(template, payload).strip()
+            if rendered:
+                content = rendered
+
+    if not content and not title:
+        content = pick(payload, context, "result", default=None)
 
     if not content and not title:
         default_msg = str(config.get("default_message") or "").strip()
@@ -77,7 +112,7 @@ def handle_command(
             content = default_msg
         else:
             return error_response(
-                "No message content found in payload (tried: message, content, result, title)",
+                "No message content found in payload (tried: message, content, result, title, message_template)",
                 retry=False,
             )
 

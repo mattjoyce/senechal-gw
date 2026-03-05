@@ -335,7 +335,18 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		// Automatically merge accumulated context into the event payload
 		// so plugins only have to look in one place. Immediate event data wins.
 		if event.Payload == nil {
-			event.Payload = make(map[string]any)
+			if event.Type == "" {
+				// Raw payload (e.g. webhook body) — not a protocol.Event wrapper.
+				// Promote the raw JSON into event.Payload so switch/pipeline plugins
+				// can address fields via payload.* without special-casing.
+				var raw map[string]any
+				if err := json.Unmarshal(job.Payload, &raw); err == nil {
+					event.Payload = raw
+				}
+			}
+			if event.Payload == nil {
+				event.Payload = make(map[string]any)
+			}
 		}
 		for k, v := range requestContext {
 			if _, exists := event.Payload[k]; !exists {

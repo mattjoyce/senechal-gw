@@ -15,6 +15,7 @@ from run import (
     ok_response,
     pick,
     post_to_discord,
+    resolve_template,
 )
 
 WEBHOOK_URL = "https://discord.com/api/webhooks/123/abc"
@@ -42,6 +43,46 @@ class TestPick(unittest.TestCase):
 
     def test_custom_default(self):
         self.assertEqual(pick({}, {}, "missing", default="fallback"), "fallback")
+
+
+class TestResolveTemplate(unittest.TestCase):
+    def test_simple_field(self):
+        self.assertEqual(resolve_template("{name}", {"name": "alice"}), "alice")
+
+    def test_nested_field(self):
+        self.assertEqual(
+            resolve_template("{sender.login}", {"sender": {"login": "mattjoyce"}}),
+            "mattjoyce",
+        )
+
+    def test_deeply_nested(self):
+        payload = {"repository": {"owner": {"login": "mattjoyce"}}}
+        self.assertEqual(resolve_template("{repository.owner.login}", payload), "mattjoyce")
+
+    def test_missing_field_renders_empty(self):
+        self.assertEqual(resolve_template("{missing.field}", {}), "")
+
+    def test_partial_missing_renders_partial(self):
+        payload = {"sender": {"login": "alice"}}
+        result = resolve_template("{sender.login} starred {repository.full_name}", payload)
+        self.assertEqual(result, "alice starred ")
+
+    def test_non_string_value(self):
+        self.assertEqual(resolve_template("{count}", {"count": 42}), "42")
+
+    def test_no_placeholders(self):
+        self.assertEqual(resolve_template("static text", {}), "static text")
+
+    def test_full_github_star_template(self):
+        payload = {
+            "sender": {"login": "alice"},
+            "repository": {"full_name": "mattjoyce/ductile", "stargazers_count": 5},
+        }
+        result = resolve_template(
+            "⭐ {sender.login} starred {repository.full_name} ({repository.stargazers_count} stars)",
+            payload,
+        )
+        self.assertEqual(result, "⭐ alice starred mattjoyce/ductile (5 stars)")
 
 
 class TestHandleHealth(unittest.TestCase):
@@ -181,6 +222,48 @@ class TestHandleCommand(unittest.TestCase):
             r = self._call(payload={"message": "hi"})
         self.assertEqual(r["status"], "error")
         self.assertTrue(r["retry"])
+
+    def test_message_template_used_when_no_explicit_message(self):
+        cfg = {**CONFIG, "message_template": "⭐ {sender.login} starred {repository.full_name}"}
+        payload = {"sender": {"login": "alice"}, "repository": {"full_name": "mattjoyce/ductile"}}
+        with patch("run.post_to_discord") as mock_post:
+            r = handle_command(cfg, payload, {})
+        self.assertEqual(r["status"], "ok")
+        _, args, _ = mock_post.mock_calls[0]
+        self.assertEqual(args[1]["content"], "⭐ alice starred mattjoyce/ductile")
+
+    def test_explicit_message_wins_over_template(self):
+        cfg = {**CONFIG, "message_template": "⭐ {sender.login} starred {repository.full_name}"}
+        payload = {"message": "explicit", "sender": {"login": "alice"}, "repository": {"full_name": "x/y"}}
+        with patch("run.post_to_discord") as mock_post:
+            r = handle_command(cfg, payload, {})
+        self.assertEqual(r["status"], "ok")
+        _, args, _ = mock_post.mock_calls[0]
+        self.assertEqual(args[1]["content"], "explicit")
+
+    def test_template_takes_priority_over_result(self):
+        cfg = {**CONFIG, "message_template": "template wins"}
+        payload = {"result": "internal pipeline result"}
+        with patch("run.post_to_discord") as mock_post:
+            r = handle_command(cfg, payload, {})
+        self.assertEqual(r["status"], "ok")
+        _, args, _ = mock_post.mock_calls[0]
+        self.assertEqual(args[1]["content"], "template wins")
+
+    def test_result_field_used_when_no_template(self):
+        with patch("run.post_to_discord") as mock_post:
+            r = self._call(payload={"result": "step result"})
+        self.assertEqual(r["status"], "ok")
+        _, args, _ = mock_post.mock_calls[0]
+        self.assertEqual(args[1]["content"], "step result")
+
+    def test_empty_template_falls_through_to_default_message(self):
+        cfg = {**CONFIG, "message_template": "{missing.field}", "default_message": "fallback"}
+        with patch("run.post_to_discord") as mock_post:
+            r = handle_command(cfg, {}, {})
+        self.assertEqual(r["status"], "ok")
+        _, args, _ = mock_post.mock_calls[0]
+        self.assertEqual(args[1]["content"], "fallback")
 
 
 class TestMainProtocol(unittest.TestCase):
