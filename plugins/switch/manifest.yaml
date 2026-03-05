@@ -8,7 +8,7 @@ description: "Classify payloads by field value and emit the first matching event
 commands:
   - name: handle
     type: write
-    description: "Evaluate configured checks and emit the first matching event type."
+    description: "Route an event to a new type based on configured field match rules."
   - name: health
     type: read
     description: "Validate plugin configuration."

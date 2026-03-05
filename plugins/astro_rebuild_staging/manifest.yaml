@@ -14,7 +14,7 @@ description: "Rebuild and restart the local Astro staging site via docker compos
 commands:
   - name: handle
     type: write
-    description: "Run configured shell command. Incoming event payload is exposed as DUCTILE_PAYLOAD_* env vars."
+    description: "Rebuild and restart the local Astro staging site via Docker Compose. No payload required."
   - name: health
     type: read
     description: "Validate command and runtime prerequisites."

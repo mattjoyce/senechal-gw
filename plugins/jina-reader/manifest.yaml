@@ -12,7 +12,7 @@ commands:
     description: "Fetch the configured URL and emit a content_changed event if content has changed."
   - name: handle
     type: write
-    description: "Scrape a URL from the event payload and return clean markdown."
+    description: "Scrape content from a webpage and return clean markdown."
     input_schema:
       url: string
   - name: health

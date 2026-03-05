@@ -8,7 +8,7 @@ description: "Ensure repos have README/CHANGELOG and a README changelog link."
 commands:
   - name: handle
     type: write
-    description: "Apply repository policy to README/CHANGELOG."
+    description: "Enforce standardised README and CHANGELOG structure in a git repository."
     idempotent: false
     retry_safe: true
   - name: health

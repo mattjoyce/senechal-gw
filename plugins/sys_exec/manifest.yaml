@@ -14,7 +14,7 @@ description: "Execute a configured shell command and emit result events."
 commands:
   - name: handle
     type: write
-    description: "Run configured shell command. Incoming event payload is exposed as DUCTILE_PAYLOAD_* env vars."
+    description: "Execute a pre-configured shell command. The payload is exposed as DUCTILE_PAYLOAD_* environment variables."
   - name: health
     type: read
     description: "Validate command and runtime prerequisites."

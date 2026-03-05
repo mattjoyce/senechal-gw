@@ -11,7 +11,7 @@ commands:
     description: "No-op scheduled tick — no configured scheduled actions."
   - name: handle
     type: write
-    description: "Process text, URL, or YouTube video through a fabric AI pattern."
+    description: "Process a prompt or content through an AI pattern (default: summarize). Accepts raw text, URLs, or transcripts. Use the 'pattern' field to select a pattern, 'prompt' for freeform, or 'text'/'url'/'youtube_url' for content."
     input_schema:
       text: string
       url: string

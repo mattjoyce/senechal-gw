@@ -8,7 +8,7 @@ description: "Commit and push repo changes (README/CHANGELOG) with ductile autho
 commands:
   - name: handle
     type: write
-    description: "Commit and push README/CHANGELOG changes."
+    description: "Stage, commit, and push changes to a configured git repository."
     idempotent: false
     retry_safe: true
   - name: health

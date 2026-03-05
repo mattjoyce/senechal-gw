@@ -9,7 +9,7 @@ description: "Classify URL payloads to route YouTube vs web content."
 commands:
   - name: handle
     type: write
-    description: "Evaluate configured checks and emit the first matching event type."
+    description: "Classify a URL as YouTube, web, or plain text and route it to the correct pipeline."
   - name: health
     type: read
     description: "Validate plugin configuration."

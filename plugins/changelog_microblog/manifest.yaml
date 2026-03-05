@@ -8,7 +8,7 @@ description: "Generate micro-blog changelog entries from recent commits."
 commands:
   - name: handle
     type: write
-    description: "Update CHANGELOG.md with a micro-blog entry."
+    description: "Use AI to generate and append a micro-blog entry to a git repository's CHANGELOG.md from provided content."
     idempotent: false
     retry_safe: true
   - name: health

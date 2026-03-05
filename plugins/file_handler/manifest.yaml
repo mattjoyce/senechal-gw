@@ -13,7 +13,7 @@ commands:
     retry_safe: true
   - name: handle
     type: write
-    description: "Read or write a file. Set action to 'read' (requires file_path) or 'write' (requires content/result and output_path or output_dir)."
+    description: "Read or write a file from an authorised location. Set action to 'read' (requires file_path) or 'write' (requires content/result and output_path or output_dir)."
     idempotent: false
     retry_safe: false
     input_schema:

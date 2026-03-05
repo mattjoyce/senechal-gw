@@ -13,7 +13,7 @@ commands:
     retry_safe: false
   - name: handle
     type: write
-    description: "Alias for poll."
+    description: "Discover and sync public repos from a configured GitHub user account."
     idempotent: false
     retry_safe: false
   - name: health
