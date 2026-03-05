@@ -1,181 +1,115 @@
-# Ductile: Pipelines & Orchestration
+# Ductile: Pipelines & Orchestration (DSL Reference)
 
-This guide explains how to design, build, and debug event-driven workflows (Pipelines) in Ductile.
-
----
-
-## 1. The Governance Hybrid Model
-
-Ductile uses a unique "Governance Hybrid" architecture to manage data as it flows through a multi-hop chain. It separates **Governance** from **Execution**.
-
-### 1.1 Control Plane (Baggage)
-*   **What it is:** Metadata about the execution (e.g., `origin_user_id`, `discord_channel_id`, `trace_id`).
-*   **How it works:** This data is stored in a SQLite ledger (`event_context`). It is automatically merged and carried forward (as "Baggage") to every job in the chain.
-*   **Protection:** Keys starting with `origin_` are immutable. Once set at the start of a chain, plugins cannot overwrite them, ensuring a reliable audit trail.
-
-### 1.2 Data Plane (Workspaces)
-*   **What it is:** Large physical artifacts (e.g., `.mp3` audio files, `.txt` transcripts, `.pdf` documents).
-*   **How it works:** Every job is assigned a `workspace_dir` on the filesystem.
-*   **Isolation:** When a pipeline branches, Ductile performs a **Zero-Copy Clone** (using hardlinks). This ensures Step B and Step C have their own isolated folders but don't consume double the disk space.
+Ductile uses a YAML-based Domain Specific Language (DSL) to define event-driven workflows. Pipelines transform atomic **Connectors** into complex, multi-hop **Orchestrations**.
 
 ---
 
-## 2. Pipeline DSL
+## 1. Top-Level Structure
 
-Pipelines are defined in YAML files referenced via `include:` in `config.yaml` (either individual files or directories).
-
-### 2.1 Basic Syntax
+A pipeline file (e.g., `pipelines.yaml`) contains an array of pipeline definitions.
 
 ```yaml
 pipelines:
-  - name: video-wisdom
-    on: discord.video_received   # The trigger event
-    steps:
-      - id: downloader
-        uses: yt-dlp-plugin      # Execute a plugin
-      
-      - id: extractor
-        uses: whisper-ai         # Next step in the chain
-```
-
-### 2.2 Synchronous Pipelines (`execution_mode`)
-By default, pipelines are asynchronous (fire-and-forget). For interactive use cases (e.g., Discord bots, CLI tools), you can mark a pipeline as `synchronous`.
-
-```yaml
-  - name: video-summarizer
-    on: discord.command.summarize
-    execution_mode: synchronous  # API will block until the pipeline completes
-    timeout: 3m                 # Maximum time the API will wait
-    steps:
-      - uses: youtube-dl
-      - uses: whisper-ai
-      - uses: fabric-summarizer
-```
-
-**Sync Principles:**
-*   **Guarded Bridge:** The engine remains asynchronous internally. The API simply "stays on the line" until the finish line is reached.
-*   **Timeout Handling:** If the pipeline exceeds the `timeout`, the API returns `202 Accepted` with a `job_id`, allowing the client to poll later.
-*   **Result Aggregation:** The final JSON response contains an array of results from *every* step in the execution tree.
-
-### 2.3 Trigger Path & EventContext Lineage
-
-How a run is started affects where the first `event_context` row comes from:
-
-- `POST /pipeline/{name}`:
-  - Resolves pipeline entry dispatches first.
-  - Creates a root `event_context` for each entry dispatch.
-  - For `execution_mode: synchronous`, fan-out entry pipelines require `?async=true`.
-- `POST /plugin/{plugin}/{command}`:
-  - Bypasses router and enqueues one direct plugin job.
-  - No root `event_context` is created at enqueue time.
-
-During routed execution, each child dispatch gets a new `event_context` row with parent lineage. Updates are shallow-merged into accumulated context, and `origin_*` keys are immutable across the chain.
-
-Plugins receive this accumulated control-plane state in request `context`.
-
-### 2.4 Reusable Middleware (`call`)
-You can call one pipeline from another to promote logic reuse.
-
-```yaml
-  - name: standard-summarization
-    on: audio.ready
-    steps:
-      - uses: whisper-ai
-      - uses: llm-summarizer
-
-  - name: discord-flow
-    on: discord.link
-    steps:
-      - uses: downloader
-      - call: standard-summarization  # Inherits baggage and workspace
-```
-
-### 2.5 Branching (`split`)
-Use `split` to trigger multiple parallel paths.
-
-```yaml
-    steps:
-      - uses: processor
-      - split:
-          - uses: discord-notifier
-          - uses: s3-archiver
+  - name: my-workflow      # Required: Unique identifier
+    on: my.event.type      # Required: Trigger event type
+    execution_mode: async  # Optional: async (default) | synchronous
+    timeout: 30s           # Optional: For synchronous execution
+    steps:                 # Required: Sequential steps
+      - uses: my-plugin
 ```
 
 ---
 
-## 3. Decision Making: Multi-Event Branching
+## 2. Pipeline Properties
 
-Ductile avoids `if/else` logic in YAML. Instead, the **Plugin** makes the decision by choosing which event type to emit.
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | String | A unique name for the pipeline. Used for logging and API triggers. |
+| `on` | String | The event type that triggers this pipeline. Must match exactly. |
+| `execution_mode`| Enum | `async` (fire-and-forget) or `synchronous` (API blocks for result). |
+| `timeout` | Duration| Max time to wait for a `synchronous` pipeline (e.g., `5s`, `2m`). |
+| `steps` | Array | The list of steps to execute in order. |
 
-### 3.1 The Pattern
-1.  **Plugin:** Inspects the data and emits `quality_high` or `quality_low`.
-2.  **YAML:** Routes those specific event types to different steps.
+---
+
+## 3. Step Types
+
+Each step in a pipeline must perform exactly **one** of the following actions:
+
+### 3.1 `uses` (Invoke Plugin)
+Calls a specific plugin or alias. This is the most common step.
 
 ```yaml
-- id: checker
-  uses: quality-filter
-  # The router implicitly matches the emitted event types
-  on_events:
-    quality_high: [publisher]
-    quality_low: [reviewer]
+steps:
+  - id: download-step   # Optional: Unique ID within the pipeline
+    uses: youtube-dl
+```
+
+### 3.2 `call` (Invoke Pipeline)
+Calls another pipeline by name, inheriting the current baggage and workspace. This promotes logic reuse.
+
+```yaml
+steps:
+  - call: standard-summarizer
+```
+
+### 3.3 `steps` (Nested Sequence)
+Groups multiple steps together. Useful for organization or within a `split`.
+
+```yaml
+steps:
+  - steps:
+      - uses: step-1
+      - uses: step-2
+```
+
+### 3.4 `split` (Parallel Fan-out)
+Executes multiple steps or sub-pipelines in parallel. Ductile ensures each branch has its own isolated **Workspace** (via hard-links) while sharing the same **Baggage**.
+
+```yaml
+steps:
+  - uses: processor
+  - split:
+      - uses: discord-notifier
+      - uses: s3-archiver
 ```
 
 ---
 
-## 4. Plugin Protocol (v2)
+## 4. How Data Flows
 
-Plugins receive orchestration metadata via `stdin`.
+### 4.1 The Data Plane (Workspaces)
+- Every job gets a unique folder on disk.
+- If Step A creates `video.mp4`, Step B can read it from its own workspace.
+- When a `split` occurs, both branches get a copy of the parent's files (zero-copy clone).
 
-```json
-{
-  "protocol": 2,
-  "job_id": "uuid-456",
-  "workspace_dir": "<workspace_root>/ws/job-456/",
-  "context": {
-    "origin_user": "matt",
-    "channel_id": "123"
-  },
-  "event": {
-    "type": "video_downloaded",
-    "payload": { "filename": "lecture.mp4" }
-  }
-}
-```
+### 4.2 The Control Plane (Baggage)
+- Metadata (JSON) is stored in the `event_context` database table.
+- Every step automatically receives all metadata produced by upstream steps.
+- Immutable keys (starting with `origin_`) are preserved for the entire life of the pipeline.
 
-**Plugin Checklist:**
-*   Read `context` for routing baggage (like IDs).
-*   Read/Write files directly in `workspace_dir`.
-*   Only return filenames in the JSON `payload`, never file content.
+### 4.3 Results & Payloads
+- The `result` (short string) and `payload` (JSON) from Step A are passed to Step B.
+- In `synchronous` mode, the final API response aggregates the results from every step.
 
 ---
 
-## 5. Troubleshooting & Observability
+## 5. Decision Making
 
-### 5.1 The `inspect` Tool
-Use the `inspect` command to visualize the "Lineage" of a job. It shows exactly how the baggage accumulated and which files exist in each workspace.
+Ductile uses **Event-Driven Branching**. A plugin decides the next path by choosing which event type to emit.
 
-**CLI Principles:**
-All Ductile CLI commands support:
-*   `-v, --verbose`: To see internal routing decisions and baggage merges.
-*   `--dry-run`: To preview pipeline transitions without executing code.
+1.  **Step 1:** Plugin `classifier` inspects data.
+2.  **Output:** Plugin emits `type: "image.detected"` or `type: "text.detected"`.
+3.  **Routing:** You define two pipelines—one `on: image.detected` and one `on: text.detected`.
 
-```bash
-ductile job inspect <job_id> -v
-```
+This keeps your YAML clean and puts the domain logic where it belongs: in the plugin.
 
-**Output Example:**
-```text
-[1] <root> :: <entry>
-    context_id : uuid-ctx-1
-    baggage    : {"origin_user": "matt"}
-    artifacts  : [video.mp4]
+---
 
-[2] video-wisdom :: step_process
-    context_id : uuid-ctx-2
-    parent_id  : uuid-ctx-1
-    baggage    : {"origin_user": "matt", "status": "processed"}
-    artifacts  : [video.mp4, summary.txt]
-```
+## 6. Validation
 
-### 5.2 Cycle Detection
-Ductile automatically detects circular dependencies (e.g., A calls B, B calls A) at load time and will refuse to start if a cycle is found.
+Ductile performs several checks when loading pipelines:
+- **Cycle Detection:** Refuses to start if a pipeline calls itself (directly or indirectly).
+- **Shadowing:** Ensures two pipelines don't use the same name.
+- **Dangling Calls:** Ensures every `call` references a valid pipeline name.
+- **Schema Validation:** Verifies the YAML structure against the official [pipelines.json](schemas/pipelines.schema.json).

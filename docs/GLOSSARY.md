@@ -8,13 +8,19 @@ Key terms used throughout Ductile's documentation and configuration.
 
 The `ductile` binary — the central runtime that manages plugins, schedules work, routes events, and maintains the execution ledger.
 
-## Plugin
+## Plugin / Connector
 
-A polyglot adapter that connects Ductile to an external system (an API, a database, a shell command). Written in any language; communicates via JSON over stdin/stdout. Also called a **Connector**.
+A polyglot adapter that connects Ductile to an external system (an API, a database, a shell command). Written in any language; communicates via JSON over stdin/stdout. 
+- **Plugin:** The code and manifest (the implementation).
+- **Connector:** The logical integration point (the "skill").
+
+## Alias (Plugin Instance)
+
+A uniquely named and configured instance of a base plugin. Defined in `plugins.yaml` using the `uses:` field. Allows running multiple copies of the same logic (e.g., `discord_alerts` vs `discord_logs`) with different settings.
 
 ## Command
 
-A discrete operation provided by a plugin. The four standard commands are:
+A discrete operation provided by a plugin. Common commands include:
 
 - **`poll`** — proactive; Ductile calls the plugin on a schedule to pull data.
 - **`handle`** — reactive; the plugin processes an incoming event.
@@ -23,104 +29,84 @@ A discrete operation provided by a plugin. The four standard commands are:
 
 ## Pipeline
 
-A configured sequence of steps triggered by an event. Pipelines define how data flows between multiple plugins to complete a workflow.
+A high-level workflow orchestration defined in YAML. Pipelines react to a single trigger event and execute a sequence of plugin steps, automatically passing data between them.
+
+## Event Bus
+
+The internal routing layer that decouples producers (schedules, webhooks, API) from consumers (pipelines, plugins). It ensures events are distributed to all matching routes.
 
 ## Event
 
-A typed packet of data (e.g., `file.changed`, `webhook.received`) that signals something happened and triggers routing within the gateway.
+A typed packet of data (e.g., `youtube.playlist_item`) that signals an occurrence and triggers routing within the gateway.
 
 ## Payload
 
 The JSON object attached to an event. Payload fields are passed to downstream plugins when the event is routed.
 
-## Context (Event Context)
+## Context (Baggage)
 
-Accumulated payload fields stored across a pipeline chain. Used as a fallback when a downstream step needs information produced earlier.
+Immutable metadata (e.g., `origin_user_id`, `trace_id`) that persists across every hop of a multi-step pipeline. Carried in the `event_context` ledger and automatically merged into downstream requests.
+
+## Worker Pool (Max Workers)
+
+The global set of execution slots that process jobs in parallel. Controlled by `service.max_workers` (defaults to `CPU-1`).
+
+## Parallelism
+
+The maximum number of concurrent jobs allowed for a specific plugin or alias. Prevents a single resource-heavy plugin from saturating the worker pool.
+
+## Concurrency Safe
+
+A boolean hint in a plugin's `manifest.yaml`. If false (default), the plugin is restricted to a parallelism of 1 (serial execution) to prevent race conditions.
+
+## Smart Dequeue
+
+The logic that skips jobs in the queue if their target plugin has already reached its parallelism limit, allowing other plugins to proceed.
 
 ## Result
 
-A short human-readable summary returned by a plugin when `status=ok`. Included in the protocol response and propagated to downstream payloads when events are emitted.
+The human-readable summary or data returned by a plugin in its protocol response. Often used as the input for the next step in a pipeline.
 
-## State Updates
+## State (Plugin State)
 
-The `state_updates` object in a plugin response. Applied as a shallow merge into the plugin's persistent state.
-
-## Plugin State
-
-A per-plugin JSON blob stored in SQLite that persists across runs.
+A persistent JSON blob stored in SQLite for each plugin instance. Plugins can read their state and return `state_updates` to store data (e.g., OAuth tokens, last-seen IDs) across runs.
 
 ## Job
 
-The unit of execution. Every command invocation creates an immutable Job record capturing input, output, logs, and status.
+The atomic unit of work in Ductile. Every command invocation creates an immutable Job record capturing input, output, logs, and status.
 
 ## Queue
 
-The persistent job queue stored in SQLite. Scheduler, router, API, and webhooks all enqueue jobs here.
+The persistent, SQLite-backed job queue. All triggers (scheduler, router, API, webhooks) submit jobs here for the worker pool to pick up.
 
 ## Schedule
 
-A configuration entry that tells the scheduler when and how to run a plugin command.
-
-## Schedule Entry
-
-The scheduler's persisted state for a schedule: `last_fired_at`, `next_run_at`, `last_success_at`, and status (`active`, `paused`, `exhausted`).
-
-## Scheduler
-
-The heartbeat loop that evaluates schedules and enqueues due jobs.
-
-## Cron
-
-A five-field schedule expression (`min hour dom month dow`) used by cron schedules.
+A configuration entry that tells the scheduler when and how to run a plugin command (e.g., `every: 5m`, `cron: "0 * * * *"`).
 
 ## Jitter
 
-A random offset applied to interval schedules to avoid synchronized load.
-
-## Catch-up
-
-Startup policy that controls what happens when scheduled ticks were missed (`skip`, `run_once`, `run_all`).
-
-## Overlap Policy
-
-Per-schedule policy (`if_running`) that controls whether to skip, queue, or cancel when a previous job is still running.
+A random offset applied to schedules to prevent multiple jobs from triggering at the exact same millisecond (the "thundering herd" problem).
 
 ## Dedupe Key
 
-A key used to suppress duplicate enqueues within a dedupe window.
+A unique string used to suppress duplicate enqueues. If a job with the same key is already queued or recently succeeded, the new enqueue is ignored.
 
 ## Circuit Breaker
 
-Scheduler guard that opens after repeated failures and temporarily blocks scheduled polls until a cooldown expires.
-
-## Retry / Backoff
-
-Automatic re-enqueue of failed jobs with exponential delay until max attempts are exhausted.
+An automated safety switch that "opens" after repeated plugin failures, temporarily blocking scheduled runs to allow the system or external API to recover.
 
 ## Webhook
 
-An HTTP endpoint that receives external events and enqueues plugin jobs.
-
-## Route
-
-A mapping from an event type to a downstream plugin or pipeline step.
-
-## Token / Scope
-
-Authentication credentials and permission sets used for API and webhook access.
-
-## Baggage
-
-Stateful metadata (JSON) that persists across the hops of a multi-step pipeline. Allows context — a user ID, a source URL, intermediate results — to travel with the execution rather than being re-fetched at each step.
-
-## Execution Ledger
-
-The persistent history of all jobs and pipeline transitions, stored in SQLite. Used for inspection, debugging, and lineage tracing.
-
-## Workspace
-
-An isolated directory created per job for file-based side effects — downloaded content, generated files, intermediate artifacts. Scoped to the job and retained for inspection.
+An HMAC-verified HTTP endpoint that accepts external events and injects them into the Ductile event bus.
 
 ## Skill
 
-The machine-readable description of a plugin's capabilities, exported via `ductile system skills` or `GET /skills`. Useful for tooling and automated orchestration.
+A machine-readable description of a capability (either an atomic plugin command or an orchestrated pipeline), exported via `/skills` or `/openapi.json`.
+
+## Workspace
+
+A dedicated, ephemeral directory on the filesystem created for each job. Used for storing artifacts like downloads or generated reports.
+
+## Execution Ledger
+
+The persistent history of all jobs, pipeline steps, and event transitions. Used for the TUI "Overwatch" and audit logging.
