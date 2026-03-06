@@ -1,0 +1,14 @@
+log_level: info
+service:
+  strict_mode: false
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "./plugins"
+webhooks:
+  listen: "127.0.0.1:18091"
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml
+  - webhooks.yaml

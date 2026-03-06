@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -26,6 +28,19 @@ type queueBackedWaiter struct {
 
 func (w *queueBackedWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
 	return w.q.GetJobTree(ctx, rootJobID)
+}
+
+func allocateLocalAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate local addr: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close temp listener: %v", err)
+	}
+	return addr
 }
 
 // TestAPIIntegration tests the API flow with real queue, router, waiter, and context store.
@@ -66,8 +81,9 @@ func TestAPIIntegration(t *testing.T) {
 		},
 	}, slog.Default())
 
+	listenAddr := allocateLocalAddr(t)
 	server := api.New(api.Config{
-		Listen: "localhost:18080",
+		Listen: listenAddr,
 		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
 	}, q, registry, r, &queueBackedWaiter{q: q}, ctxStore, events.NewHub(10), slog.Default())
 
@@ -89,7 +105,7 @@ func TestAPIIntegration(t *testing.T) {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	baseURL := "http://localhost:18080"
+	baseURL := fmt.Sprintf("http://%s", listenAddr)
 
 	t.Run("direct plugin trigger enqueues real job", func(t *testing.T) {
 		triggerBody := []byte(`{"payload": {"test": "data"}}`)

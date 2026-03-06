@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FIXTURE="${1:-all}"
+FIXTURE_DIR="$ROOT_DIR/test/fixtures/docker"
+ARTIFACT_ROOT="$ROOT_DIR/test-artifacts/docker/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+
+log() {
+  echo "==> test-docker: $*"
+}
+
+run_fixture() {
+  local name="$1"
+  local scenario_dir="$FIXTURE_DIR/$name"
+  if [[ ! -d "$scenario_dir" ]]; then
+    echo "unknown fixture: $name" >&2
+    return 1
+  fi
+
+  log "fixture $name"
+  if [[ -x "$scenario_dir/run.sh" ]]; then
+    FIXTURE_NAME="$name" ARTIFACT_ROOT="$ARTIFACT_ROOT" ROOT_DIR="$ROOT_DIR" "$scenario_dir/run.sh"
+  else
+    echo "fixture missing run.sh: $name" >&2
+    return 1
+  fi
+}
+
+if [[ ! -d "$FIXTURE_DIR" ]]; then
+  log "no Docker fixtures yet"
+  exit 0
+fi
+
+if [[ "$FIXTURE" == "all" ]]; then
+  found=0
+  while IFS= read -r fixture; do
+    found=1
+    run_fixture "$(basename "$fixture")"
+  done < <(find "$FIXTURE_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
+  if [[ "$found" -eq 0 ]]; then
+    log "no Docker fixtures yet"
+  fi
+else
+  run_fixture "$FIXTURE"
+fi

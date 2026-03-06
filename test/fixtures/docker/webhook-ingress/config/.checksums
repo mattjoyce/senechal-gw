@@ -1,0 +1,7 @@
+version: 2
+generated_at: "2026-03-06T22:56:07Z"
+hashes:
+    /home/matt/Projects/gemini/ductile/test/fixtures/docker/webhook-ingress/config/config.yaml: 7e64cae1ffefbea76d0065938f5748d2474721b3aa26e991f669744e0fac3cb4
+    /home/matt/Projects/gemini/ductile/test/fixtures/docker/webhook-ingress/config/scopes/webhook.json: aa90c819d90e285ae82812d09c592a9d4b81c11e557ae3d9a24db2439749d984
+    /home/matt/Projects/gemini/ductile/test/fixtures/docker/webhook-ingress/config/tokens.yaml: 240948c0e028cac1d77cfa90051120998eb7bbd44d1897804a9d4eae609ffdb6
+    /home/matt/Projects/gemini/ductile/test/fixtures/docker/webhook-ingress/config/webhooks.yaml: 989a4648b7e959eabace565823132abf2e84ab32d299de1d8cfc94930edd2425
