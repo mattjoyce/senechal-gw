@@ -1,0 +1,24 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: fetch
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Fetch raw webpage content via HTTP GET and return HTML or plain text"
+concurrency_safe: false
+commands:
+  - name: handle
+    type: write
+    description: "Fetch the URL from the event payload and emit fetch.completed or fetch.failed."
+    input_schema:
+      url: string
+  - name: health
+    type: read
+    description: "Returns plugin health status."
+config_keys:
+  required: []
+  optional:
+    - user_agent
+    - timeout_seconds
+    - follow_redirects
+    - output_format
