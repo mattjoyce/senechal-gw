@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo "==> test-premerge: fast tests"
+"$ROOT_DIR/scripts/test-fast"
+
+echo "==> test-premerge: golangci-lint"
+golangci-lint run ./...
+
+echo "==> test-premerge: docker validation"
+"$ROOT_DIR/scripts/test-docker"
