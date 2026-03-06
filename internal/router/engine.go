@@ -307,6 +307,19 @@ func firstEntryStepID(entryNodeIDs []string) string {
 	return entryNodeIDs[0]
 }
 
+// GetNode returns the compiled node for the given pipeline and step IDs.
+func (r *Router) GetNode(pipelineName string, stepID string) (dsl.Node, bool) {
+	if strings.TrimSpace(pipelineName) == "" || strings.TrimSpace(stepID) == "" {
+		return dsl.Node{}, false
+	}
+	pipeline, ok := r.set.Pipelines[pipelineName]
+	if !ok {
+		return dsl.Node{}, false
+	}
+	node, ok := pipeline.Nodes[stepID]
+	return node, ok
+}
+
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {
 	for pipelineName, pipeline := range set.Pipelines {
 		for _, node := range pipeline.Nodes {

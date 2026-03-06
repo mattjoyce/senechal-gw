@@ -21,6 +21,115 @@ import (
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
+func TestEndToEndPipelineWithConditionalSkip(t *testing.T) {
+	// 1. Setup Environment
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "ductile.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	workspacesDir := filepath.Join(tmpDir, "workspaces")
+
+	for _, dir := range []string{pluginsDir, workspacesDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatalf("failed to create dir %s: %v", dir, err)
+		}
+	}
+
+	log.Setup("ERROR")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	db, err := storage.OpenSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	wsManager, _ := workspace.NewFSManager(workspacesDir)
+
+	triggerScript := `#!/bin/bash
+echo '{"status":"ok","result":"triggered","events":[{"type":"test.triggered","event_id":"stable-id","payload":{"origin_user":"matt","video_url":"https://yt.com/123","status":"ok"}}]}'
+`
+	createPlugin(t, pluginsDir, "trigger", triggerScript)
+
+	skipScript := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"unexpected"}'
+`
+	createPlugin(t, pluginsDir, "skipme", skipScript)
+
+	notifyScript := `#!/usr/bin/env python3
+import sys, json
+req = json.load(sys.stdin)
+print(json.dumps({"status":"ok","result":"verified"}))
+`
+	createPlugin(t, pluginsDir, "notifier", notifyScript)
+
+	pipelineYAML := `pipelines:
+  - name: e2e-if
+    on: test.triggered
+    steps:
+      - id: step_skip
+        uses: skipme
+        if:
+          path: payload.status
+          op: eq
+          value: error
+      - id: step_notify
+        uses: notifier
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("failed to write pipeline: %v", err)
+	}
+
+	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...any) {})
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
+	if err != nil {
+		t.Fatalf("failed to load router: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	for _, p := range []string{"trigger", "skipme", "notifier"} {
+		cfg.Plugins[p] = config.PluginConf{Enabled: true}
+	}
+
+	hub := events.NewHub(128)
+	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+
+	rootID, _ := q.Enqueue(ctx, queue.EnqueueRequest{Plugin: "trigger", Command: "poll", SubmittedBy: "test"})
+	for range 5 {
+		job, _ := q.Dequeue(ctx)
+		if job == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		disp.ExecuteJob(ctx, job)
+	}
+
+	var skipStatus string
+	db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'skipme' LIMIT 1").Scan(&skipStatus)
+	if skipStatus != "skipped" {
+		t.Fatalf("skipme status = %q, want skipped", skipStatus)
+	}
+	var notifyStatus string
+	db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'notifier' LIMIT 1").Scan(&notifyStatus)
+	if notifyStatus != "succeeded" {
+		t.Fatalf("notifier status = %q, want succeeded", notifyStatus)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE parent_job_id = ?", rootID).Scan(&count); err != nil {
+		t.Fatalf("count child jobs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("child job count = %d, want 1", count)
+	}
+}
+
 func TestEndToEndPipeline(t *testing.T) {
 	// 1. Setup Environment
 	tmpDir := t.TempDir()

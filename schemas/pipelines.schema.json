@@ -48,6 +48,29 @@
       "required": ["name", "on"],
       "additionalProperties": false
     },
+    "Condition": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "op": {
+          "type": "string",
+          "enum": ["exists", "eq", "neq", "in", "gt", "gte", "lt", "lte"]
+        },
+        "value": {},
+        "all": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Condition" }
+        },
+        "any": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Condition" }
+        },
+        "not": {
+          "$ref": "#/$defs/Condition"
+        }
+      },
+      "additionalProperties": false
+    },
     "StepEntry": {
       "type": "object",
       "description": "A single step in a pipeline.",
@@ -63,6 +86,10 @@
         "call": {
           "type": "string",
           "description": "Inline call expression (alternative to uses)."
+        },
+        "if": {
+          "$ref": "#/$defs/Condition",
+          "description": "Optional structured condition controlling whether the step runs."
         },
         "steps": {
           "type": "array",

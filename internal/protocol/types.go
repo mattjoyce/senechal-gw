@@ -16,12 +16,11 @@ type Request struct {
 	DeadlineAt   time.Time      `json:"deadline_at"`
 }
 
-
 // Response represents the protocol v2 response envelope received from plugins via stdout.
 type Response struct {
 	Status       string         `json:"status"` // ok | error
 	Error        string         `json:"error,omitempty"`
-	Retry        *bool          `json:"retry,omitempty"` // defaults to true if omitted
+	Retry        *bool          `json:"retry,omitempty"`  // defaults to true if omitted
 	Result       string         `json:"result,omitempty"` // human-readable summary
 	Events       []Event        `json:"events,omitempty"`
 	StateUpdates map[string]any `json:"state_updates,omitempty"`

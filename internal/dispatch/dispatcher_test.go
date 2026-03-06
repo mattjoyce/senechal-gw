@@ -851,6 +851,139 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 	}
 }
 
+func TestDispatcher_ExecuteJob_SkipsConditionalStepAndContinues(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(pluginsDir): %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
+	wsManager, err := workspace.NewFSManager(workspaceBaseDir)
+	if err != nil {
+		t.Fatalf("NewFSManager: %v", err)
+	}
+
+	scriptA := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"start","events":[{"type":"chain.start","payload":{"status":"ok"}}]}'
+`
+	scriptB := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"should-not-run"}'
+`
+	scriptC := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"ran-c"}'
+`
+	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
+	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
+	plugC := createTestPlugin(t, pluginsDir, "plugin-c", scriptC)
+	registry.Add(plugA)
+	registry.Add(plugB)
+	registry.Add(plugC)
+
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: step_b
+        uses: plugin-b
+        if:
+          path: payload.status
+          op: eq
+          value: error
+      - id: step_c
+        uses: plugin-c
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["plugin-a"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Poll: 5 * time.Second}}
+	cfg.Plugins["plugin-b"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+	cfg.Plugins["plugin-c"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+
+	disp := New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	ctx := context.Background()
+
+	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{Plugin: "plugin-a", Command: "poll", SubmittedBy: "test"})
+	if err != nil {
+		t.Fatalf("Enqueue(root): %v", err)
+	}
+	rootJob, err := q.Dequeue(ctx)
+	if err != nil || rootJob == nil {
+		t.Fatalf("Dequeue(root): job=%v err=%v", rootJob, err)
+	}
+	disp.executeJob(ctx, rootJob)
+
+	stepBJob, err := q.Dequeue(ctx)
+	if err != nil || stepBJob == nil {
+		t.Fatalf("Dequeue(step_b): job=%v err=%v", stepBJob, err)
+	}
+	disp.executeJob(ctx, stepBJob)
+
+	stepCJob, err := q.Dequeue(ctx)
+	if err != nil || stepCJob == nil {
+		t.Fatalf("Dequeue(step_c): job=%v err=%v", stepCJob, err)
+	}
+	if stepCJob.Plugin != "plugin-c" {
+		t.Fatalf("step_c plugin = %q, want %q", stepCJob.Plugin, "plugin-c")
+	}
+	disp.executeJob(ctx, stepCJob)
+
+	stepBResult, err := q.GetJobByID(ctx, stepBJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(step_b): %v", err)
+	}
+	if stepBResult.Status != queue.StatusSkipped {
+		t.Fatalf("step_b status = %q, want %q", stepBResult.Status, queue.StatusSkipped)
+	}
+	if stepBResult.LastError == nil || *stepBResult.LastError != "if condition evaluated false" {
+		t.Fatalf("step_b last_error = %#v", stepBResult.LastError)
+	}
+	if string(stepBResult.Result) == "" {
+		t.Fatalf("expected skipped result payload")
+	}
+
+	stepCResult, err := q.GetJobByID(ctx, stepCJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(step_c): %v", err)
+	}
+	if stepCResult.Status != queue.StatusSucceeded {
+		t.Fatalf("step_c status = %q, want %q", stepCResult.Status, queue.StatusSucceeded)
+	}
+
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepBJob.ID)); err != nil {
+		t.Fatalf("stat skipped step workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepCJob.ID)); err != nil {
+		t.Fatalf("stat successor workspace: %v", err)
+	}
+
+	_ = rootJobID
+}
+
 func filterEventsByType(eventsIn []events.Event, typ string) []events.Event {
 	out := make([]events.Event, 0, len(eventsIn))
 	for _, ev := range eventsIn {

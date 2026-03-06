@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/zeebo/blake3"
 )
 
@@ -138,6 +139,15 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 		return nil, nil, fmt.Errorf("step must define exactly one of uses, call, steps, or split")
 	}
 
+	var cond *conditions.Condition
+	if step.If != nil {
+		if err := conditions.Validate(*step.If); err != nil {
+			return nil, nil, err
+		}
+		clone := *step.If
+		cond = &clone
+	}
+
 	switch {
 	case strings.TrimSpace(step.Uses) != "":
 		id, err := b.allocNodeID(step.ID)
@@ -145,9 +155,10 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 			return nil, nil, err
 		}
 		node := Node{
-			ID:   id,
-			Kind: NodeKindUses,
-			Uses: strings.TrimSpace(step.Uses),
+			ID:        id,
+			Kind:      NodeKindUses,
+			Uses:      strings.TrimSpace(step.Uses),
+			Condition: cond,
 		}
 		b.pipeline.Nodes[id] = node
 		return []string{id}, []string{id}, nil
@@ -159,9 +170,10 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 		}
 		callTarget := strings.TrimSpace(step.Call)
 		node := Node{
-			ID:   id,
-			Kind: NodeKindCall,
-			Call: callTarget,
+			ID:        id,
+			Kind:      NodeKindCall,
+			Call:      callTarget,
+			Condition: cond,
 		}
 		b.pipeline.Nodes[id] = node
 		b.called[callTarget] = struct{}{}

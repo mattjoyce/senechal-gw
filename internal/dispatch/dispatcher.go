@@ -23,6 +23,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
@@ -39,8 +40,8 @@ const (
 
 // workerResult is sent by a worker goroutine when it finishes executing a job.
 type workerResult struct {
-	jobID    string
-	plugin   string
+	jobID     string
+	plugin    string
 	dedupeKey string // empty if job had no dedupe key
 }
 
@@ -239,6 +240,21 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		"parent_job_id": deref(job.ParentJobID),
 	})
 
+	preflight, err := d.preflightJob(ctx, job)
+	if err != nil {
+		errMsg := fmt.Sprintf("job preflight failed: %v", err)
+		jobLogger.Error(errMsg)
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	if preflight.decision == preflightDecisionSkip {
+		d.skipJob(ctx, jobLogger, job, preflight.requestContext, preflight.reason)
+		return
+	}
+
+	requestContext := preflight.requestContext
+	workspaceDir := preflight.workspaceDir
+
 	// Get plugin from registry
 	plug, ok := d.registry.Get(job.Plugin)
 	if !ok {
@@ -283,22 +299,6 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	// Determine timeout for this command
 	timeout := d.getTimeout(pluginCfg.Timeouts, job.Command)
 	deadline := time.Now().Add(timeout)
-
-	workspaceDir, err := d.ensureWorkspaceForJob(ctx, job)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to prepare workspace: %v", err)
-		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
-		return
-	}
-
-	requestContext, err := d.loadRequestContext(ctx, job)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to load event context: %v", err)
-		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
-		return
-	}
 
 	// Build protocol request
 	req := &protocol.Request{
@@ -787,11 +787,11 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 			// Auto-propagate designated context fields from input event to output event
 			// (if not already present in output). This eliminates manual propagation loops
 			// in plugins. Context fields: pattern, prompt, model, output_dir, output_path, filename.
-			if next.Event.Payload != nil && len(events) > 0 && events[i].Payload != nil {
+			if next.Event.Payload != nil && ev.Payload != nil {
 				contextFields := []string{"pattern", "prompt", "model", "output_dir", "output_path", "filename"}
 				for _, field := range contextFields {
 					if _, exists := next.Event.Payload[field]; !exists {
-						if val, ok := events[i].Payload[field]; ok {
+						if val, ok := ev.Payload[field]; ok {
 							next.Event.Payload[field] = val
 						}
 					}
@@ -880,6 +880,168 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		}
 	}
 
+	return nil
+}
+
+type preflightDecision string
+
+const (
+	preflightDecisionRun  preflightDecision = "run"
+	preflightDecisionSkip preflightDecision = "skip"
+)
+
+type jobPreflight struct {
+	decision       preflightDecision
+	reason         string
+	requestContext map[string]any
+	workspaceDir   string
+}
+
+type conditionEvaluation struct {
+	shouldSkip bool
+	reason     string
+}
+
+func (d *Dispatcher) preflightJob(ctx context.Context, job *queue.Job) (jobPreflight, error) {
+	requestContext, err := d.loadRequestContext(ctx, job)
+	if err != nil {
+		return jobPreflight{}, fmt.Errorf("load event context: %w", err)
+	}
+
+	// Prepare the workspace before evaluating first-class control-flow.
+	//
+	// A skipped step can still have downstream successors, and those children may
+	// inherit/clone the parent's workspace even though no plugin process ran for
+	// the skipped node. Treating workspace creation as pre-execution assurance
+	// keeps the data-plane semantics consistent for both run and skip outcomes.
+	workspaceDir, err := d.ensureWorkspaceForJob(ctx, job)
+	if err != nil {
+		return jobPreflight{}, fmt.Errorf("prepare workspace: %w", err)
+	}
+
+	if d.router != nil {
+		evaluation, err := d.evaluateStepCondition(ctx, job, requestContext)
+		if err != nil {
+			return jobPreflight{}, fmt.Errorf("evaluate step condition: %w", err)
+		}
+		if evaluation.shouldSkip {
+			return jobPreflight{
+				decision:       preflightDecisionSkip,
+				reason:         evaluation.reason,
+				requestContext: requestContext,
+				workspaceDir:   workspaceDir,
+			}, nil
+		}
+	}
+
+	return jobPreflight{
+		decision:       preflightDecisionRun,
+		requestContext: requestContext,
+		workspaceDir:   workspaceDir,
+	}, nil
+}
+
+func (d *Dispatcher) evaluateStepCondition(_ context.Context, job *queue.Job, requestContext map[string]any) (conditionEvaluation, error) {
+	if d.router == nil {
+		return conditionEvaluation{}, nil
+	}
+
+	pipelineName, _ := requestContext["ductile_pipeline"].(string)
+	stepID, _ := requestContext["ductile_step_id"].(string)
+	if pipelineName == "" || stepID == "" {
+		return conditionEvaluation{}, nil
+	}
+
+	node, ok := d.router.GetNode(pipelineName, stepID)
+	if !ok || node.Condition == nil {
+		return conditionEvaluation{}, nil
+	}
+
+	scope := conditions.Scope{
+		Payload: eventPayloadForCondition(job.Payload),
+		Context: requestContext,
+		Config:  pluginConfigMap(d.cfg, job.Plugin),
+	}
+	matched, err := conditions.Eval(*node.Condition, scope)
+	if err != nil {
+		return conditionEvaluation{}, err
+	}
+	if matched {
+		return conditionEvaluation{}, nil
+	}
+	return conditionEvaluation{shouldSkip: true, reason: "if condition evaluated false"}, nil
+}
+
+func pluginConfigMap(cfg *config.Config, pluginName string) map[string]any {
+	if cfg == nil {
+		return map[string]any{}
+	}
+	pluginCfg, ok := cfg.Plugins[pluginName]
+	if !ok || pluginCfg.Config == nil {
+		return map[string]any{}
+	}
+	return pluginCfg.Config
+}
+
+func eventPayloadForCondition(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+
+	var event protocol.Event
+	if err := json.Unmarshal(raw, &event); err == nil && (event.Type != "" || event.Payload != nil) {
+		if event.Payload != nil {
+			return event.Payload
+		}
+		return map[string]any{}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		return payload
+	}
+	return map[string]any{}
+}
+
+func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queue.Job, requestContext map[string]any, reason string) {
+	logger.Info("job skipped", "reason", reason)
+	d.events.Publish("job.skipped", map[string]any{
+		"job_id":  job.ID,
+		"plugin":  job.Plugin,
+		"command": job.Command,
+		"reason":  reason,
+	})
+
+	result, err := json.Marshal(map[string]any{
+		"status": "skipped",
+		"reason": reason,
+	})
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to marshal skipped job result: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	// Route successors before marking the skipped job terminal.
+	//
+	// A skipped first-class `if` step can still expand the execution tree. For
+	// synchronous callers, notifying completion before successor enqueue can make
+	// the tree appear finished too early. Preflight now ensures the skipped job
+	// already has a workspace, so downstream clone/inheritance semantics remain
+	// valid even though no plugin process ran.
+	if err := d.routeSkippedStepSuccessors(ctx, logger, job, reason); err != nil {
+		errMsg := fmt.Sprintf("failed to route successors after skip: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusSkipped, result, &reason, nil)
+}
+
+func (d *Dispatcher) routeSkippedStepSuccessors(ctx context.Context, logger *slog.Logger, job *queue.Job, reason string) error {
+	if err := d.routeEvents(ctx, job, []protocol.Event{{Type: "ductile.step.skipped", Payload: map[string]any{"reason": reason}}}, logger); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -994,13 +1156,18 @@ func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeo
 		d.mu.Unlock()
 	}()
 
-	// Initial check in case it's already done
-	complete, err := d.checkJobTreeComplete(ctx, rootJobID)
+	// Initial check in case it's already done.
+	//
+	// We require a settled tree, not just a single "no running jobs" snapshot.
+	// Structural control-flow such as a skipped `if` step can make the current job
+	// terminal before all downstream child rows are visible to a concurrent waiter.
+	// A second confirmation read avoids returning a truncated synchronous tree.
+	results, complete, err := d.settledJobTree(ctx, rootJobID)
 	if err != nil {
 		return nil, fmt.Errorf("initial tree check: %w", err)
 	}
 	if complete {
-		return d.queue.GetJobTree(ctx, rootJobID)
+		return results, nil
 	}
 
 	// Set up timeout
@@ -1014,16 +1181,59 @@ func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeo
 		case <-timer.C:
 			return nil, fmt.Errorf("timeout waiting for job tree completion")
 		case <-ch:
-			// Something in the tree finished, check if the whole tree is done
-			complete, err := d.checkJobTreeComplete(ctx, rootJobID)
+			// Something in the tree finished. Recheck until the visible tree is settled.
+			results, complete, err := d.settledJobTree(ctx, rootJobID)
 			if err != nil {
 				return nil, fmt.Errorf("tree completion check: %w", err)
 			}
 			if complete {
-				return d.queue.GetJobTree(ctx, rootJobID)
+				return results, nil
 			}
 		}
 	}
+}
+
+func (d *Dispatcher) settledJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, bool, error) {
+	results, err := d.queue.GetJobTree(ctx, rootJobID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(results) == 0 {
+		return nil, false, fmt.Errorf("job %s not found", rootJobID)
+	}
+	if !jobTreeComplete(results) {
+		return results, false, nil
+	}
+
+	// Re-read once more before declaring success.
+	// This tiny confirmation step protects synchronous callers from seeing a
+	// truncated tree during structural transitions (for example, a skipped root
+	// step whose successors have already been enqueued but were not visible on the
+	// previous snapshot).
+	confirmed, err := d.queue.GetJobTree(ctx, rootJobID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(confirmed) == 0 {
+		return nil, false, fmt.Errorf("job %s not found", rootJobID)
+	}
+	if !jobTreeComplete(confirmed) {
+		return confirmed, false, nil
+	}
+	if len(confirmed) != len(results) {
+		return confirmed, false, nil
+	}
+	return confirmed, true, nil
+}
+
+func jobTreeComplete(results []*queue.JobResult) bool {
+	for _, res := range results {
+		switch res.Status {
+		case queue.StatusQueued, queue.StatusRunning:
+			return false
+		}
+	}
+	return true
 }
 
 // notifyCompletion signals any waiters that a job has finished.
@@ -1041,29 +1251,6 @@ func (d *Dispatcher) notifyCompletion(jobID string) {
 			// Channel already has a pending notification
 		}
 	}
-}
-
-// checkJobTreeComplete returns true if the root job and all its descendants are in terminal states.
-func (d *Dispatcher) checkJobTreeComplete(ctx context.Context, rootJobID string) (bool, error) {
-	// Query database for tree status
-	// We include timed_out, dead, cancelled (if added later) as terminal.
-	results, err := d.queue.GetJobTree(ctx, rootJobID)
-	if err != nil {
-		return false, err
-	}
-
-	if len(results) == 0 {
-		return false, fmt.Errorf("job %s not found", rootJobID)
-	}
-
-	for _, res := range results {
-		switch res.Status {
-		case queue.StatusQueued, queue.StatusRunning:
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 // truncateStderr truncates stderr to maxStderrBytes.

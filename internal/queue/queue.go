@@ -1036,7 +1036,7 @@ func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Sta
 	if jobID == "" {
 		return fmt.Errorf("jobID is empty")
 	}
-	if status != StatusSucceeded && status != StatusFailed && status != StatusTimedOut && status != StatusDead {
+	if status != StatusSucceeded && status != StatusSkipped && status != StatusFailed && status != StatusTimedOut && status != StatusDead {
 		return fmt.Errorf("invalid terminal status: %q", status)
 	}
 
