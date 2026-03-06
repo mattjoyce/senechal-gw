@@ -297,7 +297,9 @@ func TestHandleGetPlugin(t *testing.T) {
 		server.setupRoutes().ServeHTTP(rr, req)
 
 		var resp PluginDetailResponse
-		json.NewDecoder(rr.Body).Decode(&resp)
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
 
 		cmd := resp.Commands[0]
 		schema, ok := cmd.InputSchema.(map[string]any)
