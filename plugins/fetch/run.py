@@ -2,13 +2,16 @@
 """fetch: Retrieve raw webpage content via HTTP GET.
 
 Protocol v2 plugin. Fetches a URL directly (no external API) and returns
-the content as HTML or stripped plain text.
+the content as HTML, stripped plain text, or markdown.
 
 Config keys:
   user_agent       - Custom UA string (default: ductile-fetch/1.0)
   timeout_seconds  - Request timeout in seconds (default: 30)
   follow_redirects - Follow HTTP redirects, true|false (default: true)
-  output_format    - html | text (default: html)
+  output_format    - html | text | markdown (default: html)
+                     markdown: sends Accept: text/markdown — sites that support
+                     content negotiation (e.g. Cloudflare Markdown for Agents)
+                     return pre-converted markdown; others fall back to HTML.
 """
 
 import html.parser
@@ -85,8 +88,12 @@ def html_to_text(raw_html):
 
 
 def fetch_url(url):
-    """Return (body_str, status_code, final_url)."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    """Return (body_str, status_code, final_url, markdown_tokens)."""
+    headers = {"User-Agent": USER_AGENT}
+    if OUTPUT_FORMAT == "markdown":
+        headers["Accept"] = "text/markdown, text/html"
+
+    req = urllib.request.Request(url, headers=headers)
 
     opener = urllib.request.build_opener()
     if not FOLLOW_REDIRECTS:
@@ -96,13 +103,20 @@ def fetch_url(url):
         raw = resp.read()
         status_code = resp.status
         final_url = resp.url
+        content_type = resp.headers.get("Content-Type", "")
+        markdown_tokens = resp.headers.get("x-markdown-tokens")
 
     charset = "utf-8"
     ct = resp.headers.get_content_charset()
     if ct:
         charset = ct
 
-    return raw.decode(charset, errors="replace"), status_code, final_url
+    body = raw.decode(charset, errors="replace")
+
+    # If we requested markdown but the server returned HTML, note the fallback
+    server_sent_markdown = "text/markdown" in content_type
+
+    return body, status_code, final_url, markdown_tokens, server_sent_markdown
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +137,7 @@ elif command == "handle":
         )
 
     try:
-        body, status_code, final_url = fetch_url(url)
+        body, status_code, final_url, markdown_tokens, server_sent_markdown = fetch_url(url)
     except urllib.error.HTTPError as exc:
         respond(
             "error",
@@ -139,7 +153,12 @@ elif command == "handle":
             logs=[{"level": "error", "message": f"fetch failed for {url}: {exc}"}],
         )
 
-    if OUTPUT_FORMAT == "text":
+    effective_format = OUTPUT_FORMAT
+    if OUTPUT_FORMAT == "markdown" and not server_sent_markdown:
+        # Server didn't honour Accept: text/markdown — fall back to HTML
+        content = body
+        effective_format = "html"
+    elif OUTPUT_FORMAT == "text":
         content = html_to_text(body)
     else:
         content = body
@@ -147,28 +166,29 @@ elif command == "handle":
     logs = [
         {
             "level": "info",
-            "message": f"fetched {url} → {status_code} ({len(content)} chars, format={OUTPUT_FORMAT})",
+            "message": f"fetched {url} → {status_code} ({len(content)} chars, format={effective_format})",
         }
     ]
     if final_url != url:
         logs.append({"level": "info", "message": f"redirected to {final_url}"})
+    if OUTPUT_FORMAT == "markdown" and not server_sent_markdown:
+        logs.append({"level": "warn", "message": "server did not return text/markdown; fell back to html"})
+
+    payload = {
+        "url": url,
+        "final_url": final_url,
+        "status_code": status_code,
+        "content_length": len(content),
+        "output_format": effective_format,
+        "content": content,
+    }
+    if markdown_tokens is not None:
+        payload["markdown_tokens"] = int(markdown_tokens)
 
     respond(
         "ok",
-        result=f"fetched {url} ({len(content)} chars)",
-        events=[
-            {
-                "type": "fetch.completed",
-                "payload": {
-                    "url": url,
-                    "final_url": final_url,
-                    "status_code": status_code,
-                    "content_length": len(content),
-                    "output_format": OUTPUT_FORMAT,
-                    "content": content,
-                },
-            }
-        ],
+        result=f"fetched {url} ({len(content)} chars, format={effective_format})",
+        events=[{"type": "fetch.completed", "payload": payload}],
         logs=logs,
     )
 

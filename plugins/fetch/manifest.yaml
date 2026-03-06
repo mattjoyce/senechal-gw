@@ -21,4 +21,4 @@ config_keys:
     - user_agent
     - timeout_seconds
     - follow_redirects
-    - output_format
+    - output_format  # html | text | markdown (markdown uses Accept: text/markdown with HTML fallback)
