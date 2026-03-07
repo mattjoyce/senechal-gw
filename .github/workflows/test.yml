@@ -56,6 +56,7 @@ jobs:
         run: |
           ./scripts/test-docker api-e2e
           ./scripts/test-docker scheduler-recovery
+          ./scripts/test-docker webhook-ingress
 
       - name: Upload Docker test artifacts
         if: failure()

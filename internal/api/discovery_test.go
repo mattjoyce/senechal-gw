@@ -28,7 +28,7 @@ func TestHandleListPlugins_NoAuth(t *testing.T) {
 			"echo": {Name: "echo", Commands: plugin.Commands{{Name: "poll"}}},
 		},
 	}
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
 	// No Authorization header — discovery must be unauthenticated.
@@ -46,7 +46,7 @@ func TestHandleListSkills_NoAuth(t *testing.T) {
 			"echo": {Name: "echo", Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeWrite}}},
 		},
 	}
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 	server.router = &mockSkillsRouter{
 		pipelines: []router.PipelineInfo{
 			{Name: "daily-summary", Trigger: "scheduler.tick", ExecutionMode: "asynchronous"},
@@ -85,7 +85,7 @@ func TestHandleListPlugins(t *testing.T) {
 		},
 	}
 
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -133,7 +133,7 @@ func TestHandleListSkills(t *testing.T) {
 			},
 		},
 	}
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 	server.router = &mockSkillsRouter{
 		pipelines: []router.PipelineInfo{
 			{
@@ -229,7 +229,7 @@ func TestHandleGetPlugin(t *testing.T) {
 		},
 	}
 
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 
 	t.Run("found", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/plugin/echo", nil)
@@ -288,7 +288,7 @@ func TestHandleGetPlugin(t *testing.T) {
 				},
 			},
 		}
-		server := newTestServer(&mockQueue{}, reg)
+		server := newTestServer(reg)
 
 		req := httptest.NewRequest(http.MethodGet, "/plugin/compact", nil)
 		req.Header.Set("Authorization", "Bearer test-key-123")
@@ -332,7 +332,7 @@ func TestHandleGetPlugin(t *testing.T) {
 }
 
 func TestHandleWellKnownPlugin_NoAuth(t *testing.T) {
-	server := newTestServer(&mockQueue{}, &mockRegistry{})
+	server := newTestServer(&mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/ai-plugin.json", nil)
 	rr := httptest.NewRecorder()

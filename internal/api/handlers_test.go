@@ -114,7 +114,7 @@ func setupTestServer(t *testing.T, db *sql.DB, reg PluginRegistry) *Server {
 	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, hub, logger)
 }
 
-func newTestServer(_ any, reg PluginRegistry) *Server {
+func newTestServer(reg PluginRegistry) *Server {
 	db, err := storage.OpenSQLite(context.Background(), ":memory:")
 	if err != nil {
 		panic(err)
@@ -133,11 +133,6 @@ func setupTestServerWithDB(db *sql.DB, reg PluginRegistry) *Server {
 	hub := events.NewHub(10)
 	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, hub, logger)
 }
-
-// mockQueue remains as a compatibility shim for other api package tests that still
-// call newTestServer(&mockQueue{}, ...). The queue argument is ignored by
-// newTestServer, which now provisions a real SQLite-backed queue.
-type mockQueue struct{}
 
 func TestHandleRoot_NoAuth(t *testing.T) {
 	t.Parallel()

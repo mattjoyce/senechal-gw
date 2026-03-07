@@ -159,7 +159,7 @@ func TestHandleOpenAPIPlugin_Found_NoAuth(t *testing.T) {
 			},
 		},
 	}
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/plugin/echo/openapi.json", nil)
 	rr := httptest.NewRecorder()
@@ -186,7 +186,7 @@ func TestHandleOpenAPIPlugin_Found_NoAuth(t *testing.T) {
 }
 
 func TestHandleOpenAPIPlugin_NotFound(t *testing.T) {
-	server := newTestServer(&mockQueue{}, &mockRegistry{plugins: map[string]*plugin.Plugin{}})
+	server := newTestServer(&mockRegistry{plugins: map[string]*plugin.Plugin{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/plugin/unknown/openapi.json", nil)
 	rr := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestHandleOpenAPIAll_NoAuth(t *testing.T) {
 			},
 		},
 	}
-	server := newTestServer(&mockQueue{}, reg)
+	server := newTestServer(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rr := httptest.NewRecorder()
