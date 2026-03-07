@@ -145,7 +145,7 @@ elif command == "handle":
             events=[{"type": "fetch.failed", "payload": {"url": url, "error": f"HTTP {exc.code}: {exc.reason}"}}],
             logs=[{"level": "error", "message": f"fetch failed for {url}: HTTP {exc.code}"}],
         )
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, ValueError) as exc:
         respond(
             "error",
             error=str(exc),
