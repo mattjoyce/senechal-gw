@@ -1,6 +1,10 @@
 package dsl
 
-import "time"
+import (
+	"time"
+
+	"github.com/mattjoyce/ductile/internal/router/conditions"
+)
 
 // FileSpec is one YAML file containing one or more pipelines.
 type FileSpec struct {
@@ -22,11 +26,12 @@ type PipelineSpec struct {
 // - steps
 // - split
 type StepSpec struct {
-	ID    string     `yaml:"id,omitempty"`
-	Uses  string     `yaml:"uses,omitempty"`
-	Call  string     `yaml:"call,omitempty"`
-	Steps []StepSpec `yaml:"steps,omitempty"`
-	Split []StepSpec `yaml:"split,omitempty"`
+	ID    string                `yaml:"id,omitempty"`
+	Uses  string                `yaml:"uses,omitempty"`
+	Call  string                `yaml:"call,omitempty"`
+	If    *conditions.Condition `yaml:"if,omitempty"`
+	Steps []StepSpec            `yaml:"steps,omitempty"`
+	Split []StepSpec            `yaml:"split,omitempty"`
 }
 
 // NodeKind identifies the executable action represented by a DAG node.
@@ -39,10 +44,11 @@ const (
 
 // Node is one executable vertex in a compiled pipeline DAG.
 type Node struct {
-	ID   string
-	Kind NodeKind
-	Uses string
-	Call string
+	ID        string
+	Kind      NodeKind
+	Uses      string
+	Call      string
+	Condition *conditions.Condition
 }
 
 // Edge defines a directed dependency between two nodes.

@@ -31,8 +31,12 @@ echo '{"status":"ok","result":"done","logs":[{"level":"info","message":"done"}]}
 	registry := plugin.NewRegistry()
 	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
 	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
-	registry.Add(plugA)
-	registry.Add(plugB)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
 
 	// Create pipeline
 	tmpDir := filepath.Dir(pluginsDir)
@@ -44,7 +48,9 @@ echo '{"status":"ok","result":"done","logs":[{"level":"info","message":"done"}]}
         uses: plugin-b
 `
 	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
-	os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644)
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
 
 	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {

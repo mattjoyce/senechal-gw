@@ -13,6 +13,7 @@ const (
 	StatusQueued    Status = "queued"
 	StatusRunning   Status = "running"
 	StatusSucceeded Status = "succeeded"
+	StatusSkipped   Status = "skipped"
 	StatusFailed    Status = "failed"
 	StatusTimedOut  Status = "timed_out"
 	StatusDead      Status = "dead"

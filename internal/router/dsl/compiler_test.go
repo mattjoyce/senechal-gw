@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 )
 
 func TestCompileSpecsValidNestedPipeline(t *testing.T) {
@@ -132,6 +134,51 @@ func TestCompileSpecsRejectsUnknownCallTarget(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown pipeline") {
 		t.Fatalf("expected unknown pipeline error, got %v", err)
+	}
+}
+
+func TestCompileSpecsAcceptsStructuredIfCondition(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "conditional",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:   "step_a",
+			Uses: "plugin-a",
+			If: &conditions.Condition{
+				All: []conditions.Condition{
+					{Path: "payload.kind", Op: conditions.OpEq, Value: "video"},
+					{Path: "context.origin_user", Op: conditions.OpExists},
+				},
+			},
+		}},
+	}}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
+	}
+	if set.Pipelines["conditional"].Nodes["step_a"].Condition == nil {
+		t.Fatalf("expected compiled node condition")
+	}
+}
+
+func TestCompileSpecsRejectsInvalidIfCondition(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "conditional",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:   "step_a",
+			Uses: "plugin-a",
+			If:   &conditions.Condition{Path: "state.flag", Op: conditions.OpEq, Value: true},
+		}},
+	}}
+
+	_, err := CompileSpecs(specs)
+	if err == nil {
+		t.Fatalf("expected invalid if condition error")
+	}
+	if !strings.Contains(err.Error(), "unsupported root") {
+		t.Fatalf("error = %v, want unsupported root", err)
 	}
 }
 

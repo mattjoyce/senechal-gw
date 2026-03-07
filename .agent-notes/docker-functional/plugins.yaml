@@ -1,0 +1,7 @@
+plugins:
+  sys_exec:
+    enabled: true
+    timeouts:
+      handle: 10s
+    config:
+      command: "sh -c 'if [ \"$DUCTILE_PAYLOAD_RUN_GUARDED\" = \"true\" ]; then echo {\"status\":\"ok\",\"result\":\"guarded-ran\"}; else echo {\"status\":\"ok\",\"result\":\"final-ran\"}; fi'"
