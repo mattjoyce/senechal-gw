@@ -147,6 +147,68 @@ include:
 	}
 }
 
+func TestLoadWebhooksFileAcceptsNestedDocumentedShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "webhooks.yaml")
+	raw := `
+webhooks:
+  endpoints:
+    - name: github
+      path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+      max_body_size: 1MB
+`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadWebhooksFile(path)
+	if err != nil {
+		t.Fatalf("loadWebhooksFile() failed: %v", err)
+	}
+	if len(cfg.Webhooks) != 1 {
+		t.Fatalf("len(cfg.Webhooks) = %d, want 1", len(cfg.Webhooks))
+	}
+	if cfg.Webhooks[0].Path != "/webhook/github" {
+		t.Fatalf("cfg.Webhooks[0].Path = %q, want /webhook/github", cfg.Webhooks[0].Path)
+	}
+}
+
+func TestWriteWebhooksFileUsesNestedDocumentedShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "webhooks.yaml")
+	cfg := &config.WebhooksFileConfig{
+		Webhooks: config.WebhookEndpoints{
+			{
+				Name:            "github",
+				Path:            "/webhook/github",
+				Plugin:          "echo",
+				SecretRef:       "github_webhook_secret",
+				SignatureHeader: "X-Hub-Signature-256",
+				MaxBodySize:     "1MB",
+			},
+		},
+	}
+
+	if err := writeWebhooksFile(path, cfg); err != nil {
+		t.Fatalf("writeWebhooksFile() failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("os.ReadFile() failed: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "webhooks:") {
+		t.Fatalf("written file missing webhooks root: %s", text)
+	}
+	if !strings.Contains(text, "endpoints:") {
+		t.Fatalf("written file missing endpoints nesting: %s", text)
+	}
+}
+
 func TestRunConfigNounActionHelp(t *testing.T) {
 	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
 		return runConfigNoun([]string{"check", "--help"})

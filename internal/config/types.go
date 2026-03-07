@@ -237,8 +237,46 @@ type TokensFileConfig struct {
 }
 
 // WebhooksFileConfig wraps webhook endpoints for standalone webhooks.yaml.
+// It accepts the documented nested form:
+//
+//	webhooks:
+//	  endpoints: [...]
+//
+// and also preserves compatibility with the older flat form:
+//
+//	webhooks: [...]
 type WebhooksFileConfig struct {
-	Webhooks []WebhookEndpoint `yaml:"webhooks"`
+	Webhooks WebhookEndpoints `yaml:"webhooks"`
+}
+
+// WebhookEndpoints supports both nested and legacy flat standalone webhooks.yaml shapes.
+type WebhookEndpoints []WebhookEndpoint
+
+// UnmarshalYAML accepts either:
+//   - webhooks: [{...}]
+//   - webhooks: { endpoints: [{...}] }
+func (w *WebhookEndpoints) UnmarshalYAML(value *yaml.Node) error {
+	var flat []WebhookEndpoint
+	if err := value.Decode(&flat); err == nil {
+		*w = flat
+		return nil
+	}
+
+	var nested struct {
+		Endpoints []WebhookEndpoint `yaml:"endpoints"`
+	}
+	if err := value.Decode(&nested); err != nil {
+		return err
+	}
+	*w = nested.Endpoints
+	return nil
+}
+
+// MarshalYAML writes the documented nested standalone form.
+func (w WebhookEndpoints) MarshalYAML() (any, error) {
+	return struct {
+		Endpoints []WebhookEndpoint `yaml:"endpoints"`
+	}{Endpoints: []WebhookEndpoint(w)}, nil
 }
 
 // ExecutionMode defines how a pipeline should be triggered and its results returned.
