@@ -19,6 +19,7 @@ This entry captures the most significant changes from the past week of developme
 - Completed **RC1 cleanup** with removal of legacy config and auth surfaces.
 
 ### Added
+- **String operators for if conditions**: `contains`, `startswith`, `endswith`, and `regex` (full-string match) are now supported in pipeline step predicates.
 - **youtube_playlist plugin** for polling YouTube playlists and emitting dedupe-safe events.
 - **Plugin CLI actions**:
   - `ductile plugin list` (API-backed `/plugins`)
