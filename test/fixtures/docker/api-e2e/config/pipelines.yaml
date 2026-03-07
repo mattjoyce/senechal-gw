@@ -1,0 +1,6 @@
+pipelines:
+  - name: test-pipeline
+    on: test.trigger
+    steps:
+      - id: entry
+        uses: echo

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="${1:-all}"
 FIXTURE_DIR="$ROOT_DIR/test/fixtures/docker"
 ARTIFACT_ROOT="$ROOT_DIR/test-artifacts/docker/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+mkdir -p "$ARTIFACT_ROOT"
 
 log() {
   echo "==> test-docker: $*"
