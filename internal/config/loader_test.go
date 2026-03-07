@@ -1484,6 +1484,8 @@ plugin_roots:
 plugins:
   echo:
     enabled: true
+webhooks:
+  listen: "127.0.0.1:8091"
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
 		t.Fatal(err)
@@ -1495,7 +1497,6 @@ plugins:
 
 	webhooksYAML := `
 webhooks:
-  listen: "127.0.0.1:8091"
   endpoints:
     - path: /webhook/github
       plugin: echo
@@ -1516,6 +1517,64 @@ webhooks:
 	}
 	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
 		t.Fatalf("Load() error = %v, want missing webhook token message", err)
+	}
+}
+
+func TestLoadAcceptsIncludedStandaloneWebhooksFileNestedShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	configYAML := `
+include:
+  - tokens.yaml
+  - webhooks.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+webhooks:
+  listen: "127.0.0.1:8091"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: github_webhook_secret\n    key: test-secret\n    scopes_file: scopes/webhook.json\n    scopes_hash: blake3:dummy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	webhooksYAML := `
+webhooks:
+  endpoints:
+    - path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "webhook.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpDir)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.Webhooks == nil || len(cfg.Webhooks.Endpoints) != 1 {
+		t.Fatalf("cfg.Webhooks.Endpoints = %v, want 1 endpoint", cfg.Webhooks)
+	}
+	if len(cfg.Tokens) != 1 || cfg.Tokens[0].Name != "github_webhook_secret" {
+		t.Fatalf("cfg.Tokens = %v, want github_webhook_secret", cfg.Tokens)
 	}
 }
 

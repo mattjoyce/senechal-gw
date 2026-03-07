@@ -12,3 +12,4 @@ include:
   - plugins.yaml
   - pipelines.yaml
   - webhooks.yaml
+  - tokens.yaml
