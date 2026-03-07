@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-03-07
+- Discord notify plugin now supports an incoming webhook, adds a poll command with configurable poll_message, and includes a default_message fallback plus a User-Agent fix.
+- JSON Schemas for config, plugins, and pipelines YAML are added, with multi-file-merge support and validation for max_workers and plugin parallelism.
+- Repo sync and discovery are hardened to prefer SSH remotes, use per-repo dedupe keys for concurrency, and exclude forks, with RO_GITHUB_TOKEN used for repo sync.
+- Weekly changelog generation and auto-derived versioning are added via scripts/version.sh and Makefile.
+- Testing and reliability improvements include stress-test suites, API and webhook mocks, and fixes to lint and webhook fixtures.
+
 ## [Unreleased] — Weekly Development Summary (Last 7 Days)
 
 This entry captures the most significant changes from the past week of development. It is intentionally expansive so that it remains useful as older Git history scrolls out of view.

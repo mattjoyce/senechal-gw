@@ -124,3 +124,6 @@ go build -o ductile ./cmd/ductile
 
 ## License
 MIT. See [LICENSE](LICENSE) for details.
+
+## Changelog
+See [CHANGELOG.md](CHANGELOG.md).
