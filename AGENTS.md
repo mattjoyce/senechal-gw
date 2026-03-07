@@ -1,103 +1,18 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+## Issue Tracking
 
-## Quick Reference
+Use **bd (beads)** for all issue tracking. Do not use markdown TODOs or other trackers.
+Run `bd onboard` for workflow context.
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
-```
-
-<!-- BEGIN BEADS INTEGRATION -->
-## Issue Tracking with bd (beads)
-
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Auto-syncs to JSONL for version control
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
+Quick reference:
 
 ```bash
 bd ready --json
+bd show <id> --json
+bd update <id> --status in_progress --json
+bd close <id> --reason "Done" --json
 ```
-
-**Create new issues:**
-
-```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
-```
-
-**Claim and update:**
-
-```bash
-bd update bd-42 --status in_progress --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task**: `bd update <id> --status in_progress`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Auto-Sync
-
-bd automatically syncs with git:
-
-- Exports to `.beads/issues.jsonl` after changes (5s debounce)
-- Imports from JSONL when newer (e.g., after `git pull`)
-- No manual export/import needed!
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
-
-<!-- END BEADS INTEGRATION -->
 
 > This file governs all agent behaviour in this codebase. Read it fully before writing any code.
 
@@ -159,6 +74,19 @@ These are hard stops. If you cannot satisfy them, stop and report back rather th
 
 ## Testing Philosophy
 
+Ductile uses a **staged testing strategy**:
+
+1. **Fast tests for branch development**
+   - default inner loop during implementation
+   - optimized for quick feedback
+2. **Docker-backed tests for system confidence**
+   - used selectively during development when runtime realism matters
+   - required before merge
+3. **Full validation on `main` after merge**
+   - protects trunk health on the merged state
+
+Testing orchestration belongs in repository tooling under `scripts/`, not in the `ductile` CLI.
+
 ### The Anti-Mocking Rule in Detail
 
 Go makes it easy to write interface mocks. Resist this. The pattern to follow:
@@ -182,6 +110,71 @@ func TestRouterDispatch(t *testing.T) {
 }
 ```
 
+### Canonical Test Commands
+
+Use the repository test scripts as the source of truth:
+
+- `scripts/test-fast` — fast branch-development validation
+- `scripts/test-docker` — Docker-backed fixture validation
+- `scripts/test-premerge` — merge-grade validation
+- `scripts/test-main` — post-merge trunk validation
+
+Current expected meanings:
+
+- `scripts/test-fast` should run the standard fast suite, initially `go test ./...`
+- `scripts/test-docker` should run the fixture-driven Docker harness
+- `scripts/test-premerge` should compose `scripts/test-fast`, `golangci-lint run ./...`, and `scripts/test-docker`
+- `scripts/test-main` should initially be at least as strong as `scripts/test-premerge`
+
+If a `Makefile` wrapper exists, it should delegate to these scripts rather than duplicate logic.
+
+### Fast vs Docker Test Boundaries
+
+Fast tests should own:
+
+- pure logic
+- deterministic unit behaviour
+- parser and validator correctness
+- router, state, and queue integration using real SQLite where helpful
+- day-to-day confidence during branch work
+
+Docker-backed tests should own:
+
+- runtime system behaviour
+- service boot with real config
+- restart and recovery flows
+- network ingress behaviour
+- realistic end-to-end operator-facing scenarios
+
+Do not duplicate the entire Go test suite inside Docker.
+
+### Docker Harness Directives
+
+The Docker-backed harness must be:
+
+- fixture-driven
+- Docker Compose based
+- explicit about readiness checks rather than relying on sleeps
+- focused on black-box, high-value scenarios
+- capable of automatic artifact capture on failure
+
+The current first-wave fixture set is:
+
+- `webhook-ingress`
+- `scheduler-recovery`
+- `api-e2e`
+
+These scenarios come from the recent test harness work and should remain the baseline for Docker-backed coverage.
+
+When extending the harness:
+
+- prefer focused fixtures under `test/fixtures/docker/`
+- keep local and CI entry points aligned through the same scripts
+- support running all fixtures or a named fixture
+- keep wave-1 fixtures small, stable, and diagnostically useful
+
+On Docker-backed failures, retain predictable artifacts under a path such as `test-artifacts/docker/<timestamp>/<fixture>/` including logs, scenario output, relevant config, and responses/DB snapshots where applicable.
+
 ### Test Structure
 
 - Use table-driven tests for any function with more than two interesting cases
@@ -189,6 +182,14 @@ func TestRouterDispatch(t *testing.T) {
 - Name subtests descriptively: `t.Run("returns error when config is missing", ...)`
 - Test files live beside the code they test (`foo_test.go` next to `foo.go`)
 - Integration tests go in `_test` packages with a build tag: `//go:build integration`
+
+### Branch, Pre-Merge, and Main Expectations
+
+- The default branch-development loop should stay fast and should not require Docker
+- Lint is not required in the default fast inner loop
+- Before merge, the branch must pass fast tests, lint/static checks, and Docker-backed validation
+- `main` must receive a full validation pass after merge
+- Failures on `main` are trunk-health issues and should be triaged promptly
 
 ### Coverage
 
@@ -201,6 +202,7 @@ func TestRouterDispatch(t *testing.T) {
 - Use real test fixtures in `testdata/` directories
 - For database tests, use an in-memory SQLite or a real test DB, not a mock repository
 - For HTTP tests, use `httptest.NewServer` — not a mocked HTTP client
+- For Docker/system tests, use real fixture directories under `test/fixtures/docker/` rather than ad hoc local setup
 
 ---
 
