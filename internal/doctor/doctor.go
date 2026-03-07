@@ -345,9 +345,7 @@ func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 				d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedules[%d].every", name, i),
 					fmt.Sprintf("schedule interval %q is very short (< 1m)", schedule.Every))
 			}
-			if interval.Hours() > 24 {
-				// weekly/monthly are fine, just flag unusual custom values
-			}
+			_ = interval // weekly/monthly are fine; only sub-minute intervals are warned on here.
 		}
 	}
 }

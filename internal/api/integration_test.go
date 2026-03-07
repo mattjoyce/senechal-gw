@@ -264,7 +264,7 @@ func TestSynchronousPipelineSkippedEntryResponseVsDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -352,7 +352,7 @@ echo '{"status":"ok","result":"B"}'
 	if err != nil {
 		t.Fatalf("client.Do: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

@@ -1070,7 +1070,7 @@ func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
@@ -1230,7 +1230,7 @@ func validateScopeAgainstRegistry(scope string, registry *plugin.Registry) ([]st
 
 	if resource == "read" || resource == "trigger" || resource == "admin" {
 		return []string{
-			fmt.Sprintf("Type: low-level scope"),
+			"Type: low-level scope",
 			fmt.Sprintf("Resource: %s", resource),
 			fmt.Sprintf("Selector: %s", access),
 		}, nil
@@ -2272,12 +2272,12 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer archiveFile.Close()
+	defer func() { _ = archiveFile.Close() }()
 
 	gz := gzip.NewWriter(archiveFile)
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	included := []string{}
 	for _, rel := range items {
@@ -2312,7 +2312,7 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 				if err != nil {
 					return err
 				}
-				defer file.Close()
+				defer func() { _ = file.Close() }()
 				_, err = io.Copy(tw, file)
 				return err
 			})
@@ -2359,7 +2359,7 @@ func restoreConfigBackup(configDir, archivePath string, allowSymlinks bool) erro
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return err
@@ -2369,7 +2369,7 @@ func restoreConfigBackup(configDir, archivePath string, allowSymlinks bool) erro
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	var totalBytes int64
 	var totalEntries int
