@@ -4,17 +4,21 @@ name: fetch
 version: 0.1.0
 protocol: 2
 entrypoint: run.py
-description: "Fetch raw webpage content via HTTP GET and return HTML or plain text"
+description: "Fetch raw webpage content via HTTP GET and return HTML, plain text, or markdown"
 concurrency_safe: false
 commands:
   - name: handle
     type: write
     description: "Fetch the URL from the event payload and emit fetch.completed or fetch.failed."
+    idempotent: true
+    retry_safe: true
     input_schema:
       url: string
   - name: health
     type: read
     description: "Returns plugin health status."
+    idempotent: true
+    retry_safe: true
 config_keys:
   required: []
   optional:
