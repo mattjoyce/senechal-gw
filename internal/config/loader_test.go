@@ -1467,6 +1467,58 @@ service:
 	}
 }
 
+func TestLoadFailsWhenWebhookSecretRefTokenIsMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configYAML := `
+include:
+  - tokens.yaml
+  - webhooks.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	webhooksYAML := `
+webhooks:
+  listen: "127.0.0.1:8091"
+  endpoints:
+    - path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(tmpDir)
+	if err == nil {
+		t.Fatal("Load() succeeded, want missing webhook token error")
+	}
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+		t.Fatalf("Load() error = %v, want missing webhook token message", err)
+	}
+}
+
 // TestDeepMerge tests deep merging of included configs.
 func TestDeepMerge(t *testing.T) {
 	tmpDir := t.TempDir()
