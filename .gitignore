@@ -53,3 +53,4 @@ Thumbs.db
 # Security scan reports
 gosec.json
 __pycache__/
+test-artifacts/
