@@ -52,7 +52,7 @@ func evalAtomic(cond Condition, scope Scope) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		re, err := regexp.Compile(right)
+		re, err := regexp.Compile(fmt.Sprintf("^(?:%s)$", right))
 		if err != nil {
 			return false, fmt.Errorf("operator %q received invalid regex: %w", cond.Op, err)
 		}
