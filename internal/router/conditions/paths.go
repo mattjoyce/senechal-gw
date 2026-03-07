@@ -5,11 +5,6 @@ import (
 	"strings"
 )
 
-type resolvedValue struct {
-	present bool
-	value   any
-}
-
 // ResolvePath resolves a dotted path from the supported scope roots.
 func ResolvePath(scope Scope, path string) (bool, any, error) {
 	trimmed := strings.TrimSpace(path)
