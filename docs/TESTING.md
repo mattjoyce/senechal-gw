@@ -1,539 +1,524 @@
 # Testing Guide
 
-This document outlines the testing strategy and procedures for Ductile, including manual E2E validation, automated CLI testing, and API endpoint verification.
+This document defines the target-state testing strategy for Ductile. The goal is to preserve developer velocity during normal branch work while adding stronger runtime/system confidence gates before merge and after changes land on `main`.
 
 ---
 
-## 1. Automated Tests
+## 1. Testing Model
 
-Ductile uses standard Go testing patterns.
+Ductile uses a **staged testing strategy**:
 
-### Unit & Integration Tests
-Run all internal tests:
+1. **Fast tests for branch development**
+   - Used constantly during normal implementation and remediation work.
+   - Optimized for feedback speed and iteration velocity.
+2. **Docker-backed tests for complex/system-level assurance**
+   - Used during complex development when realism matters.
+   - Required before merge to `main`.
+3. **Full validation on `main` after merge**
+   - Ensures trunk health on the actual merged state.
+
+This guide is intentionally about **assurance workflow**, not product/runtime commands. Testing orchestration belongs to repository tooling rather than the `ductile` binary.
+
+---
+
+## 2. Branch Development Policy
+
+For day-to-day branch development, the default loop is the fast existing test suite.
+
+### Default fast inner loop
 ```bash
 go test ./...
 ```
 
-### CLI Test Suite
-Comprehensive testing of CLI actions, exit codes, and output formats:
-```bash
-# See docs/CLI_DESIGN_PRINCIPLES.md for the standards being tested
-go test ./cmd/ductile/...
-```
+This is the baseline command for:
+- feature branches
+- remediation branches
+- refactors
+- fast local iteration
+
+### Why the fast loop stays fast
+The default branch-development loop should optimize for:
+- quick feedback
+- frequent execution
+- low friction during implementation
+
+To preserve velocity, the fast inner loop should **not require Docker** and should **not be overloaded with every gate**.
 
 ---
 
-## 2. Manual E2E Validation (The Echo Runbook)
+## 3. Docker-Backed Testing Policy
 
-To verify the full "Trigger to Output" lifecycle, use the `echo` plugin.
+Docker-backed tests are used for **complex or environment-sensitive behavior** where standard tests provide less confidence.
 
-1.  **Configure:** Set a 5-minute schedule for `echo` in `config.yaml`.
-2.  **Start:** `./ductile system start`.
-3.  **Verify:** Check the logs or query the state DB:
-    ```bash
-    sqlite3 ductile.db "SELECT * FROM plugin_state WHERE plugin_name = 'echo';"
-    ```
-4.  **Crash Recovery:** Force-kill the process (`kill -9`) while a job is running, then restart and verify the job is recovered.
+### Docker tests are for
+- webhook ingress
+- scheduler persistence and restart recovery
+- authenticated API end-to-end flows
+- plugin runtime/process behavior
+- filesystem/workspace behavior
+- realistic service startup/configuration behavior
 
----
+### Docker tests are not for
+- duplicating every Go test in containers
+- replacing fast local tests
+- being mandatory on every small branch iteration
 
-## 3. Pipeline Testing
-
-Verify multi-hop event chains using the `file-to-report` example:
-
-1.  **Trigger:**
-    ```bash
-    curl -X POST http://localhost:8080/pipeline/file-to-report \
-      -H "Authorization: Bearer <token>" \
-      -d '{"payload": {"action": "read", "file_path": "sample.md"}}'
-    ```
-2.  **Trace:** Use the `inspect` tool to view the lineage:
-    ```bash
-    ductile job inspect <job_id>
-    ```
-3.  **Artifacts:** Verify the workspace directory contains the hardlinked files from previous steps.
+### Development usage
+Docker-backed tests are **selective during development**:
+- use them for system-level work
+- use them when reproducing runtime-sensitive issues
+- use them before merge as part of the required gate
 
 ---
 
-## 4. Test Environment
+## 4. Repository Test Commands
 
-We provide a **Docker-based** environment for reproducible testing:
-```bash
-cd ductile
-docker compose up --build
-```
-See `TEST_ENVIRONMENT.md` for details on pre-configured tokens and ports.
+Testing orchestration should live in repository tooling under `scripts/`, not in the `ductile` CLI.
 
----
+### Canonical script surface
+- `scripts/test-fast`
+- `scripts/test-docker`
+- `scripts/test-premerge`
+- `scripts/test-main`
 
-## 5. API Endpoint Testing
+### Optional convenience wrappers
+A `Makefile` may provide wrappers such as:
+- `make test`
+- `make test-docker`
+- `make test-premerge`
+- `make test-main`
 
-As of PR #43, Ductile provides three HTTP endpoints with distinct semantics:
-
-### 5.1 Direct Plugin Execution (`/plugin/{plugin}/{command}`)
-
-**Purpose:** Execute a plugin directly without pipeline routing.
-
-**Test Case: Jina-Reader Scrape**
-```bash
-curl -X POST http://localhost:8080/plugin/jina-reader/handle \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "url": "https://github.com/mattjoyce?tab=repositories"
-    }
-  }'
-```
-
-**Expected Result:**
-- Response contains jina-reader output only
-- No pipeline execution (url-to-fabric should NOT run)
-- Response `result` field contains scraped content
-- Standard fields present: `text`, `source_url`, `source_type`
-
-### 5.2 Explicit Pipeline Execution (`/pipeline/{name}`)
-
-**Purpose:** Execute a named pipeline orchestration.
-
-**Test Case: URL-to-Fabric Pipeline**
-```bash
-curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "url": "https://mattjoyce.ai/",
-      "pattern": "summarize"
-    }
-  }'
-```
-
-**Expected Result:**
-- Multi-step execution: jina-reader → fabric
-- Response `result` field contains final step output (fabric summary)
-- Response `tree[]` array contains both steps
-- Terminal step result is prioritized in top-level response
-- Context fields propagated automatically (pattern visible in fabric step)
-
-## 6. Plugin Payload Spec Compliance
-
-All plugins must adhere to the standard payload convention (see `PLUGIN_DEVELOPMENT.md`).
-
-### 6.1 Standard Fields
-
-Verify each plugin emits the following fields:
-
-| Field | Type | Purpose |
-|-------|------|---------|
-| `text` | string | Primary content for downstream processing |
-| `result` | string | Final human-readable output |
-| `source_url` | string | Originating URL (if applicable) |
-| `source_type` | string | Content origin: `web`, `youtube`, `file`, `llm` |
-
-### 6.2 Event Type Naming
-
-Event types must follow `<plugin_name>.<past_tense_verb>` convention:
-
-| Plugin | Event Type |
-|--------|------------|
-| jina-reader | `jina_reader.scraped`, `jina_reader.changed` |
-| youtube_transcript | `youtube_transcript.fetched` |
-| fabric | `fabric.completed` |
-| file_handler | `file_handler.read`, `file_handler.written` |
-
-### 6.3 Validation Procedure
-
-**Test:** Execute each plugin and inspect output event:
-
-```bash
-# Example: Verify jina-reader output
-curl -X POST http://localhost:8080/plugin/jina-reader/handle \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {"url": "https://example.com"}}' | jq '.result'
-```
-
-**Check:**
-- `jq '.result.text'` → Should contain primary content
-- `jq '.result.source_url'` → Should match input URL
-- `jq '.result.source_type'` → Should be `"web"`
-- Inspect plugin code: No manual propagation loops (removed in PR #42)
+If Make targets exist, they should wrap the canonical scripts rather than duplicating logic.
 
 ---
 
-## 7. Context Auto-Propagation Testing
+## 5. Intended Meaning of Each Script
 
-The dispatcher automatically propagates these fields from input to output events:
-- `pattern`
-- `prompt`
-- `model`
-- `output_dir`
-- `output_path`
-- `filename`
+### `scripts/test-fast`
+Purpose:
+- normal branch-development assurance
+- fastest frequent local validation
 
-### Test Procedure
+Expected scope:
+- standard fast repo tests
 
-**Setup:** Execute a pipeline with context fields in the initial payload.
-
+Recommended initial behavior:
 ```bash
-curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "payload": {
-      "url": "https://mattjoyce.ai/",
-      "pattern": "extract_wisdom",
-      "model": "gpt-4"
-    }
-  }' | jq '.tree'
+go test ./...
 ```
 
-**Verify:**
-- Second step (fabric) receives `pattern` and `model` fields
-- No manual copying required in plugin code
-- Inspect logs: `pattern` visible in fabric plugin execution
+### `scripts/test-docker`
+Purpose:
+- Docker-backed runtime/system validation
+- selective during development
+- required in pre-merge and main validation flows
 
-**Code Reference:** `internal/dispatch/dispatcher.go:648-661` (routeEvents function)
+Expected scope:
+- fixture-driven Docker scenarios
+- black-box/high-value runtime validation
+- teardown and artifact capture on failure
+
+### `scripts/test-premerge`
+Purpose:
+- merge-grade assurance before landing to `main`
+
+Expected scope:
+- fast tests
+- lint/static checks
+- Docker-backed validation
+
+### `scripts/test-main`
+Purpose:
+- full post-merge validation of trunk health
+
+Expected scope initially:
+- same coverage as pre-merge
+
+This may later expand to include broader smoke/regression suites.
 
 ---
 
-## 8. Terminal Step Result Validation
+## 6. Lint Placement Policy
 
-As of PR #42, API sync responses return the final step's result, not the root job.
+To preserve branch-development velocity:
+- **lint is not required in the default fast inner loop**
+- **lint is required in pre-merge and main validation**
 
-### Test Case
-
-**Execute multi-step pipeline:**
-```bash
-curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "payload": {
-      "url": "https://example.com",
-      "pattern": "summarize"
-    }
-  }' > response.json
-```
-
-**Validate:**
-```bash
-# Top-level result should be fabric output (final step)
-jq '.result.result' response.json  # Should contain summary text
-
-# Tree should have both steps
-jq '.tree | length' response.json  # Should be >= 2
-
-# Root job is step 0 (jina-reader)
-jq '.tree[0].plugin' response.json  # Should be "jina-reader"
-
-# Terminal job is last step (fabric)
-jq '.tree[-1].plugin' response.json  # Should be "fabric"
-```
-
-**Implementation:** `internal/api/handlers.go` (sync response assembly)
+This gives the desired balance:
+- velocity during development
+- stronger gates before merge and on trunk
 
 ---
 
-## 9. Plugin-Specific Tests
+## 7. Pre-Merge Policy
 
-### 9.1 Jina-Reader
-- **Input:** `{"url": "https://github.com/mattjoyce"}`
-- **Output Fields:** `text`, `source_url`, `source_type: "web"`
-- **Event:** `jina_reader.scraped` or `jina_reader.changed`
+Before merging to `main`, the branch must pass:
+- the fast standard suite
+- lint/static checks
+- the Docker-backed validation suite
 
-### 9.2 YouTube Transcript
-- **Input:** `{"url": "https://youtube.com/watch?v=..."}`
-- **Output Fields:** `text`, `transcript`, `source_url`, `source_type: "youtube"`
-- **Event:** `youtube_transcript.fetched`
+Conceptually, pre-merge validation is:
+```text
+scripts/test-fast
++ golangci-lint run ./...
++ scripts/test-docker
+```
 
-### 9.3 Fabric
-- **Input:** `{"text": "...", "pattern": "summarize"}`
-- **Output Fields:** `result`, `text` (alias), `source_type: "llm"`
-- **Event:** `fabric.completed`
-
-### 9.4 File Handler
-- **Input Read:** `{"action": "read", "file_path": "test.md"}`
-- **Output Fields:** `text`, `source_type: "file"`
-- **Event:** `file_handler.read`
-
-- **Input Write:** `{"action": "write", "file_path": "output.md", "content": "..."}`
-- **Output Fields:** `result` (confirmation message)
-- **Event:** `file_handler.written`
+This is the required assurance level for merge readiness.
 
 ---
 
-## 10. Integration Test Scenarios
+## 8. Main Branch Policy
 
-### 10.1 URL Summarization Flow
-**Pipeline:** url-to-fabric
+`main` must receive a **full validation pass after merge**.
 
-```bash
-curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "payload": {
-      "url": "https://mattjoyce.ai/",
-      "pattern": "summarize"
-    }
-  }'
-```
+### Initial definition of full validation on `main`
+- `scripts/test-fast`
+- `golangci-lint run ./...`
+- `scripts/test-docker`
 
-**Validate:**
-1. Jina-reader scrapes URL
-2. Fabric receives scraped text
-3. Fabric uses `summarize` pattern
-4. Final result contains summary
-5. No manual field copying in plugin code
+This means `main` validation is initially **at least as strong as pre-merge validation**.
 
-### 10.2 YouTube to Document
-**Pipeline:** youtube-to-fabric (if configured)
+### Why `main` validation is distinct
+Pre-merge validation protects the merge boundary.
+Post-merge validation protects the actual merged state of trunk.
 
-```bash
-curl -X POST http://localhost:8080/pipeline/youtube-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{
-    "payload": {
-      "url": "https://youtube.com/watch?v=dQw4w9WgXcQ",
-      "pattern": "extract_wisdom"
-    }
-  }'
-```
+This matters because:
+- nearby merges may interact unexpectedly
+- rebases and branch timing can hide integration issues
+- trunk health affects all contributors
 
-**Validate:**
-1. YouTube transcript fetched
-2. Text propagated to fabric
-3. Pattern applied
-4. Terminal result returned
+### Main failures
+Failures on `main` should be treated as **trunk-health issues** and triaged promptly.
+Docker-backed failures on `main` should retain and surface their artifacts.
+
+### Initial definition of `scripts/test-main`
+Initially, `scripts/test-main` should mean:
+- `scripts/test-fast`
+- `golangci-lint run ./...`
+- `scripts/test-docker`
+
+This keeps `main` validation at least as strong as pre-merge validation while leaving room to grow later.
+
+### Future expansion
+Heavier smoke/regression or stress-oriented suites may be added later as `main`-only or scheduled validation, but they are not required for the initial phase of this testing strategy.
 
 ---
 
-## 11. Regression Tests
+## 9. Docker Harness Design Direction
 
-### 11.1 Bug: Endpoint Ambiguity (Issue #102)
-**Fixed in:** PR #43
+The Docker-backed harness should follow these principles:
+- **fixture-driven**
+- **Docker Compose based**
+- **explicit readiness checks** (not just sleeps)
+- **black-box/high-value scenarios**
+- **automatic artifact capture on failure**
 
-**Test:** Verify `/plugin` endpoint does NOT trigger pipelines.
+### First-wave Docker scenarios
+The first high-value Docker scenarios are:
+- `webhook-ingress`
+- `scheduler-recovery`
+- `api-e2e`
 
-```bash
-# This should run jina-reader ONLY
-curl -X POST http://localhost:8080/plugin/jina-reader/handle \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {"url": "https://example.com"}}' | jq '.tree | length'
-```
+These are intentionally narrow and complement the fast test suite rather than replacing it.
 
-**Expected:** Tree length = 1 (only jina-reader)
+#### `webhook-ingress`
+Goal:
+- validate end-to-end inbound webhook handling in a real service/container environment
 
-### 11.2 Bug: Pipeline Trigger Assumption (Codex Finding #1)
-**Fixed in:** Commit a78cc86
+Should verify:
+- service boots with webhook configuration
+- valid signed request is accepted
+- invalid signature is rejected
+- oversized request is rejected when configured
+- queued work exists after successful ingress
 
-**Test:** Multi-entry pipeline resolves correctly.
+#### `scheduler-recovery`
+Goal:
+- validate restart/crash recovery behavior using persisted runtime state
 
-**Code Inspection:** `internal/router/engine.go:GetEntryDispatches()`
-- Should use `pipeline.EntryNodeIDs` to resolve entry points
-- Should NOT assume trigger is "plugin.command" format and split it
+Should verify:
+- service starts with scheduler enabled
+- a running/orphaned job exists before restart
+- service restart occurs
+- orphan recovery transitions work correctly after restart
 
-### 11.3 Bug: Payload Wrapping Regression (Codex Finding #2)
-**Fixed in:** Commit a78cc86
+#### `api-e2e`
+Goal:
+- validate authenticated API and pipeline behavior with real config and runtime setup
 
-**Test:** `/pipeline` endpoint wraps `handle` commands correctly.
+Should verify:
+- service boots with real config
+- authenticated API requests succeed
+- unauthorized requests fail appropriately
+- pipeline/API triggers create expected queued work
+- status/readback behavior works from the running service
 
-```bash
-curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {"url": "https://example.com"}}' -v 2>&1 | grep "HTTP/1.1 200"
-```
+### Deferred wave-2 concerns
+These are valuable, but should not be in the first Docker wave:
+- reload/restart nuance beyond initial recovery scenarios
+- filesystem/workspace-heavy scenarios
+- plugin runtime matrix testing
+- multi-hop expansion suites
+- load/stress validation
+- broad config matrix coverage
 
-**Expected:** 200 OK (not 400/500 from malformed payload)
-
-### 11.4 Bug: Response Field Inconsistency (Codex Finding #3)
-**Fixed in:** Commit 5e84254
-
-**Test:** `/pipeline` response includes all job fields.
-
-```bash
-curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {"url": "https://example.com"}}' | jq '.tree[0] | keys'
-```
-
-**Expected Keys:**
-- `job_id`
-- `plugin`
-- `command`
-- `status`
-- `result`
-- `last_error`
-- `started_at`
-- `completed_at`
-
----
-
-## 12. Error Handling Tests
-
-### 12.1 Invalid Plugin Name
-```bash
-curl -X POST http://localhost:8080/plugin/nonexistent/handle \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {}}'
-```
-**Expected:** 404 Not Found or meaningful error
-
-### 12.2 Invalid Pipeline Name
-```bash
-curl -X POST http://localhost:8080/pipeline/does-not-exist \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {}}'
-```
-**Expected:** 404 Not Found or "pipeline not found" error
-
-### 12.3 Missing Payload
-```bash
-curl -X POST http://localhost:8080/plugin/jina-reader/handle \
-  -H "Authorization: Bearer <token>" \
-  -d '{}'
-```
-**Expected:** Plugin executes but may return error if URL required
-
-### 12.4 Malformed JSON
-```bash
-curl -X POST http://localhost:8080/plugin/jina-reader/handle \
-  -H "Authorization: Bearer <token>" \
-  -d 'not-json'
-```
-**Expected:** 400 Bad Request
+Wave 1 should stay small, high-value, and stable.
 
 ---
 
-## 13. Performance & Load Tests
+## 10. Docker Harness Architecture
 
-### 13.1 Concurrent Plugin Calls
+The Docker-backed test harness should be **fixture-driven** and orchestrated through repository tooling rather than product commands.
+
+### Design principles
+- use Docker only where runtime/system realism adds meaningful confidence
+- keep scenarios black-box and high-value
+- avoid duplicating the entire Go test suite in containers
+- make local and CI execution use the same harness entry points
+
+### Recommended structure
+Use named fixtures representing focused system scenarios. For example:
+
+```text
+test/fixtures/docker/webhook-ingress/
+test/fixtures/docker/scheduler-recovery/
+test/fixtures/docker/api-e2e/
+```
+
+Each fixture should define the inputs needed for that scenario, such as:
+- config files
+- fixture data
+- environment variables
+- compose overrides if required
+- scenario-specific assertion inputs
+
+### Orchestration mechanism
+Use **Docker Compose** for harness orchestration.
+
+Recommended behavior:
+- shared Compose base where possible
+- fixture-specific overrides where needed
+- explicit startup and teardown lifecycle
+- one harness runner orchestrating one or more fixtures
+
+### Readiness policy
+Readiness must be explicit.
+
+The harness should:
+- wait for service health or known-ready endpoints
+- use retries/timeouts
+- fail clearly if readiness is not achieved
+
+Avoid relying on arbitrary sleeps as the primary readiness mechanism.
+
+### Fixture execution model
+The harness should follow a consistent lifecycle:
+1. select fixture(s)
+2. start services
+3. wait for readiness
+4. run black-box assertions
+5. collect artifacts on failure
+6. tear down by default
+
+### Local targeting
+The design should support:
+- running all Docker fixtures
+- running a single named fixture for focused development work
+
+This keeps Docker usable during complex development without forcing full-suite runtime on every change.
+
+## 11. Failure Artifact Policy for Docker Tests
+
+On Docker-backed test failure, the harness should automatically capture artifacts under a predictable path such as:
+
+```text
+test-artifacts/docker/<timestamp>/<fixture>/
+```
+
+Recommended minimum artifact set:
+- container/service logs
+- fixture/config inputs
+- scenario/assertion log
+- failed HTTP responses where applicable
+- DB snapshot where applicable
+
+### Recommended artifact structure
+```text
+test-artifacts/docker/<timestamp>/<fixture>/
+  run.log
+  scenario.log
+  compose.log
+  service-*.log
+  responses/
+  config/
+  db/
+```
+
+### Behavior
+- keep artifacts on local failure
+- upload artifacts on CI failure
+- tear down containers after artifact capture by default
+- optional debug/preserve mode may be added later
+
+### Design intent
+Docker failures should be diagnosable without immediately rerunning in manual debug mode. Artifact capture should therefore be automatic rather than opt-in.
+
+---
+
+## 12. CI Policy
+
+CI should mirror the local staged testing model rather than inventing separate workflows.
+
+### Branch / PR CI
+Always run fast validation:
+- `go test ./...`
+- `golangci-lint run ./...`
+
+This keeps standard branch feedback fast and useful.
+
+### Pre-merge gate
+Before merge, require merge-grade validation:
+- `scripts/test-premerge`
+
+Conceptually this means:
+- fast tests
+- lint/static checks
+- Docker-backed validation
+
+### `main` CI
+Run full validation on merged trunk:
+- `scripts/test-main`
+
+Initially, `scripts/test-main` should provide at least the same coverage as pre-merge validation.
+
+### CI job visibility
+CI should expose at least separate visible checks for:
+- fast validation
+- Docker validation
+
+This makes failures easier to diagnose and rerun.
+
+### CI design principles
+- CI should mirror the local staged-testing model
+- CI should invoke the same canonical scripts developers use locally
+- Docker validation should be a required pre-merge gate
+- `main` should always receive a full post-merge validation pass
+
+---
+
+## 13. Scope Boundaries
+
+### Fast tests should own
+- pure logic
+- deterministic unit behavior
+- parser/validator correctness
+- router/state/queue integration using real SQLite where helpful
+- low-friction day-to-day confidence
+
+### Docker tests should own
+- runtime system behavior
+- service boot with real config
+- restart and recovery flows
+- network ingress behavior
+- realistic end-to-end operator-facing scenarios
+
+---
+
+## 14. Implementation Order
+
+Once the design is accepted, implementation should proceed in sensible phases:
+
+1. document the testing policy
+2. scaffold canonical repo scripts
+3. build the Docker harness base
+4. implement the first Docker fixtures
+5. wire CI stages to the canonical scripts
+6. polish artifact capture and `main` validation behavior
+
+---
+
+## 15. Script and Target Design
+
+The canonical testing interface should live in `scripts/`, with optional convenience wrappers in a `Makefile`.
+
+### Canonical scripts
+- `scripts/test-fast`
+- `scripts/test-docker`
+- `scripts/test-premerge`
+- `scripts/test-main`
+
+These scripts are the source of truth for local and CI usage.
+
+### Intended behavior
+
+#### `scripts/test-fast`
+Purpose:
+- fast branch-development assurance
+- frequent local execution during implementation
+
+Recommended initial behavior:
 ```bash
-# Execute 10 concurrent direct plugin calls
-for i in {1..10}; do
-  curl -X POST http://localhost:8080/plugin/echo/health \
-    -H "Authorization: Bearer <token>" &
-done
-wait
+go test ./...
 ```
 
-**Validate:** All requests succeed, no deadlocks
+Lint is intentionally excluded from the default fast loop to preserve iteration speed.
 
-### 13.2 Pipeline Throughput
-```bash
-# Measure pipeline execution time
-time curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer <token>" \
-  -d '{"payload": {"url": "https://example.com", "pattern": "summarize"}}'
-```
+#### `scripts/test-docker`
+Purpose:
+- Docker-backed system/runtime validation
+- selective during development
+- required in pre-merge and main validation flows
 
-**Baseline:** Establish baseline execution times for comparison after changes
+Expected behavior:
+- boot the Docker-backed harness
+- run the selected fixture scenarios
+- perform readiness checks
+- capture artifacts on failure
+- tear down by default
 
----
+#### `scripts/test-premerge`
+Purpose:
+- required merge-grade validation before landing on `main`
 
-## 14. Documentation Validation
+Expected behavior:
+- run `scripts/test-fast`
+- run `golangci-lint run ./...`
+- run `scripts/test-docker`
 
-### 14.1 Skill Manifest Accuracy
-```bash
-./ductile skill
-```
+#### `scripts/test-main`
+Purpose:
+- full post-merge validation on `main`
 
-**Verify:**
-- Section 2 lists all plugins with `/plugin/{plugin}/{command}` format
-- Plugins have correct `poll`, `handle`, `health` commands listed
-- Descriptions are accurate
+Expected initial behavior:
+- same coverage as `scripts/test-premerge`
 
-### 14.2 PLUGIN_DEVELOPMENT.md Compliance
-**Check:** All example code in docs matches current implementation.
+This may expand later to include broader smoke/regression suites.
 
-**Files to validate:**
-- Event type naming examples
-- Standard field examples
-- Context propagation documentation
-- No references to manual propagation loops
+### Composition rules
+- `scripts/test-premerge` should compose lower-level scripts instead of duplicating logic
+- `scripts/test-main` should compose lower-level scripts instead of duplicating logic
+- CI should invoke the same canonical scripts developers use locally
 
----
+### Optional Make wrappers
+Optional Make targets may wrap the scripts for ergonomics:
+- `make test`
+- `make test-docker`
+- `make test-premerge`
+- `make test-main`
 
-## 15. Test Checklist
+If present, these should delegate to `scripts/` rather than reimplementing behavior.
 
-Before releasing a new version, complete this checklist:
+## 16. Summary
 
-- [ ] `go test ./...` passes
-- [ ] `go test ./cmd/ductile/...` passes
-- [ ] Echo runbook completes successfully
-- [ ] All API endpoints tested (`/plugin`, `/pipeline`)
-- [ ] Plugin payload spec compliance verified (all 4 plugins)
-- [ ] Context auto-propagation works in multi-step pipeline
-- [ ] Terminal step result returned in sync response
-- [ ] Regression tests pass (all Codex findings)
-- [ ] Error handling behaves correctly
-- [ ] `ductile skill` output is accurate
-- [ ] Documentation matches implementation
+The target state is:
+- **velocity during branch development**
+- **strong gates before merge**
+- **explicit trunk protection after merge**
+- **clear separation between product commands and assurance tooling**
 
----
-
-## 16. CI/CD Pipeline Recommendations
-
-### GitHub Actions Workflow
-```yaml
-name: Test Suite
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
-      - run: go test ./...
-      - run: go test ./cmd/ductile/...
-
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - run: docker compose up -d
-      - run: ./scripts/e2e-tests.sh
-```
-
----
-
-## 17. Troubleshooting
-
-### Issue: Plugin not found
-**Symptom:** `POST /plugin/my-plugin/handle` returns 404
-**Check:**
-- Plugin directory exists in `plugins/`
-- Plugin has `manifest.yaml`
-- `ductile config check` passes
-
-### Issue: Pipeline doesn't trigger
-**Symptom:** `POST /pipeline/my-pipeline` returns error
-**Check:**
-- Pipeline defined in `config/ductile/pipelines.yaml`
-- Pipeline has valid entry points
-- `ductile config check` shows no errors
-
-### Issue: Context fields not propagating
-**Symptom:** Second step in pipeline doesn't receive `pattern` field
-**Debug:**
-1. Inspect first step's output event
-2. Check `internal/dispatch/dispatcher.go:648-661` is active
-3. Verify field name matches designated list (pattern, prompt, model, output_dir, output_path, filename)
-
-### Issue: Wrong result returned
-**Symptom:** API returns intermediate step result instead of final
-**Debug:**
-1. Check `internal/router/interface.go` - pipeline has `TerminalStepIDs`?
-2. Verify `internal/queue/queue.go` - joins with `event_context` table
-3. Inspect API response `tree[]` array - which step is marked terminal?
-
----
-
-## 18. Future Test Improvements
-
-- Add automated E2E tests using Go test framework
-- Create benchmark suite for performance regression detection
-- Implement contract testing for plugin I/O schemas
-- Add load testing with k6 or similar tool
-- Create mutation testing for critical paths (dispatch, router)
-- Implement property-based testing for event routing logic
+In short:
+- fast tests are for iteration
+- Docker tests are for system confidence
+- pre-merge is a gate
+- `main` is protected by full validation

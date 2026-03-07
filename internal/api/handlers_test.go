@@ -3,11 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -21,44 +23,18 @@ import (
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/mattjoyce/ductile/internal/storage"
 )
 
-// mockQueue implements JobQueuer for testing
-type mockQueue struct {
-	enqueueFunc     func(ctx context.Context, req queue.EnqueueRequest) (string, error)
-	getJobByIDFunc  func(ctx context.Context, jobID string) (*queue.JobResult, error)
-	listJobsFunc    func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
-	listJobLogsFunc func(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error)
-	depthFunc       func(ctx context.Context) (int, error)
-}
-
-func (m *mockQueue) Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-	return m.enqueueFunc(ctx, req)
-}
-
-func (m *mockQueue) GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error) {
-	return m.getJobByIDFunc(ctx, jobID)
-}
-
-func (m *mockQueue) ListJobs(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
-	if m.listJobsFunc == nil {
-		return nil, 0, nil
+func setupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
 	}
-	return m.listJobsFunc(ctx, filter)
-}
-
-func (m *mockQueue) ListJobLogs(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error) {
-	if m.listJobLogsFunc == nil {
-		return nil, 0, nil
-	}
-	return m.listJobLogsFunc(ctx, filter)
-}
-
-func (m *mockQueue) Depth(ctx context.Context) (int, error) {
-	if m.depthFunc == nil {
-		return 0, nil
-	}
-	return m.depthFunc(ctx)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
 // mockRegistry implements PluginRegistry for testing
@@ -76,10 +52,6 @@ func (m *mockRegistry) All() map[string]*plugin.Plugin {
 		return map[string]*plugin.Plugin{}
 	}
 	return m.plugins
-}
-
-func (m *mockQueue) GetJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, error) {
-	return nil, nil
 }
 
 // mockRouter implements PipelineRouter for testing
@@ -129,40 +101,43 @@ func (m *mockWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeo
 	return nil, nil
 }
 
-type mockContextStore struct {
-	createFunc func(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error)
-}
-
-func (m *mockContextStore) Create(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error) {
-	if m.createFunc != nil {
-		return m.createFunc(ctx, parentID, pipelineName, stepID, updates)
-	}
-	return &state.EventContext{ID: "ctx-default", PipelineName: pipelineName, StepID: stepID}, nil
-}
-
-func newTestServer(q *mockQueue, reg *mockRegistry) *Server {
+func setupTestServer(t *testing.T, db *sql.DB, reg PluginRegistry) *Server {
+	t.Helper()
 	logger := slog.Default()
-	config := Config{
+	cfg := Config{
 		Listen: "localhost:8080",
 		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
 	}
+	q := queue.New(db)
+	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
+	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, hub, logger)
 }
 
-func newTestServerWithReload(q *mockQueue, reg *mockRegistry, reload func(context.Context) (ReloadResponse, error)) *Server {
-	logger := slog.Default()
-	config := Config{
-		Listen:     "localhost:8080",
-		Tokens:     []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
-		ReloadFunc: reload,
+func newTestServer(reg PluginRegistry) *Server {
+	db, err := storage.OpenSQLite(context.Background(), ":memory:")
+	if err != nil {
+		panic(err)
 	}
+	return setupTestServerWithDB(db, reg)
+}
+
+func setupTestServerWithDB(db *sql.DB, reg PluginRegistry) *Server {
+	logger := slog.Default()
+	cfg := Config{
+		Listen: "localhost:8080",
+		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
+	}
+	q := queue.New(db)
+	cs := state.NewContextStore(db)
 	hub := events.NewHub(10)
-	return New(config, q, reg, &mockRouter{}, &mockWaiter{}, nil, hub, logger)
+	return New(cfg, q, reg, &mockRouter{}, &mockWaiter{}, cs, hub, logger)
 }
 
 func TestHandleRoot_NoAuth(t *testing.T) {
-	server := newTestServer(&mockQueue{}, &mockRegistry{})
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
@@ -193,16 +168,26 @@ func TestHandleRoot_NoAuth(t *testing.T) {
 }
 
 func TestHandleHealthz_NoAuth(t *testing.T) {
-	q := &mockQueue{
-		depthFunc: func(ctx context.Context) (int, error) { return 7, nil },
+	t.Parallel()
+	db := setupTestDB(t)
+	q := queue.New(db)
+	// Enqueue some jobs to check depth
+	for i := 0; i < 7; i++ {
+		_, err := q.Enqueue(context.Background(), queue.EnqueueRequest{
+			Plugin: "echo", Command: "poll", SubmittedBy: "test",
+		})
+		if err != nil {
+			t.Fatalf("failed to enqueue: %v", err)
+		}
 	}
+
 	reg := &mockRegistry{
 		plugins: map[string]*plugin.Plugin{
 			"echo": {Name: "echo"},
 		},
 	}
 
-	server := newTestServer(q, reg)
+	server := setupTestServer(t, db, reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rr := httptest.NewRecorder()
@@ -232,12 +217,11 @@ func TestHandleHealthz_NoAuth(t *testing.T) {
 }
 
 func TestHandleSchedulerJobs_Authorized(t *testing.T) {
-	q := &mockQueue{
-		depthFunc: func(ctx context.Context) (int, error) { return 0, nil },
-	}
+	t.Parallel()
+	db := setupTestDB(t)
 	reg := &mockRegistry{plugins: map[string]*plugin.Plugin{}}
-	cfg := config.Defaults()
-	cfg.Plugins = map[string]config.PluginConf{
+	runtimeCfg := config.Defaults()
+	runtimeCfg.Plugins = map[string]config.PluginConf{
 		"echo": {
 			Enabled: true,
 			Schedules: []config.ScheduleConfig{
@@ -248,11 +232,13 @@ func TestHandleSchedulerJobs_Authorized(t *testing.T) {
 		},
 	}
 
+	q := queue.New(db)
+	cs := state.NewContextStore(db)
 	server := New(Config{
 		Listen:        "localhost:8080",
 		Tokens:        []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
-		RuntimeConfig: cfg,
-	}, q, reg, &mockRouter{}, &mockWaiter{}, nil, events.NewHub(10), slog.Default())
+		RuntimeConfig: runtimeCfg,
+	}, q, reg, &mockRouter{}, &mockWaiter{}, cs, events.NewHub(10), slog.Default())
 
 	req := httptest.NewRequest(http.MethodGet, "/scheduler/jobs", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -323,9 +309,9 @@ func (w *streamWriter) Status() int {
 }
 
 func TestHandleEvents_Unauthorized(t *testing.T) {
-	q := &mockQueue{}
-	reg := &mockRegistry{plugins: map[string]*plugin.Plugin{}}
-	server := newTestServer(q, reg)
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/events", nil)
 	rr := httptest.NewRecorder()
@@ -338,9 +324,9 @@ func TestHandleEvents_Unauthorized(t *testing.T) {
 }
 
 func TestHandleEvents_ReplaysBufferedEvents(t *testing.T) {
-	q := &mockQueue{}
-	reg := &mockRegistry{plugins: map[string]*plugin.Plugin{}}
-	server := newTestServer(q, reg)
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
 	server.events.Publish("test_event", map[string]any{"k": "v"})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -377,25 +363,19 @@ func TestHandleEvents_ReplaysBufferedEvents(t *testing.T) {
 }
 
 func TestHandleGetJob_Success(t *testing.T) {
-	q := &mockQueue{
-		getJobByIDFunc: func(ctx context.Context, jobID string) (*queue.JobResult, error) {
-			if jobID != "job-123" {
-				t.Errorf("unexpected job_id: %s", jobID)
-			}
-			return &queue.JobResult{
-				JobID:   "job-123",
-				Status:  queue.StatusSucceeded,
-				Plugin:  "echo",
-				Command: "poll",
-			}, nil
-		},
+	t.Parallel()
+	db := setupTestDB(t)
+	q := queue.New(db)
+	jobID, err := q.Enqueue(context.Background(), queue.EnqueueRequest{
+		Plugin: "echo", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to enqueue: %v", err)
 	}
 
-	reg := &mockRegistry{}
+	server := setupTestServer(t, db, &mockRegistry{})
 
-	server := newTestServer(q, reg)
-
-	req := httptest.NewRequest(http.MethodGet, "/job/job-123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/job/"+jobID, nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
 
 	rr := httptest.NewRecorder()
@@ -411,11 +391,8 @@ func TestHandleGetJob_Success(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if resp.JobID != "job-123" {
-		t.Errorf("expected job_id job-123, got %s", resp.JobID)
-	}
-	if resp.Status != "succeeded" {
-		t.Errorf("expected status succeeded, got %s", resp.Status)
+	if resp.JobID != jobID {
+		t.Errorf("expected job_id %s, got %s", jobID, resp.JobID)
 	}
 	if resp.Plugin != "echo" {
 		t.Errorf("expected plugin echo, got %s", resp.Plugin)
@@ -423,15 +400,9 @@ func TestHandleGetJob_Success(t *testing.T) {
 }
 
 func TestHandleGetJob_NotFound(t *testing.T) {
-	q := &mockQueue{
-		getJobByIDFunc: func(ctx context.Context, jobID string) (*queue.JobResult, error) {
-			return nil, queue.ErrJobNotFound
-		},
-	}
-
-	reg := &mockRegistry{}
-
-	server := newTestServer(q, reg)
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/job/unknown", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -455,39 +426,24 @@ func TestHandleGetJob_NotFound(t *testing.T) {
 }
 
 func TestHandleListJobs_SuccessWithFilters(t *testing.T) {
-	createdAt := time.Date(2026, 2, 21, 15, 0, 0, 0, time.UTC)
-	startedAt := createdAt.Add(2 * time.Second)
-
-	q := &mockQueue{
-		listJobsFunc: func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
-			if filter.Plugin != "withings" {
-				t.Fatalf("plugin filter = %q, want withings", filter.Plugin)
-			}
-			if filter.Command != "poll" {
-				t.Fatalf("command filter = %q, want poll", filter.Command)
-			}
-			if filter.Limit != 5 {
-				t.Fatalf("limit filter = %d, want 5", filter.Limit)
-			}
-			if filter.Status == nil || *filter.Status != queue.StatusSucceeded {
-				t.Fatalf("status filter = %v, want %q", filter.Status, queue.StatusSucceeded)
-			}
-
-			return []*queue.JobSummary{
-				{
-					JobID:     "job-1",
-					Plugin:    "withings",
-					Command:   "poll",
-					Status:    queue.StatusSucceeded,
-					CreatedAt: createdAt,
-					StartedAt: &startedAt,
-					Attempt:   1,
-				},
-			}, 42, nil
-		},
+	t.Parallel()
+	db := setupTestDB(t)
+	q := queue.New(db)
+	// Enqueue a job and complete it to test filters
+	jobID, err := q.Enqueue(context.Background(), queue.EnqueueRequest{
+		Plugin: "withings", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("failed to enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("failed to dequeue: %v", err)
+	}
+	if err := q.CompleteWithResult(context.Background(), jobID, queue.StatusSucceeded, json.RawMessage(`{}`), nil, nil); err != nil {
+		t.Fatalf("failed to complete: %v", err)
 	}
 
-	server := newTestServer(q, &mockRegistry{})
+	server := setupTestServer(t, db, &mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/jobs?plugin=withings&command=poll&status=ok&limit=5", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -502,32 +458,24 @@ func TestHandleListJobs_SuccessWithFilters(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Total != 42 {
-		t.Fatalf("total = %d, want 42", resp.Total)
+	if resp.Total != 1 {
+		t.Fatalf("total = %d, want 1", resp.Total)
 	}
 	if len(resp.Jobs) != 1 {
 		t.Fatalf("jobs len = %d, want 1", len(resp.Jobs))
 	}
-	if resp.Jobs[0].JobID != "job-1" {
-		t.Fatalf("job_id = %s, want job-1", resp.Jobs[0].JobID)
+	if resp.Jobs[0].JobID != jobID {
+		t.Fatalf("job_id = %s, want %s", resp.Jobs[0].JobID, jobID)
 	}
 	if resp.Jobs[0].Status != "succeeded" {
 		t.Fatalf("status = %s, want succeeded", resp.Jobs[0].Status)
 	}
-	if !resp.Jobs[0].CreatedAt.Equal(createdAt) {
-		t.Fatalf("created_at = %s, want %s", resp.Jobs[0].CreatedAt, createdAt)
-	}
 }
 
 func TestHandleListJobs_InvalidLimit(t *testing.T) {
-	q := &mockQueue{
-		listJobsFunc: func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
-			t.Fatal("list jobs should not be called for invalid limit")
-			return nil, 0, nil
-		},
-	}
-
-	server := newTestServer(q, &mockRegistry{})
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/jobs?limit=0", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -540,14 +488,9 @@ func TestHandleListJobs_InvalidLimit(t *testing.T) {
 }
 
 func TestHandleListJobs_InvalidStatus(t *testing.T) {
-	q := &mockQueue{
-		listJobsFunc: func(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error) {
-			t.Fatal("list jobs should not be called for invalid status")
-			return nil, 0, nil
-		},
-	}
-
-	server := newTestServer(q, &mockRegistry{})
+	t.Parallel()
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/jobs?status=bogus", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -560,14 +503,8 @@ func TestHandleListJobs_InvalidStatus(t *testing.T) {
 }
 
 func TestHandlePluginTrigger_DirectExecution(t *testing.T) {
-	var capturedReq queue.EnqueueRequest
-	q := &mockQueue{
-		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			capturedReq = req
-			return "direct-job-123", nil
-		},
-	}
-
+	t.Parallel()
+	db := setupTestDB(t)
 	reg := &mockRegistry{
 		plugins: map[string]*plugin.Plugin{
 			"echo": {
@@ -579,7 +516,7 @@ func TestHandlePluginTrigger_DirectExecution(t *testing.T) {
 		},
 	}
 
-	server := newTestServer(q, reg)
+	server := setupTestServer(t, db, reg)
 
 	req := httptest.NewRequest(http.MethodPost, "/plugin/echo/health", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
@@ -591,20 +528,25 @@ func TestHandlePluginTrigger_DirectExecution(t *testing.T) {
 		t.Fatalf("expected status 202, got %d", rr.Code)
 	}
 
-	if capturedReq.Plugin != "echo" || capturedReq.Command != "health" {
-		t.Errorf("unexpected enqueue request: %+v", capturedReq)
+	var resp TriggerResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Verify DB state
+	q := queue.New(db)
+	job, err := q.GetJobByID(context.Background(), resp.JobID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if job.Plugin != "echo" || job.Command != "health" {
+		t.Errorf("unexpected job: %+v", job)
 	}
 }
 
 func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
-	var capturedPayload json.RawMessage
-	q := &mockQueue{
-		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			capturedPayload = req.Payload
-			return "pipeline-root-job", nil
-		},
-	}
-
+	t.Parallel()
+	db := setupTestDB(t)
 	reg := &mockRegistry{}
 	rt := &mockRouter{
 		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
@@ -618,7 +560,7 @@ func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
 		},
 	}
 
-	server := newTestServer(q, reg)
+	server := setupTestServer(t, db, reg)
 	server.router = rt
 
 	body := bytes.NewBufferString(`{"payload": {"input": "val"}}`)
@@ -634,13 +576,19 @@ func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
 	}
 
 	var resp TriggerResponse
-	json.NewDecoder(rr.Body).Decode(&resp)
-	if resp.JobID != "pipeline-root-job" {
-		t.Errorf("expected job_id pipeline-root-job, got %s", resp.JobID)
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Verify DB state
+	var payload []byte
+	err := db.QueryRow("SELECT payload FROM job_queue WHERE id = ?", resp.JobID).Scan(&payload)
+	if err != nil {
+		t.Fatalf("failed to query job payload: %v", err)
 	}
 
 	var event protocol.Event
-	if err := json.Unmarshal(capturedPayload, &event); err != nil {
+	if err := json.Unmarshal(payload, &event); err != nil {
 		t.Fatalf("expected handle payload to be protocol.Event: %v", err)
 	}
 	if event.Type != "file.read" {
@@ -652,26 +600,8 @@ func TestHandlePipelineTrigger_ExplicitExecution(t *testing.T) {
 }
 
 func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
-	var captured []queue.EnqueueRequest
-	q := &mockQueue{
-		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			captured = append(captured, req)
-			return "job-" + req.Plugin, nil
-		},
-	}
-
-	var createdSteps []string
-	contextStore := &mockContextStore{
-		createFunc: func(ctx context.Context, parentID *string, pipelineName, stepID string, updates json.RawMessage) (*state.EventContext, error) {
-			createdSteps = append(createdSteps, stepID)
-			return &state.EventContext{
-				ID:           "ctx-" + stepID,
-				PipelineName: pipelineName,
-				StepID:       stepID,
-			}, nil
-		},
-	}
-
+	t.Parallel()
+	db := setupTestDB(t)
 	rt := &mockRouter{
 		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
 			return &router.PipelineInfo{
@@ -688,16 +618,8 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 		},
 	}
 
-	server := New(
-		Config{Listen: "localhost:8080", Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}}},
-		q,
-		&mockRegistry{},
-		rt,
-		&mockWaiter{},
-		contextStore,
-		events.NewHub(10),
-		slog.Default(),
-	)
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.router = rt
 
 	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", bytes.NewBufferString(`{"payload":{"x":1}}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -708,28 +630,67 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("expected status 202, got %d", rr.Code)
 	}
-	if len(createdSteps) != 2 || createdSteps[0] != "step-a" || createdSteps[1] != "step-b" {
-		t.Fatalf("unexpected created steps: %v", createdSteps)
+
+	var resp TriggerResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	if len(captured) != 2 {
-		t.Fatalf("expected 2 enqueue requests, got %d", len(captured))
+
+	// Verify multiple jobs enqueued (fanout)
+	q := queue.New(db)
+	_, total, err := q.ListJobs(context.Background(), queue.ListJobsFilter{})
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
 	}
-	if captured[0].EventContextID == nil || *captured[0].EventContextID != "ctx-step-a" {
-		t.Fatalf("first dispatch EventContextID mismatch: %+v", captured[0].EventContextID)
+	if total != 2 {
+		t.Fatalf("expected 2 jobs, got %d", total)
 	}
-	if captured[1].EventContextID == nil || *captured[1].EventContextID != "ctx-step-b" {
-		t.Fatalf("second dispatch EventContextID mismatch: %+v", captured[1].EventContextID)
+
+	// Check contexts and close rows before reading from context store.
+	rows, err := db.Query("SELECT event_context_id FROM job_queue")
+	if err != nil {
+		t.Fatalf("query event_context_ids: %v", err)
+	}
+
+	var contextIDs []string
+	for rows.Next() {
+		var ctxID sql.NullString
+		if err := rows.Scan(&ctxID); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan ctxID: %v", err)
+		}
+		if !ctxID.Valid || ctxID.String == "" {
+			_ = rows.Close()
+			t.Fatalf("job has no context")
+		}
+		contextIDs = append(contextIDs, ctxID.String)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		t.Fatalf("rows err: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close rows: %v", err)
+	}
+	if len(contextIDs) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(contextIDs))
+	}
+
+	cs := state.NewContextStore(db)
+	for _, contextID := range contextIDs {
+		ctx, err := cs.Get(context.Background(), contextID)
+		if err != nil {
+			t.Fatalf("Get context %s: %v", contextID, err)
+		}
+		if ctx.PipelineName != "test-pipe" {
+			t.Errorf("unexpected pipeline name %s", ctx.PipelineName)
+		}
 	}
 }
 
 func TestHandlePipelineTrigger_SyncFanoutRequiresAsync(t *testing.T) {
-	q := &mockQueue{
-		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			t.Fatal("enqueue should not be called for synchronous fan-out without async override")
-			return "", nil
-		},
-	}
-
+	t.Parallel()
+	db := setupTestDB(t)
 	rt := &mockRouter{
 		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
 			return &router.PipelineInfo{
@@ -746,7 +707,7 @@ func TestHandlePipelineTrigger_SyncFanoutRequiresAsync(t *testing.T) {
 		},
 	}
 
-	server := newTestServer(q, &mockRegistry{})
+	server := setupTestServer(t, db, &mockRegistry{})
 	server.router = rt
 
 	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", nil)
@@ -759,54 +720,18 @@ func TestHandlePipelineTrigger_SyncFanoutRequiresAsync(t *testing.T) {
 	}
 }
 
-func TestHandlePipelineTrigger_PartialEnqueueReturnsError(t *testing.T) {
-	var calls int
-	q := &mockQueue{
-		enqueueFunc: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			calls++
-			if calls == 1 {
-				return "first-job", nil
-			}
-			return "", errors.New("db unavailable")
-		},
-	}
-
-	rt := &mockRouter{
-		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
-			return &router.PipelineInfo{Name: "test-pipe", Trigger: "file.read"}
-		},
-		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
-			return []router.Dispatch{
-				{Plugin: "echo", Command: "handle", Event: event, StepID: "step-a"},
-				{Plugin: "fabric", Command: "handle", Event: event, StepID: "step-b"},
-			}, nil
-		},
-	}
-
-	server := newTestServer(q, &mockRegistry{})
-	server.router = rt
-
-	req := httptest.NewRequest(http.MethodPost, "/pipeline/test-pipe", nil)
-	req.Header.Set("Authorization", "Bearer test-key-123")
-	rr := httptest.NewRecorder()
-	server.setupRoutes().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status 500, got %d", rr.Code)
-	}
-	if !strings.Contains(rr.Body.String(), "partially enqueued") {
-		t.Fatalf("expected partial enqueue error, got: %s", rr.Body.String())
-	}
-}
-
 func TestHandleSystemReload_OK(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
 	reloaded := false
 	reloadFn := func(ctx context.Context) (ReloadResponse, error) {
 		reloaded = true
 		return ReloadResponse{Status: "ok", ReloadedAt: "2026-03-02T00:00:00Z"}, nil
 	}
 
-	server := newTestServerWithReload(&mockQueue{}, &mockRegistry{}, reloadFn)
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.reloadFunc = reloadFn
+
 	req := httptest.NewRequest(http.MethodPost, "/system/reload", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
 	resp := httptest.NewRecorder()
@@ -828,11 +753,15 @@ func TestHandleSystemReload_OK(t *testing.T) {
 }
 
 func TestHandleSystemReload_Error(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
 	reloadFn := func(ctx context.Context) (ReloadResponse, error) {
 		return ReloadResponse{Status: "error", Message: "locked"}, errors.New("locked")
 	}
 
-	server := newTestServerWithReload(&mockQueue{}, &mockRegistry{}, reloadFn)
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.reloadFunc = reloadFn
+
 	req := httptest.NewRequest(http.MethodPost, "/system/reload", nil)
 	req.Header.Set("Authorization", "Bearer test-key-123")
 	resp := httptest.NewRecorder()

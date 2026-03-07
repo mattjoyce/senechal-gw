@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fixture_init() {
+  : "${ROOT_DIR:?}"
+  : "${FIXTURE_NAME:?}"
+  : "${ARTIFACT_ROOT:?}"
+  FIXTURE_DIR="${FIXTURE_DIR:-$ROOT_DIR/test/fixtures/docker/$FIXTURE_NAME}"
+  ARTIFACT_DIR="${ARTIFACT_DIR:-$ARTIFACT_ROOT/$FIXTURE_NAME}"
+  mkdir -p "$ARTIFACT_DIR"
+  export FIXTURE_DIR ARTIFACT_DIR
+}
+
+fixture_log() {
+  echo "[fixture:${FIXTURE_NAME}] $*"
+}
+
+fixture_capture_file() {
+  local src="$1"
+  local dest_name="${2:-$(basename "$src") }"
+  if [[ -f "$src" ]]; then
+    cp "$src" "$ARTIFACT_DIR/$dest_name"
+  fi
+}
+
+fixture_capture_tree() {
+  local src="$1"
+  local dest_name="$2"
+  if [[ -d "$src" ]]; then
+    rm -rf "$ARTIFACT_DIR/$dest_name"
+    mkdir -p "$ARTIFACT_DIR/$dest_name"
+    cp -R "$src"/. "$ARTIFACT_DIR/$dest_name/"
+  fi
+}
+
+fixture_fail() {
+  fixture_log "FAIL: $*"
+  exit 1
+}

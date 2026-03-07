@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> test-fast: go test ./..."
+go test ./...
+
+echo "==> test-fast: NOTE current suite may fail if a local process occupies internal/api integration test port 127.0.0.1:18080"

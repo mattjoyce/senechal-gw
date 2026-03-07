@@ -1,0 +1,7 @@
+webhooks:
+  endpoints:
+    - path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+      max_body_size: 1MB
