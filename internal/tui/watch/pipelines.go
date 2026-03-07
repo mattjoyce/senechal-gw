@@ -286,12 +286,12 @@ func renderPipelineRow(num int, item PipelineListItem, isSelected bool, theme Th
 	nameText := nameStyle.Render(fmt.Sprintf("%-24s", item.Entry.Name))
 
 	var line strings.Builder
-	line.WriteString(fmt.Sprintf(" %d. %s  %s  %s",
+	fmt.Fprintf(&line, " %d. %s  %s  %s",
 		num,
 		nameText,
 		statusStr,
 		lastRunStr,
-	))
+	)
 
 	if activeCount > 0 && item.State != nil {
 		for _, job := range item.State.ActiveJobs {

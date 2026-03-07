@@ -18,7 +18,9 @@ func TestDiscoverConfigFiles(t *testing.T) {
 	writeTestFile(t, filepath.Join(tmpDir, "routes.yaml"), "routes: []\n")
 
 	// Create scopes directory
-	os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0755)
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
+		t.Fatalf("mkdir scopes dir: %v", err)
+	}
 	writeTestFile(t, filepath.Join(tmpDir, "scopes", "admin.json"), `{"scopes":["*"]}`)
 
 	cf, err := DiscoverConfigFiles(tmpDir)

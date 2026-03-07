@@ -792,8 +792,11 @@ plugins:
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
 			for k, v := range tt.env {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
+				if err := os.Setenv(k, v); err != nil {
+					t.Fatalf("set env %s: %v", k, err)
+				}
+				k := k
+				t.Cleanup(func() { _ = os.Unsetenv(k) })
 			}
 
 			// Create temp config file
@@ -859,8 +862,11 @@ func TestInterpolateEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
 			for k, v := range tt.env {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
+				if err := os.Setenv(k, v); err != nil {
+					t.Fatalf("set env %s: %v", k, err)
+				}
+				k := k
+				t.Cleanup(func() { _ = os.Unsetenv(k) })
 			}
 
 			got := interpolateEnv(tt.input)
@@ -1134,7 +1140,9 @@ func TestLoadEnvironmentVarsInclude(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("DUCTILE_TEST_NAME=envtest\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	os.Unsetenv("DUCTILE_TEST_NAME")
+	if err := os.Unsetenv("DUCTILE_TEST_NAME"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = os.Unsetenv("DUCTILE_TEST_NAME") })
 
 	configYAML := `

@@ -174,7 +174,7 @@ func ensureColumnExists(ctx context.Context, db *sql.DB, table, column, columnDe
 	if err != nil {
 		return fmt.Errorf("bootstrap sqlite: inspect %s columns: %w", table, err)
 	}
-	defer cols.Close()
+	defer func() { _ = cols.Close() }()
 
 	hasColumn := false
 	for cols.Next() {
