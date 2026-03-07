@@ -4,14 +4,18 @@ package conditions
 type Operator string
 
 const (
-	OpExists Operator = "exists"
-	OpEq     Operator = "eq"
-	OpNeq    Operator = "neq"
-	OpIn     Operator = "in"
-	OpGT     Operator = "gt"
-	OpGTE    Operator = "gte"
-	OpLT     Operator = "lt"
-	OpLTE    Operator = "lte"
+	OpExists     Operator = "exists"
+	OpEq         Operator = "eq"
+	OpNeq        Operator = "neq"
+	OpIn         Operator = "in"
+	OpGT         Operator = "gt"
+	OpGTE        Operator = "gte"
+	OpLT         Operator = "lt"
+	OpLTE        Operator = "lte"
+	OpContains   Operator = "contains"
+	OpStartsWith Operator = "startswith"
+	OpEndsWith   Operator = "endswith"
+	OpRegex      Operator = "regex"
 )
 
 // Condition is one structured predicate tree.

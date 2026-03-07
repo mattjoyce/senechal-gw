@@ -146,7 +146,7 @@ func TestCompileSpecsAcceptsStructuredIfCondition(t *testing.T) {
 			Uses: "plugin-a",
 			If: &conditions.Condition{
 				All: []conditions.Condition{
-					{Path: "payload.kind", Op: conditions.OpEq, Value: "video"},
+					{Path: "payload.kind", Op: conditions.OpContains, Value: "vid"},
 					{Path: "context.origin_user", Op: conditions.OpExists},
 				},
 			},

@@ -83,6 +83,11 @@ func validate(cond Condition, at string, depth int, count *int) error {
 			return newValidationError(at+".value", "value must be an array for in")
 		}
 	}
+	if requiresStringValue(cond.Op) {
+		if _, ok := cond.Value.(string); !ok {
+			return newValidationError(at+".value", fmt.Sprintf("value must be a string for operator %q", cond.Op))
+		}
+	}
 	return nil
 }
 
@@ -106,7 +111,16 @@ func validatePath(path string, at string) error {
 
 func isSupportedOperator(op Operator) bool {
 	switch op {
-	case OpExists, OpEq, OpNeq, OpIn, OpGT, OpGTE, OpLT, OpLTE:
+	case OpExists, OpEq, OpNeq, OpIn, OpGT, OpGTE, OpLT, OpLTE, OpContains, OpStartsWith, OpEndsWith, OpRegex:
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresStringValue(op Operator) bool {
+	switch op {
+	case OpContains, OpStartsWith, OpEndsWith, OpRegex:
 		return true
 	default:
 		return false

@@ -118,6 +118,10 @@ Supported operators in v1:
 - `gte`
 - `lt`
 - `lte`
+- `contains` (case-insensitive string contains)
+- `startswith` (case-insensitive string prefix)
+- `endswith` (case-insensitive string suffix)
+- `regex` (Go regexp full-string match; use inline flags like `(?i)` for case-insensitive patterns)
 
 Path roots allowed in v1:
 - `payload.*`
@@ -127,6 +131,7 @@ Path roots allowed in v1:
 Semantics:
 - typing is strict
 - numeric operators require numeric operands
+- string operators require string path values and string comparison values
 - no implicit string-to-number coercion
 - missing paths resolve to absent for `exists`, otherwise compare as `null`
 - invalid conditions fail at pipeline load time

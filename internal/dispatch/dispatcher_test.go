@@ -937,7 +937,7 @@ echo '{"status":"ok","result":"ran-c"}'
         uses: plugin-b
         if:
           path: payload.status
-          op: eq
+          op: contains
           value: error
       - id: step_c
         uses: plugin-c
