@@ -20,9 +20,14 @@ exec > >(tee "$SCENARIO_LOG") 2>&1
 cleanup() {
   fixture_capture_file "$DB_PATH" state.db
   fixture_capture_tree "$STATE_DIR" state-dir
-  [[ -n "$DUCTILE_PID" ]] && kill "$DUCTILE_PID" 2>/dev/null || true
-  [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null || true
-  wait 2>/dev/null || true
+  if [[ -n "$DUCTILE_PID" ]]; then
+    kill "$DUCTILE_PID" 2>/dev/null || true
+    wait "$DUCTILE_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$SERVER_PID" ]]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 
