@@ -166,7 +166,7 @@ ORDER BY depth DESC;
 	if err != nil {
 		return nil, fmt.Errorf("query context lineage: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var contexts []*EventContext
 	for rows.Next() {

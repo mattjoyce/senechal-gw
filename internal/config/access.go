@@ -227,14 +227,6 @@ func guessTag(v string) string {
 	return "!!str"
 }
 
-func (c *Config) saveFile(path string, node *yaml.Node) error {
-	data, err := yaml.Marshal(node)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0600)
-}
-
 func (c *Config) resolveTargetFile() string {
 	for f := range c.SourceFiles {
 		if strings.HasSuffix(f, "config.yaml") {

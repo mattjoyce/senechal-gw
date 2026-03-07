@@ -770,23 +770,23 @@ func hasHelpFlag(args []string) bool {
 }
 
 func printSystemNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status, reset, reload, watch")
+	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch")
 }
 
 func printConfigNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
+	_, _ = fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
+	_, _ = fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
 }
 
 func printJobNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile job <action>")
-	fmt.Fprintln(w, "Actions: inspect, logs")
+	_, _ = fmt.Fprintln(w, "Usage: ductile job <action>")
+	_, _ = fmt.Fprintln(w, "Actions: inspect, logs")
 }
 
 func printPluginNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile plugin <action>")
-	fmt.Fprintln(w, "Actions: list, run")
+	_, _ = fmt.Fprintln(w, "Usage: ductile plugin <action>")
+	_, _ = fmt.Fprintln(w, "Actions: list, run")
 }
 
 func printSystemStartHelp() {
@@ -855,7 +855,7 @@ func runSystemReset(actionArgs []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		return 1
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	q := queue.New(db)
 	if err := q.ResetCircuitBreaker(context.Background(), pluginName, "poll"); err != nil {
@@ -899,7 +899,7 @@ func runSystemReload(actionArgs []string) int {
 			fmt.Fprintf(os.Stderr, "Reload request failed: %v\n", err)
 			return 1
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
 			fmt.Fprintf(os.Stderr, "Reload failed (%d): %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -1178,7 +1178,6 @@ func runWatch(args []string) int {
 				return 1
 			}
 			fmt.Fprintf(os.Stderr, "Warning: unable to load config from %s: %v\n", resolvedConfigPath, err)
-			resolvedConfigPath = ""
 		} else {
 			cfg = loaded
 		}
@@ -1301,7 +1300,7 @@ func runPluginList(args []string) int {
 		fmt.Fprintf(os.Stderr, "API request failed: %v\n", err)
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1428,7 +1427,7 @@ func runPluginRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "API request failed: %v\n", err)
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1900,7 +1899,7 @@ func runStart(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to acquire PID lock (another instance may be running): %v\n", err)
 		return 1
 	}
-	defer pidLock.Release()
+	defer func() { _ = pidLock.Release() }()
 
 	manager := &reloadManager{
 		configPath:   *configPath,
@@ -2100,7 +2099,7 @@ func checkStateDBReadiness(statePath string) systemStatusCheck {
 		check.Detail = fmt.Sprintf("open failed: %v", err)
 		return check
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -2240,7 +2239,7 @@ func runInspect(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		return 1
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var report string
 	if jsonOut {
@@ -2305,7 +2304,7 @@ func runJobLogs(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		return 1
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	filter := queue.JobLogFilter{
 		Plugin:        strings.TrimSpace(*plugin),

@@ -66,7 +66,7 @@ func subscribeToEvents(apiURL, apiKey string, ch chan<- events.Event) tea.Cmd {
 		if err != nil {
 			return sseDisconnectedMsg{}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		scanner := bufio.NewScanner(resp.Body)
 		var current struct {
@@ -130,7 +130,7 @@ func fetchHealth(apiURL, apiKey string) tea.Msg {
 	if err != nil {
 		return errMsg(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var h healthMsg
 	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
@@ -152,7 +152,7 @@ func fetchSchedulerSnapshot(apiURL, apiKey string) tea.Msg {
 	if err != nil {
 		return errMsg(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return schedulerSnapshotMsg{}
 	}

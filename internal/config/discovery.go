@@ -49,12 +49,6 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 	return cf, nil
 }
 
-// walkYAMLDir returns sorted absolute paths of *.yaml files in dir.
-// Returns nil (not error) if the directory doesn't exist.
-func walkYAMLDir(dir string) ([]string, error) {
-	return walkDirWithExt(dir, ".yaml")
-}
-
 // walkJSONDir returns sorted absolute paths of *.json files in dir.
 // Returns nil (not error) if the directory doesn't exist.
 func walkJSONDir(dir string) ([]string, error) {
