@@ -57,8 +57,12 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
 
 	cleanup := func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Fatalf("RemoveAll(%s): %v", tmpDir, err)
+		}
 	}
 
 	return disp, db, pluginsDir, cleanup
@@ -123,7 +127,9 @@ read input
 echo '{"status": "ok", "result": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
 `
 	plug := createTestPlugin(t, pluginsDir, "echo", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(echo): %v", err)
+	}
 
 	// Configure plugin
 	disp.cfg.Plugins["echo"] = config.PluginConf{
@@ -194,7 +200,9 @@ read input
 echo '{"status": "error", "error": "something went wrong"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "failing", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(failing): %v", err)
+	}
 
 	disp.cfg.Plugins["failing"] = config.PluginConf{
 		Enabled: true,
@@ -249,7 +257,9 @@ read input
 exec sleep 10
 `
 	plug := createTestPlugin(t, pluginsDir, "sleeper", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(sleeper): %v", err)
+	}
 
 	disp.cfg.Plugins["sleeper"] = config.PluginConf{
 		Enabled: true,
@@ -306,7 +316,9 @@ read input
 echo 'not valid json'
 `
 	plug := createTestPlugin(t, pluginsDir, "broken", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(broken): %v", err)
+	}
 
 	disp.cfg.Plugins["broken"] = config.PluginConf{
 		Enabled: true,
@@ -374,7 +386,9 @@ read input
 echo '{"status":"error","error":"transient failure"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "retrying", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 	disp.cfg.Plugins["retrying"] = config.PluginConf{
 		Enabled: true,
 		Retry: &config.RetryConfig{
@@ -435,7 +449,9 @@ read input
 echo '{"status":"error","error":"bad request","retry":false}'
 `
 	plug := createTestPlugin(t, pluginsDir, "noretry", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 	disp.cfg.Plugins["noretry"] = config.PluginConf{
 		Enabled: true,
 		Retry: &config.RetryConfig{
@@ -490,7 +506,9 @@ echo '{"status":"error","error":"config invalid"}'
 exit 78
 `
 	plug := createTestPlugin(t, pluginsDir, "exit78", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 	disp.cfg.Plugins["exit78"] = config.PluginConf{
 		Enabled: true,
 		Retry: &config.RetryConfig{
@@ -542,7 +560,9 @@ read input
 echo '{"status": "ok", "result": "handled event", "logs": [{"level": "info", "message": "handled event"}]}'
 `
 	plug := createTestPlugin(t, pluginsDir, "handler", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 
 	disp.cfg.Plugins["handler"] = config.PluginConf{
 		Enabled: true,
@@ -691,7 +711,11 @@ func TestDispatcher_RoutesTwoHopChainWithContextAndWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -863,7 +887,11 @@ func TestDispatcher_ExecuteJob_SkipsConditionalStepAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -891,9 +919,15 @@ echo '{"status":"ok","result":"ran-c"}'
 	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
 	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
 	plugC := createTestPlugin(t, pluginsDir, "plugin-c", scriptC)
-	registry.Add(plugA)
-	registry.Add(plugB)
-	registry.Add(plugC)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
+	if err := registry.Add(plugC); err != nil {
+		t.Fatalf("registry.Add(plugin-c): %v", err)
+	}
 
 	pipelineYAML := `pipelines:
   - name: chain
@@ -1006,7 +1040,11 @@ func TestDispatcher_Start_ParallelExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -1021,7 +1059,9 @@ sleep 1
 echo '{"status":"ok","result":"done"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "slow", script)
-	registry.Add(plug)
+	if err := registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 
 	cfg := config.Defaults()
 	cfg.PluginRoots = []string{pluginsDir}
@@ -1058,7 +1098,9 @@ echo '{"status":"ok","result":"done"}'
 			t.Fatal("timed out waiting for parallel jobs")
 		case <-time.After(200 * time.Millisecond):
 			var completed int
-			db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed)
+			if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed); err != nil {
+				t.Fatalf("count succeeded jobs: %v", err)
+			}
 			if completed >= 3 {
 				elapsed := time.Since(start)
 				cancel()
@@ -1086,7 +1128,11 @@ func TestDispatcher_Start_PerPluginParallelismCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -1101,7 +1147,9 @@ sleep 1
 echo '{"status":"ok","result":"done"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "capped", script)
-	registry.Add(plug)
+	if err := registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 
 	cfg := config.Defaults()
 	cfg.PluginRoots = []string{pluginsDir}
@@ -1136,7 +1184,9 @@ echo '{"status":"ok","result":"done"}'
 			t.Fatal("timed out waiting for capped jobs")
 		case <-time.After(200 * time.Millisecond):
 			var completed int
-			db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed)
+			if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed); err != nil {
+				t.Fatalf("count succeeded jobs: %v", err)
+			}
 			if completed >= 2 {
 				elapsed := time.Since(start)
 				cancel()
@@ -1164,7 +1214,11 @@ func TestDispatcher_Start_SerialDefaultBackcompat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -1178,7 +1232,9 @@ sleep 1
 echo '{"status":"ok","result":"done"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "serial", script)
-	registry.Add(plug)
+	if err := registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 
 	// Default config: max_workers=1, parallelism=1
 	cfg := config.Defaults()
@@ -1212,7 +1268,9 @@ echo '{"status":"ok","result":"done"}'
 			t.Fatal("timed out waiting for serial jobs")
 		case <-time.After(200 * time.Millisecond):
 			var completed int
-			db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed)
+			if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed); err != nil {
+				t.Fatalf("count succeeded jobs: %v", err)
+			}
 			if completed >= 2 {
 				elapsed := time.Since(start)
 				cancel()
@@ -1234,8 +1292,12 @@ func TestDispatcher_PluginParallelism_RespectsConcurrencySafeHint(t *testing.T) 
 
 	unsafePlugin := &plugin.Plugin{Name: "unsafe", ConcurrencySafe: false}
 	safePlugin := &plugin.Plugin{Name: "safe", ConcurrencySafe: true}
-	disp.registry.Add(unsafePlugin)
-	disp.registry.Add(safePlugin)
+	if err := disp.registry.Add(unsafePlugin); err != nil {
+		t.Fatalf("registry.Add(unsafe): %v", err)
+	}
+	if err := disp.registry.Add(safePlugin); err != nil {
+		t.Fatalf("registry.Add(safe): %v", err)
+	}
 
 	disp.cfg.Service.MaxWorkers = 6
 	disp.cfg.Plugins["unsafe"] = config.PluginConf{Enabled: true, Parallelism: 1}

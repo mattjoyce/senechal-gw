@@ -389,7 +389,11 @@ WHERE status = ?;
 	if err != nil {
 		return nil, fmt.Errorf("query jobs by status: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var jobs []*Job
 	for rows.Next() {
@@ -505,7 +509,11 @@ func (q *Queue) ListJobs(ctx context.Context, filter ListJobsFilter) ([]*JobSumm
 	if err != nil {
 		return nil, 0, fmt.Errorf("list jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var jobs []*JobSummary
 	for rows.Next() {
@@ -626,7 +634,11 @@ func (q *Queue) ListJobLogs(ctx context.Context, filter JobLogFilter) ([]*JobLog
 	if err != nil {
 		return nil, 0, fmt.Errorf("list job logs: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var logs []*JobLogEntry
 	for rows.Next() {
@@ -1130,7 +1142,11 @@ LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 	if err != nil {
 		return nil, fmt.Errorf("get job tree: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var results []*JobResult
 	for rows.Next() {

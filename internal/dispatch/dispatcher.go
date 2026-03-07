@@ -498,9 +498,16 @@ func (d *Dispatcher) spawnPlugin(
 	// Write request to stdin in a goroutine
 	writeErr := make(chan error, 1)
 	go func() {
-		defer stdin.Close()
 		if err := protocol.EncodeRequest(stdin, req); err != nil {
+			if closeErr := stdin.Close(); closeErr != nil {
+				writeErr <- fmt.Errorf("encode request: %w (close stdin: %v)", err, closeErr)
+				return
+			}
 			writeErr <- fmt.Errorf("encode request: %w", err)
+			return
+		}
+		if err := stdin.Close(); err != nil {
+			writeErr <- fmt.Errorf("close stdin: %w", err)
 			return
 		}
 		writeErr <- nil

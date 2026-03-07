@@ -42,7 +42,11 @@ func TestEndToEndPipelineWithConditionalSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -111,12 +115,16 @@ print(json.dumps({"status":"ok","result":"verified"}))
 	}
 
 	var skipStatus string
-	db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'skipme' LIMIT 1").Scan(&skipStatus)
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'skipme' LIMIT 1").Scan(&skipStatus); err != nil {
+		t.Fatalf("query skipme status: %v", err)
+	}
 	if skipStatus != "skipped" {
 		t.Fatalf("skipme status = %q, want skipped", skipStatus)
 	}
 	var notifyStatus string
-	db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'notifier' LIMIT 1").Scan(&notifyStatus)
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'notifier' LIMIT 1").Scan(&notifyStatus); err != nil {
+		t.Fatalf("query notifier status: %v", err)
+	}
 	if notifyStatus != "succeeded" {
 		t.Fatalf("notifier status = %q, want succeeded", notifyStatus)
 	}
@@ -151,7 +159,11 @@ func TestEndToEndPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -258,19 +270,25 @@ except Exception as e:
 
 	// 6. Assertions
 	var notifierJobID string
-	db.QueryRow("SELECT id FROM job_queue WHERE plugin = 'notifier' LIMIT 1").Scan(&notifierJobID)
+	if err := db.QueryRow("SELECT id FROM job_queue WHERE plugin = 'notifier' LIMIT 1").Scan(&notifierJobID); err != nil {
+		t.Fatalf("query notifier job id: %v", err)
+	}
 	if notifierJobID == "" {
 		t.Fatalf("notifier job never ran")
 	}
 
 	var notifierStatus string
-	db.QueryRow("SELECT status FROM job_queue WHERE id = ?", notifierJobID).Scan(&notifierStatus)
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", notifierJobID).Scan(&notifierStatus); err != nil {
+		t.Fatalf("query notifier job status: %v", err)
+	}
 	if notifierStatus != "succeeded" {
 		t.Fatalf("notifier job failed: %s", notifierStatus)
 	}
 
 	var contextID string
-	db.QueryRow("SELECT event_context_id FROM job_queue WHERE id = ?", notifierJobID).Scan(&contextID)
+	if err := db.QueryRow("SELECT event_context_id FROM job_queue WHERE id = ?", notifierJobID).Scan(&contextID); err != nil {
+		t.Fatalf("query notifier context id: %v", err)
+	}
 	lineage, err := contextStore.Lineage(ctx, contextID)
 	if err != nil {
 		t.Fatalf("failed to load lineage: %v", err)
@@ -283,7 +301,9 @@ except Exception as e:
 
 	// Verify Baggage Flow
 	var finalBaggage map[string]any
-	json.Unmarshal(lineage[len(lineage)-1].AccumulatedJSON, &finalBaggage)
+	if err := json.Unmarshal(lineage[len(lineage)-1].AccumulatedJSON, &finalBaggage); err != nil {
+		t.Fatalf("unmarshal final baggage: %v", err)
+	}
 	if finalBaggage["origin_user"] != "matt" {
 		t.Errorf("origin_user baggage lost, got: %v", finalBaggage)
 	}
@@ -294,16 +314,26 @@ except Exception as e:
 	disp.ExecuteJob(ctx, rootJob)
 
 	var childCount int
-	db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE parent_job_id = ?", rootID).Scan(&childCount)
+	if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE parent_job_id = ?", rootID).Scan(&childCount); err != nil {
+		t.Fatalf("count child jobs: %v", err)
+	}
 	if childCount != 1 {
 		t.Errorf("expected exactly 1 child job after parent retry, got %d", childCount)
 	}
 }
 
 func createPlugin(t *testing.T, dir, name, script string) {
+	t.Helper()
+
 	pDir := filepath.Join(dir, name)
-	os.MkdirAll(pDir, 0755)
+	if err := os.MkdirAll(pDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(%s): %v", pDir, err)
+	}
 	manifest := fmt.Sprintf("manifest_spec: ductile.plugin\nmanifest_version: 1\nname: %s\nversion: 1.0.0\nprotocol: 2\nentrypoint: ./run.sh\ncommands:\n  - name: poll\n    type: write\n  - name: handle\n    type: write", name)
-	os.WriteFile(filepath.Join(pDir, "manifest.yaml"), []byte(manifest), 0644)
-	os.WriteFile(filepath.Join(pDir, "run.sh"), []byte(script), 0755)
+	if err := os.WriteFile(filepath.Join(pDir, "manifest.yaml"), []byte(manifest), 0644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", filepath.Join(pDir, "manifest.yaml"), err)
+	}
+	if err := os.WriteFile(filepath.Join(pDir, "run.sh"), []byte(script), 0755); err != nil {
+		t.Fatalf("WriteFile(%s): %v", filepath.Join(pDir, "run.sh"), err)
+	}
 }
