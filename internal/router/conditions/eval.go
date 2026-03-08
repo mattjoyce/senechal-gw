@@ -1,11 +1,11 @@
 package conditions
 
 // Eval evaluates a validated condition tree against the provided scope.
-func Eval(cond Condition, scope Scope) (bool, error) {
+func Eval(cond *Condition, scope Scope) (bool, error) {
 	switch {
 	case len(cond.All) > 0:
-		for _, child := range cond.All {
-			ok, err := Eval(child, scope)
+		for i := range cond.All {
+			ok, err := Eval(&cond.All[i], scope)
 			if err != nil {
 				return false, err
 			}
@@ -15,8 +15,8 @@ func Eval(cond Condition, scope Scope) (bool, error) {
 		}
 		return true, nil
 	case len(cond.Any) > 0:
-		for _, child := range cond.Any {
-			ok, err := Eval(child, scope)
+		for i := range cond.Any {
+			ok, err := Eval(&cond.Any[i], scope)
 			if err != nil {
 				return false, err
 			}
@@ -26,7 +26,7 @@ func Eval(cond Condition, scope Scope) (bool, error) {
 		}
 		return false, nil
 	case cond.Not != nil:
-		ok, err := Eval(*cond.Not, scope)
+		ok, err := Eval(cond.Not, scope)
 		if err != nil {
 			return false, err
 		}

@@ -1,5 +1,7 @@
 package conditions
 
+import "regexp"
+
 // Operator identifies one supported atomic comparison.
 type Operator string
 
@@ -20,12 +22,13 @@ const (
 
 // Condition is one structured predicate tree.
 type Condition struct {
-	Path  string      `yaml:"path,omitempty" json:"path,omitempty"`
-	Op    Operator    `yaml:"op,omitempty" json:"op,omitempty"`
-	Value any         `yaml:"value,omitempty" json:"value,omitempty"`
-	All   []Condition `yaml:"all,omitempty" json:"all,omitempty"`
-	Any   []Condition `yaml:"any,omitempty" json:"any,omitempty"`
-	Not   *Condition  `yaml:"not,omitempty" json:"not,omitempty"`
+	Path          string         `yaml:"path,omitempty" json:"path,omitempty"`
+	Op            Operator       `yaml:"op,omitempty" json:"op,omitempty"`
+	Value         any            `yaml:"value,omitempty" json:"value,omitempty"`
+	All           []Condition    `yaml:"all,omitempty" json:"all,omitempty"`
+	Any           []Condition    `yaml:"any,omitempty" json:"any,omitempty"`
+	Not           *Condition     `yaml:"not,omitempty" json:"not,omitempty"`
+	CompiledRegex *regexp.Regexp `yaml:"-" json:"-"`
 }
 
 // Scope provides read-only values available to condition evaluation.

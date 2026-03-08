@@ -30,7 +30,7 @@ func TestEvalAtomicOperators(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Eval(tt.cond, scope)
+			got, err := Eval(&tt.cond, scope)
 			if err != nil {
 				t.Fatalf("Eval error = %v", err)
 			}
@@ -45,40 +45,40 @@ func TestEvalCompositeConditions(t *testing.T) {
 	scope := Scope{Payload: map[string]any{"kind": "video", "duration_sec": 45}}
 
 	allCond := Condition{All: []Condition{{Path: "payload.kind", Op: OpEq, Value: "video"}, {Path: "payload.duration_sec", Op: OpGTE, Value: 30}}}
-	ok, err := Eval(allCond, scope)
+	ok, err := Eval(&allCond, scope)
 	if err != nil || !ok {
 		t.Fatalf("all condition = %v, err=%v, want true nil", ok, err)
 	}
 
 	anyCond := Condition{Any: []Condition{{Path: "payload.kind", Op: OpEq, Value: "audio"}, {Path: "payload.duration_sec", Op: OpGTE, Value: 30}}}
-	ok, err = Eval(anyCond, scope)
+	ok, err = Eval(&anyCond, scope)
 	if err != nil || !ok {
 		t.Fatalf("any condition = %v, err=%v, want true nil", ok, err)
 	}
 
 	notCond := Condition{Not: &Condition{Path: "payload.kind", Op: OpEq, Value: "audio"}}
-	ok, err = Eval(notCond, scope)
+	ok, err = Eval(&notCond, scope)
 	if err != nil || !ok {
 		t.Fatalf("not condition = %v, err=%v, want true nil", ok, err)
 	}
 }
 
 func TestEvalStrictTypeMismatch(t *testing.T) {
-	_, err := Eval(Condition{Path: "payload.count", Op: OpGT, Value: 1}, Scope{Payload: map[string]any{"count": "3"}})
+	_, err := Eval(&Condition{Path: "payload.count", Op: OpGT, Value: 1}, Scope{Payload: map[string]any{"count": "3"}})
 	if err == nil {
 		t.Fatalf("expected type mismatch error")
 	}
 }
 
 func TestEvalStringOperatorTypeMismatch(t *testing.T) {
-	_, err := Eval(Condition{Path: "payload.count", Op: OpContains, Value: "3"}, Scope{Payload: map[string]any{"count": 3}})
+	_, err := Eval(&Condition{Path: "payload.count", Op: OpContains, Value: "3"}, Scope{Payload: map[string]any{"count": 3}})
 	if err == nil || !strings.Contains(err.Error(), "requires string path value") {
 		t.Fatalf("err = %v, want string path value error", err)
 	}
 }
 
 func TestEvalRegexRejectsInvalidPattern(t *testing.T) {
-	_, err := Eval(Condition{Path: "payload.code", Op: OpRegex, Value: "("}, Scope{Payload: map[string]any{"code": "abc"}})
+	_, err := Eval(&Condition{Path: "payload.code", Op: OpRegex, Value: "("}, Scope{Payload: map[string]any{"code": "abc"}})
 	if err == nil || !strings.Contains(err.Error(), "invalid regex") {
 		t.Fatalf("err = %v, want invalid regex error", err)
 	}
