@@ -190,7 +190,7 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 
 	var payload any
 	if len(req.Payload) > 0 {
-		payload = string(req.Payload)
+		payload = req.Payload
 	}
 
 	_, err := q.db.ExecContext(ctx, `
