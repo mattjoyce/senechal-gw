@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func evalAtomic(cond Condition, scope Scope) (bool, error) {
+func evalAtomic(cond *Condition, scope Scope) (bool, error) {
 	present, actual, err := ResolvePath(scope, cond.Path)
 	if err != nil {
 		return false, err
@@ -52,6 +52,9 @@ func evalAtomic(cond Condition, scope Scope) (bool, error) {
 		if err != nil {
 			return false, err
 		}
+		if cond.CompiledRegex != nil {
+			return cond.CompiledRegex.MatchString(left), nil
+		}
 		re, err := regexp.Compile(fmt.Sprintf("^(?:%s)$", right))
 		if err != nil {
 			return false, fmt.Errorf("operator %q received invalid regex: %w", cond.Op, err)
@@ -77,7 +80,7 @@ func compareNumbers(op Operator, left, right float64) bool {
 	}
 }
 
-func stringOperands(cond Condition, actual any) (string, string, error) {
+func stringOperands(cond *Condition, actual any) (string, string, error) {
 	left, ok := actual.(string)
 	if !ok {
 		return "", "", fmt.Errorf("operator %q requires string path value", cond.Op)

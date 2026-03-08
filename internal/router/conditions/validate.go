@@ -2,16 +2,17 @@ package conditions
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
 // Validate checks structural correctness and semantic limits for one condition tree.
-func Validate(cond Condition) error {
+func Validate(cond *Condition) error {
 	count := 0
 	return validate(cond, "if", 1, &count)
 }
 
-func validate(cond Condition, at string, depth int, count *int) error {
+func validate(cond *Condition, at string, depth int, count *int) error {
 	if depth > MaxDepthDefault {
 		return newValidationError(at, fmt.Sprintf("maximum nesting depth exceeded (%d)", MaxDepthDefault))
 	}
@@ -38,23 +39,23 @@ func validate(cond Condition, at string, depth int, count *int) error {
 	}
 
 	if len(cond.All) > 0 {
-		for i, child := range cond.All {
-			if err := validate(child, fmt.Sprintf("%s.all[%d]", at, i), depth+1, count); err != nil {
+		for i := range cond.All {
+			if err := validate(&cond.All[i], fmt.Sprintf("%s.all[%d]", at, i), depth+1, count); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if len(cond.Any) > 0 {
-		for i, child := range cond.Any {
-			if err := validate(child, fmt.Sprintf("%s.any[%d]", at, i), depth+1, count); err != nil {
+		for i := range cond.Any {
+			if err := validate(&cond.Any[i], fmt.Sprintf("%s.any[%d]", at, i), depth+1, count); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	if cond.Not != nil {
-		return validate(*cond.Not, at+".not", depth+1, count)
+		return validate(cond.Not, at+".not", depth+1, count)
 	}
 
 	if strings.TrimSpace(cond.Path) == "" {
@@ -84,8 +85,16 @@ func validate(cond Condition, at string, depth int, count *int) error {
 		}
 	}
 	if requiresStringValue(cond.Op) {
-		if _, ok := cond.Value.(string); !ok {
+		str, ok := cond.Value.(string)
+		if !ok {
 			return newValidationError(at+".value", fmt.Sprintf("value must be a string for operator %q", cond.Op))
+		}
+		if cond.Op == OpRegex {
+			re, err := regexp.Compile(fmt.Sprintf("^(?:%s)$", str))
+			if err != nil {
+				return newValidationError(at+".value", fmt.Sprintf("invalid regex pattern: %v", err))
+			}
+			cond.CompiledRegex = re
 		}
 	}
 	return nil

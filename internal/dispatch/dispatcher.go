@@ -969,7 +969,7 @@ func (d *Dispatcher) evaluateStepCondition(_ context.Context, job *queue.Job, re
 		Context: requestContext,
 		Config:  pluginConfigMap(d.cfg, job.Plugin),
 	}
-	matched, err := conditions.Eval(*node.Condition, scope)
+	matched, err := conditions.Eval(node.Condition, scope)
 	if err != nil {
 		return conditionEvaluation{}, err
 	}
