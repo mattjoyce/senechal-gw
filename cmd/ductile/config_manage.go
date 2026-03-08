@@ -371,12 +371,8 @@ func runConfigTokenInspect(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -476,12 +472,8 @@ func runConfigTokenRehash(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -566,12 +558,8 @@ func runConfigTokenDelete(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -657,12 +645,8 @@ func runConfigScopeMutation(mode string, args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -794,12 +778,8 @@ func runConfigScopeValidate(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -1290,7 +1270,16 @@ func validateScopeAgainstRegistry(scope string, registry *plugin.Registry) ([]st
 	return lines, nil
 }
 
-func splitFlagsAndPositionals(args []string, takesValue map[string]bool) ([]string, []string) {
+func parseFlagsAndPositionals(fs *flag.FlagSet, args []string) ([]string, error) {
+	takesValue := make(map[string]bool)
+	fs.VisitAll(func(f *flag.Flag) {
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			return
+		}
+		takesValue["-"+f.Name] = true
+		takesValue["--"+f.Name] = true
+	})
+
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
 
@@ -1311,7 +1300,7 @@ func splitFlagsAndPositionals(args []string, takesValue map[string]bool) ([]stri
 		}
 	}
 
-	return flags, positionals
+	return positionals, fs.Parse(flags)
 }
 
 func ioReadAll(f *os.File) ([]byte, error) {
@@ -1422,12 +1411,8 @@ func runConfigPluginShow(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -1469,12 +1454,8 @@ func runConfigPluginSet(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -2015,11 +1996,8 @@ func runConfigRestore(args []string) int {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
