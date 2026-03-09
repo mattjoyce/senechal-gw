@@ -30,6 +30,7 @@ These files contain working, battle-tested code. Reimplementing them is a source
 
 ```
 internal/tui/
+  msgs/          # SHARED: all tea.Msg types live here (critical to avoid cycles)
   app/           # root model, tab switching, global key map
   screens/
     live/        # Just now + Now + Soon (default home)
@@ -48,9 +49,9 @@ internal/tui/
   types/         # shared data types used across screens
 ```
 
-**Rule:** Screens import `client` and `types`. Screens never import each other. `app` imports screens.
+**Rule:** Screens import `msgs`, `client` and `types`. Screens never import each other. `app` imports screens.
 
-**Critical import constraint:** Message types must live in `internal/tui/msgs/` — NOT in `app/`. If messages are defined in `app/`, any screen that imports them creates a cycle: `app` → `screens/live` → `app`. Add `msgs/` to the package tree above and treat it as a shared dependency with no imports from the rest of the tui tree.
+**Critical import constraint:** Message types must live in `internal/tui/msgs/` — NOT in `app/` or `screens/`. If messages are defined in `app/`, any screen that imports them creates a cycle: `app` → `screens/live` → `app`. Treat `msgs/` as a shared dependency with no internal imports from the rest of the tui tree.
 
 ---
 
@@ -165,10 +166,10 @@ type StructureData struct {
 // client/client.go
 type Client interface {
     Health(ctx context.Context) (RuntimeHealth, error)
-    QueueMetrics(ctx context.Context) (QueueMetrics, error)
+    QueueMetrics(ctx context.Context) (QueueMetrics, error) // GAP: requires new API endpoint or enhanced /jobs
     RecentEvents(ctx context.Context, limit int) ([]Event, error)
     DueItems(ctx context.Context, within time.Duration) ([]DueItem, error)
-    AggregateSummary(ctx context.Context, window time.Duration) (AggregateSummary, error)
+    AggregateSummary(ctx context.Context, window time.Duration) (AggregateSummary, error) // GAP: requires backend aggregation
     ListJobs(ctx context.Context, filter JobFilter) ([]JobSummary, error)
     Structure(ctx context.Context) (StructureData, error)
     JobDetail(ctx context.Context, jobID string) (JobDetail, error)
@@ -196,33 +197,36 @@ Define all styles in `styles/styles.go`. Screens must not define ad-hoc Lip Glos
 
 ```go
 var (
-    // Status colours
-    StatusHealthy   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))   // green
-    StatusRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))   // cyan
-    StatusQueued    = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))   // blue
-    StatusWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))   // yellow
-    StatusDelayed   = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))   // magenta
-    StatusCompleted = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))    // grey
-    StatusFailed    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))    // red
-    StatusWarning   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+    // Status colours (8-Step Traffic Light)
+    StatusHealthy   = lipgloss.NewStyle().Foreground(lipgloss.Color("#50FA7B")) // Green
+    StatusRunning   = lipgloss.NewStyle().Foreground(lipgloss.Color("#8BE9FD")) // Cyan
+    StatusQueued    = lipgloss.NewStyle().Foreground(lipgloss.Color("#BD93F9")) // Purple
+    StatusWaiting   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F1FA8C")) // Pale Yellow
+    StatusDelayed   = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB86C")) // Soft Orange
+    StatusWarning   = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF922B")) // Amber
+    StatusInactive  = lipgloss.NewStyle().Foreground(lipgloss.Color("#6272A4")) // Muted Blue-Grey
+    StatusFailed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555")) // Vibrant Red
 
-    // Panel chrome
-    PanelFocused   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("12"))
-    PanelUnfocused = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("8"))
+    // UI Chrome (Blue-Orange-Purple Identity)
+    TabActive       = lipgloss.NewStyle().Foreground(lipgloss.Color("#61AFEF")).Bold(true).Underline(true)
+    TabInactive     = StatusInactive
+    SoonAccent      = lipgloss.NewStyle().Foreground(lipgloss.Color("#D19A66"))
+    PanelFocused    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#C678DD"))
+    PanelUnfocused  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#6272A4"))
+    HeaderBar       = lipgloss.NewStyle().Background(lipgloss.Color("#282C34")).Padding(0, 1)
+
+    // Pulse & Indicators
+    HeartbeatActive = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF79C6"))
+    ActivityWhite   = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF"))
 
     // Time display
-    TimeRecent  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))   // green — < 30s
-    TimeMedium  = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))   // yellow — 30s–5m
-    TimeOld     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))    // grey — > 5m
-    TimeSoon    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))   // cyan — upcoming
+    TimeRecent  = StatusHealthy
+    TimeMedium  = StatusWaiting
+    TimeOld     = StatusInactive
+    TimeSoon    = StatusRunning
 
-    // Tab bar
-    TabActive   = lipgloss.NewStyle().Bold(true).Underline(true)
-    TabInactive = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-
-    // Header / summary
-    HeaderBar   = lipgloss.NewStyle().Background(lipgloss.Color("235")).Padding(0, 1)
-    SummaryKey  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+    // Summary
+    SummaryKey  = StatusInactive
     SummaryVal  = lipgloss.NewStyle().Bold(true)
 )
 ```
@@ -384,7 +388,9 @@ func receiveNextEvent(ch <-chan sseEvent) tea.Cmd
 
 **Reconnect rule (from watch/model.go):**
 - On `SSEDisconnectedMsg`: schedule `tea.Tick(3s)` returning a distinct `SSEReconnectMsg`
-- On `SSEReconnectMsg`: dispatch `subscribeToEvents()` only — do NOT dispatch a new `receiveNextEvent()` because the existing one is still blocking on the channel
+- On `SSEReconnectMsg`: 
+    1. Dispatch `subscribeToEvents()`
+    2. **SYNC GAP:** Dispatch a regular `RecentEvents` fetch to fill any timeline gap during the disconnect.
 - Never dispatch a new `receiveNextEvent()` except: on `SSEEventMsg` (to receive the next one), and in `Init()` (to start the first one)
 
 Violating these rules causes competing goroutines that split events and starve the Update loop.
@@ -509,8 +515,8 @@ Text tree render, one node per line, indented by depth:
 
 All panels must tolerate fetch failures gracefully:
 
-- On error, show stale data with a `[stale]` indicator and error message in the panel chrome border.
-- Do not collapse or blank the panel.
+- **Local Error:** On panel fetch error, show stale data with a `[stale]` indicator and error message in the panel chrome border. Do not collapse or blank the panel.
+- **Global Error:** If `Health()` or `RecentEvents()` fails repeatedly with "connection refused", the App model should display a global "BACKEND UNREACHABLE" overlay while continuing to attempt background reconnection.
 - Do not crash or propagate errors to the root model.
 - Log errors to a buffer accessible from the detail screen (nice-to-have for v1).
 
@@ -618,4 +624,12 @@ Resolved answers for step 7:
 
 ---
 
-*This guide is the implementation contract. The spec (`Ductile TUI Specification v0.1`) is the authority on intent; this guide is the authority on build order and interface contracts.*
+## 17. Performance & Sizing Gotchas
+
+- **Style Pre-calculation:** Never call `lipgloss.NewStyle()...` inside a `View()` method. All styles must be immutable variables in `styles/styles.go`. Redrawing a 100-row table with inline styles will cause severe terminal flicker.
+- **WindowSize Propagation:** The `app` model MUST catch `tea.WindowSizeMsg` and manually update the `width` and `height` of every sub-model (`header`, `live`, `past`, etc.). Bubble Tea does not propagate this automatically to children.
+- **SSE Starvation:** Ensure only ONE goroutine is reading from the SSE channel. If you accidentally spawn two `receiveNextEvent` loops, half your events will vanish into the "wrong" loop.
+
+---
+
+*This guide is the implementation contract. The spec (`Ductile TUI Specification v0.2`) is the authority on intent; this guide is the authority on build order and interface contracts.*

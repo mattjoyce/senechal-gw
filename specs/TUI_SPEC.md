@@ -254,17 +254,19 @@ The header is **two lines**, always visible across all screens.
 **Line 1 — operational summary (full width):**
 
 ```
-♥ DUCTILE WATCH  ✅ HEALTHY  ⏱ 3h 33m  Queue: 0  Plugins: 23  Last event: 5s ago ●●●○○          22:23:10
+⟲ ♥ DUCTILE WATCH  ✅ HEALTHY  ⏱ 3h 33m  Queue: 0  Req: 12/m  Clients: 1  Last: 5s ●●●○○   22:23:10
 ```
 
 Fields left-to-right:
-* heartbeat glyph (♥, SSE-driven, fades between scheduler ticks)
+* **Ticker** (`⟲`, local-tick driven): Rotates every 1s to prove the TUI process hasn't frozen.
+* **Heartbeat** (`♥`, SSE-driven): Fades out between scheduler ticks; proof the *backend* is pulsing.
 * title: `DUCTILE WATCH`
 * health icon + status text (`✅ HEALTHY` / `🔌 CONNECTING` / `⚠️ DEGRADED`)
 * uptime
 * queue depth
-* plugins loaded
-* last event age + activity dots (SSE-driven)
+* **API Throughput** (`Req: N/m`): Recent request frequency.
+* **Connection Count** (`Clients: N`): Number of active SSE subscribers (including this TUI).
+* last event age + **Activity Dots** (`●●●○○`, SSE-driven): Rotates on every incoming event.
 * clock (right-aligned)
 
 **Line 2 — static metadata (dimmed):**
@@ -534,9 +536,10 @@ Recommended fields:
 * status
 * attempts
 * timing
+* **Timeline (Evidence):** A vertical list of events specific to this job (enqueued -> started -> etc).
 * source trigger
 * emitted events
-* baggage summary
+* baggage summary (omit v1)
 * workspace reference
 * stderr snippet or full stderr view
 * linked descendants/children
@@ -607,14 +610,19 @@ The TUI needs a backend access model. Exact implementation may vary, but the fol
 * worker pool usage
 * database/connectivity health
 
-### 12.2 Queue metrics
+### 12.2 Queue metrics & State Aggregation
 
-* queue depth
-* running count
-* delayed count
-* retry count
-* dead-letter count
-* oldest queued age
+The Now panel and Header require high-frequency state metrics. Raw polling of the `/jobs` endpoint is inefficient for these.
+
+**Required Metrics:**
+- queue depth
+- running count
+- delayed count
+- retry count
+- dead-letter count
+- oldest queued age
+- worker usage (active/total)
+- plugin lane occupancy (active/limit)
 
 ### 12.3 Event feed
 
@@ -642,18 +650,16 @@ Minimum fields:
 * state
 * recurrence/cadence if applicable
 
-### 12.5 Aggregate summaries
+### 12.5 Backend Aggregation (Memory)
 
-For Past.
+The Past screen starts with aggregate summaries. The backend MUST provide an aggregation endpoint (e.g., `GET /analytics/summary?window=1h`) to avoid the TUI client having to download and process thousands of raw log entries locally.
 
-Minimum fields:
-
-* counts by status
-* counts by plugin
-* counts by route
-* duration stats
-* error groups
-* time-bucketed queue or throughput data
+**Required Aggregates:**
+- counts by status (completed, failed, retried)
+- counts by plugin
+- counts by route
+- duration stats (Avg, P95)
+- error signature groups (common failure messages)
 
 ### 12.6 Structure data
 
@@ -757,30 +763,29 @@ The UI should be:
 * clearly hierarchical
 * terminal-native
 
-### 15.3 Status styling
+### 15.3 Status styling (The 8-Step Traffic Light)
 
-Use consistent styles for statuses such as:
+Use an interpolated 8-step palette to signal operational urgency:
 
-* healthy
-* running
-* queued
-* waiting
-* delayed
-* completed
-* failed
-* warning/saturated
+*   **Healthy / Success:** `#50FA7B` (Vibrant Green)
+*   **Running / Active:** `#8BE9FD` (Cyan)
+*   **Queued / New:** `#BD93F9` (Light Purple)
+*   **Waiting / Idle:** `#F1FA8C` (Pale Yellow)
+*   **Delayed / Retrying:** `#FFB86C` (Soft Orange)
+*   **Warning / Saturated:** `#FF922B` (Amber)
+*   **Inactive / Dead:** `#6272A4` (Muted Blue-Grey)
+*   **Failure / Critical:** `#FF5555` (Vibrant Red)
 
-### 15.4 Time styling
+### 15.4 UI Identity (Blue-Orange-Purple)
 
-Time should be visually meaningful.
-Use formats like:
+The structural chrome of the application follows a specific visual identity:
 
-* `8s ago`
-* `2m ago`
-* `in 14s`
-* `in 3m`
-
-The operator should feel time flowing through the interface.
+*   **Tabs & Headers:** `#61AFEF` (Steel Blue)
+*   **Focused Borders:** `#C678DD` (Deep Purple)
+*   **Soon Domain Accents:** `#D19A66` (Warm Orange)
+*   **Background Surfaces:** `#282C34` (Deep Slate)
+*   **Heartbeat Pulse:** `#FF79C6` (Hot Pink)
+*   **Activity Indicators:** `#FFFFFF` (Stark White)
 
 ### 15.5 Density by screen
 
@@ -981,4 +986,3 @@ Core ideas:
 * strong drill-down and lineage inspection
 
 This specification is the conceptual basis for implementation in Go using Bubble Tea and Lip Gloss.
-
