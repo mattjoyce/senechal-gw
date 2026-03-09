@@ -3,13 +3,18 @@ package storage
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // OpenSQLite opens (and creates if needed) the SQLite database at path and
 // ensures required tables exist.
@@ -58,121 +63,49 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 
 // BootstrapSQLite creates tables/indexes if missing (SPEC section 10).
 func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS job_queue (
-  id              TEXT PRIMARY KEY,
-  plugin          TEXT NOT NULL,
-  command         TEXT NOT NULL,
-  payload         JSON,
-  status          TEXT NOT NULL,
-  attempt         INTEGER NOT NULL DEFAULT 1,
-  max_attempts    INTEGER NOT NULL DEFAULT 4,
-  submitted_by    TEXT NOT NULL,
-  dedupe_key      TEXT,
-  created_at      TEXT NOT NULL,
-  started_at      TEXT,
-  completed_at    TEXT,
-  next_retry_at   TEXT,
-  last_error      TEXT,
-  parent_job_id   TEXT,
-  source_event_id TEXT,
-  event_context_id TEXT
-);`,
-		`CREATE TABLE IF NOT EXISTS plugin_state (
-  plugin_name TEXT PRIMARY KEY,
-  state       JSON NOT NULL DEFAULT '{}',
-  updated_at  TEXT
-);`,
-		`CREATE TABLE IF NOT EXISTS event_context (
-  id               TEXT PRIMARY KEY,
-  parent_id        TEXT,
-  pipeline_name    TEXT,
-  step_id          TEXT,
-  accumulated_json JSON NOT NULL,
-  created_at       TEXT NOT NULL
-);`,
-		`CREATE TABLE IF NOT EXISTS job_log (
-  id              TEXT PRIMARY KEY,
-  job_id          TEXT,
-  plugin          TEXT NOT NULL,
-  command         TEXT NOT NULL,
-  status          TEXT NOT NULL,
-  result          TEXT,
-  attempt         INTEGER NOT NULL,
-  submitted_by    TEXT NOT NULL,
-  created_at      TEXT NOT NULL,
-  completed_at    TEXT NOT NULL,
-  last_error      TEXT,
-  stderr          TEXT,
-  parent_job_id   TEXT,
-  source_event_id TEXT,
-  event_context_id TEXT
-);`,
-		`CREATE TABLE IF NOT EXISTS circuit_breakers (
-  plugin          TEXT NOT NULL,
-  command         TEXT NOT NULL,
-  state           TEXT NOT NULL DEFAULT 'closed',
-  failure_count   INTEGER NOT NULL DEFAULT 0,
-  opened_at       TEXT,
-  last_failure_at TEXT,
-  last_job_id     TEXT,
-  updated_at      TEXT NOT NULL,
-  PRIMARY KEY(plugin, command)
-);`,
-		`CREATE TABLE IF NOT EXISTS schedule_entries (
-  plugin          TEXT NOT NULL,
-  schedule_id     TEXT NOT NULL,
-  command         TEXT NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'active',
-  reason          TEXT,
-  last_fired_at   TEXT,
-  last_success_job_id TEXT,
-  last_success_at  TEXT,
-  next_run_at      TEXT,
-  updated_at      TEXT NOT NULL,
-  PRIMARY KEY(plugin, schedule_id)
-);`,
-		`CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, created_at);`,
-		`CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);`,
-		`CREATE INDEX IF NOT EXISTS event_context_parent_id_idx ON event_context(parent_id);`,
-		`CREATE INDEX IF NOT EXISTS schedule_entries_status_idx ON schedule_entries(status);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;`,
-	}
-
-	for _, stmt := range stmts {
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("bootstrap sqlite: %w", err)
+	// Execute the embedded mono-schema.
+	// We split by semicolon to execute each statement separately.
+	// Note: This is a simple parser that doesn't handle semicolons in strings/comments,
+	// but for our controlled schema.sql it is sufficient.
+	for _, stmt := range strings.Split(schemaSQL, ";") {
+		trimmed := strings.TrimSpace(stmt)
+		if trimmed == "" {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, trimmed); err != nil {
+			return fmt.Errorf("bootstrap sqlite (schema.sql): %w", err)
 		}
 	}
 
-	// Migrations: CREATE TABLE IF NOT EXISTS doesn't add new columns.
-	if err := ensureColumnExists(ctx, db, "job_log", "result", "TEXT"); err != nil {
-		return err
+	// Migrations: CREATE TABLE IF NOT EXISTS doesn't add new columns to existing tables.
+	// We keep these helpers for backward compatibility with existing installations
+	// that might be missing these specific columns.
+	migrationHelpers := []struct {
+		table  string
+		column string
+		def    string
+	}{
+		{"job_log", "result", "TEXT"},
+		{"job_log", "job_id", "TEXT"},
+		{"job_queue", "event_context_id", "TEXT"},
+		{"job_log", "event_context_id", "TEXT"},
+		{"schedule_entries", "last_success_job_id", "TEXT"},
+		{"schedule_entries", "last_fired_at", "TEXT"},
+		{"schedule_entries", "last_success_at", "TEXT"},
+		{"schedule_entries", "next_run_at", "TEXT"},
 	}
-	if err := ensureColumnExists(ctx, db, "job_log", "job_id", "TEXT"); err != nil {
-		return err
+
+	for _, m := range migrationHelpers {
+		if err := ensureColumnExists(ctx, db, m.table, m.column, m.def); err != nil {
+			return err
+		}
 	}
+
+	// Ensure specific indexes that might not be in the base schema of older installs.
 	if err := ensureIndexExists(ctx, db, "job_log_job_id_attempt_idx", "CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);"); err != nil {
 		return err
 	}
-	if err := ensureColumnExists(ctx, db, "job_queue", "event_context_id", "TEXT"); err != nil {
-		return err
-	}
-	if err := ensureColumnExists(ctx, db, "job_log", "event_context_id", "TEXT"); err != nil {
-		return err
-	}
-	if err := ensureColumnExists(ctx, db, "schedule_entries", "last_success_job_id", "TEXT"); err != nil {
-		return err
-	}
-	if err := ensureColumnExists(ctx, db, "schedule_entries", "last_fired_at", "TEXT"); err != nil {
-		return err
-	}
-	if err := ensureColumnExists(ctx, db, "schedule_entries", "last_success_at", "TEXT"); err != nil {
-		return err
-	}
-	if err := ensureColumnExists(ctx, db, "schedule_entries", "next_run_at", "TEXT"); err != nil {
-		return err
-	}
+
 	return nil
 }
 
