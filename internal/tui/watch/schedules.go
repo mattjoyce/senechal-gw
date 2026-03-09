@@ -79,6 +79,9 @@ func updateScheduleState(schedules map[string]*ScheduleState, e events.Event) {
 	}
 }
 
+// applyScheduleSnapshot populates the schedule state from a full snapshot.
+// It is used during initialization to ensure the TUI shows current schedules
+// before live events start arriving.
 func applyScheduleSnapshot(schedules map[string]*ScheduleState, snap schedulerSnapshotMsg) {
 	if schedules == nil {
 		return
