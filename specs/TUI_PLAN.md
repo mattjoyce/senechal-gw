@@ -14,6 +14,16 @@ The central mental model is **five temporal domains**, with the **live triplet**
 
 Read the full spec before touching code. This guide translates the spec into concrete build steps, contracts, and gotchas.
 
+**Before writing any code, read these existing files:**
+
+| File | Why |
+|------|-----|
+| `internal/tui/watch/client.go` | Proven SSE subscription pattern — port directly, do not reimplement |
+| `internal/tui/watch/indicators.go` | Proven `Heartbeat` and `Dots` activity indicators — port directly |
+| `internal/tui/watch/model.go` | Reference for Bubble Tea model structure and Update routing |
+
+These files contain working, battle-tested code. Reimplementing them is a source of bugs.
+
 ---
 
 ## 1. Package layout — build this first
@@ -39,6 +49,8 @@ internal/tui/
 ```
 
 **Rule:** Screens import `client` and `types`. Screens never import each other. `app` imports screens.
+
+**Critical import constraint:** Message types must live in `internal/tui/msgs/` — NOT in `app/`. If messages are defined in `app/`, any screen that imports them creates a cycle: `app` → `screens/live` → `app`. Add `msgs/` to the package tree above and treat it as a shared dependency with no imports from the rest of the tui tree.
 
 ---
 
@@ -165,6 +177,8 @@ type Client interface {
 
 Provide a `MockClient` that returns realistic static data. Wire this first so screens can be developed independently of any live backend.
 
+**SSE does not belong in this interface.** The `/events` stream is not request/response — it is a long-lived connection that feeds a Bubble Tea command loop. Adding it to `Client` forces an abstraction that makes the goroutine lifecycle impossible to manage correctly. Handle SSE directly in the screen that needs it, using the pattern from `watch/client.go`. See §6a.
+
 ---
 
 ## 4. Styles — define once, use everywhere
@@ -260,6 +274,25 @@ type Model struct {
 }
 ```
 
+**Critical routing rule:** `app.Update()` must forward ALL unhandled messages to the active screen. Bubble Tea does not do this automatically. Without an explicit `default` case, every data message (ticks, loaded responses, SSE events) is silently discarded and screens never update.
+
+```go
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    switch msg := msg.(type) {
+    case tea.KeyMsg:
+        // handle global keys ...
+    case tea.WindowSizeMsg:
+        // handle resize ...
+    case msgs.OpenDetailMsg:
+        // handle navigation ...
+    default:
+        // ALL other messages go to the active screen
+        return m.updateActiveScreen(msg, nil)
+    }
+    return m, nil
+}
+```
+
 **Key map (implement exactly these):**
 
 | Key | Action |
@@ -318,6 +351,43 @@ Three focusable regions: `JustNow`, `Now`, `Soon`. Tab cycles between them.
 - Selecting an event in Just now or an item in Soon should display a one-line summary at the bottom of the screen.
 - `enter` on a job event opens Detail screen.
 - `t` on a job event opens execution tree.
+
+---
+
+## 6a. Live screen — SSE subscription and activity indicators
+
+### SSE subscription
+
+The Live screen subscribes directly to `/events` using the pattern from `internal/tui/watch/client.go`. Do not route SSE through the `Client` interface.
+
+Port these two functions verbatim, adapting only the channel element type:
+
+```go
+// subscribeToEvents connects to /events, writes to ch, returns SSEDisconnectedMsg when dropped.
+// This IS the tea.Cmd goroutine — it runs until the connection drops.
+func subscribeToEvents(apiURL, apiKey string, ch chan<- sseEvent) tea.Cmd
+
+// receiveNextEvent blocks on ch for exactly one event, then returns SSEEventMsg.
+// Dispatch again after every SSEEventMsg to maintain exactly one receiver in flight.
+func receiveNextEvent(ch <-chan sseEvent) tea.Cmd
+```
+
+**Reconnect rule (from watch/model.go):**
+- On `SSEDisconnectedMsg`: schedule `tea.Tick(3s)` returning a distinct `SSEReconnectMsg`
+- On `SSEReconnectMsg`: dispatch `subscribeToEvents()` only — do NOT dispatch a new `receiveNextEvent()` because the existing one is still blocking on the channel
+- Never dispatch a new `receiveNextEvent()` except: on `SSEEventMsg` (to receive the next one), and in `Init()` (to start the first one)
+
+Violating these rules causes competing goroutines that split events and starve the Update loop.
+
+### Activity indicators
+
+Do not use `bubbles/spinner`. Port the `Heartbeat` and `Dots` types from `internal/tui/watch/indicators.go` into `internal/tui/components/activity/`. The existing implementation is correct and proven.
+
+- `Dots.OnEvent()` — call on every SSE event; lights up all 5 dots
+- `Dots.Decay()` — call on every 1s tick; fades dots over 10s
+- `Heartbeat.OnTick()` — call when `event.Type == "scheduler.tick"`; fades ♥ over the tick interval
+
+Both are always rendered in the header — they are never hidden. `Dots` at `○○○○○` indicates silence, not absence.
 
 ---
 
@@ -526,15 +596,15 @@ Before marking v1 complete, verify:
 
 ---
 
-## 16. Open questions to resolve before starting backend wiring
+## 16. Backend wiring reference
 
-These must be answered before step 7 (real client):
+Resolved answers for step 7:
 
-1. What HTTP/gRPC/internal endpoints does Ductile expose for each data class in spec §12?
-2. Is event streaming available, or polling only for v1?
-3. What is the canonical identifier for a root execution tree (root job ID? trigger event ID?)?
-4. How is baggage summarised — full map or truncated key list?
-5. Does Future include only pending due items, or also all configured schedules regardless of next-run state?
+1. **Endpoints:** `GET /healthz` (no auth), `GET /jobs`, `GET /job/{id}`, `GET /job-logs`, `GET /scheduler/jobs`, `GET /plugins`, `GET /events` (SSE). All authenticated via `Authorization: Bearer <token>` except `/healthz`.
+2. **Event streaming:** SSE is available via `GET /events`. Use it. See §6a.
+3. **Execution tree root:** root job ID. Use `GET /job/{id}` and follow `parent_job_id` chain, or await a dedicated tree endpoint.
+4. **Baggage:** not yet exposed in the API — omit from Detail view for v1.
+5. **Future screen:** use `/scheduler/jobs` — shows all scheduled entries with `next_run_at`. Include entries regardless of whether they are due soon.
 
 ---
 
