@@ -94,10 +94,23 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			// Attempt to dequeue and execute one job
-			if err := d.processNextJob(ctx); err != nil {
-				d.logger.Error("failed to process job", "error", err)
-				// Continue processing - don't crash the loop on individual job errors
+			// Drain the queue: process all pending jobs as fast as possible.
+			for {
+				processed, err := d.processNextJob(ctx)
+				if err != nil {
+					d.logger.Error("failed to process job", "error", err)
+					// Continue processing - don't crash the loop on individual job errors
+				}
+				if !processed {
+					break
+				}
+
+				// Check for cancellation between jobs to avoid starvation.
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
 			}
 		}
 	}
@@ -109,19 +122,20 @@ func (d *Dispatcher) ExecuteJob(ctx context.Context, job *queue.Job) {
 }
 
 // processNextJob dequeues the next job and executes it.
-func (d *Dispatcher) processNextJob(ctx context.Context) error {
+// Returns true if a job was processed, false if the queue was empty.
+func (d *Dispatcher) processNextJob(ctx context.Context) (bool, error) {
 	job, err := d.queue.Dequeue(ctx)
 	if err != nil {
-		return fmt.Errorf("dequeue: %w", err)
+		return false, fmt.Errorf("dequeue: %w", err)
 	}
 	if job == nil {
 		// Queue is empty, nothing to do
-		return nil
+		return false, nil
 	}
 
 	// Execute the job
 	d.executeJob(ctx, job)
-	return nil
+	return true, nil
 }
 
 // executeJob runs a single job by spawning the plugin subprocess.
