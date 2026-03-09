@@ -188,50 +188,9 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Process results (Fixed consistency with handleTrigger)
-		var tree []JobResultData
-		var rootResult json.RawMessage
-		finalStatus := string(queue.StatusSucceeded)
-		var terminalResult json.RawMessage
-
-		for _, res := range results {
-			if res.JobID == firstJobID {
-				rootResult = res.Result
-			}
-			// If any job failed, the overall tree status is failed (for the purpose of the response)
-			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
-				finalStatus = string(res.Status)
-			}
-
-			for _, termStepID := range pipeline.TerminalStepIDs {
-				if res.StepID == termStepID {
-					terminalResult = res.Result
-				}
-			}
-			tree = append(tree, JobResultData{
-				JobID:       res.JobID,
-				Plugin:      res.Plugin,
-				Command:     res.Command,
-				Status:      string(res.Status),
-				Result:      res.Result,
-				LastError:   res.LastError,
-				StartedAt:   res.StartedAt,
-				CompletedAt: res.CompletedAt,
-			})
-		}
-
-		finalResult := terminalResult
-		if finalResult == nil {
-			finalResult = rootResult
-		}
-
-		respondJSON(w, http.StatusOK, SyncResponse{
-			JobID:      firstJobID,
-			Status:     finalStatus,
-			DurationMs: time.Since(startTime).Milliseconds(),
-			Result:     finalResult,
-			Tree:       tree,
-		})
+		// Process and return aggregated results
+		resp := s.aggregateTreeResults(results, firstJobID, pipeline, time.Since(startTime))
+		respondJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -279,17 +238,12 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 
 	enqueuePayload := req.Payload
 	if commandName == "handle" {
-		event := protocol.Event{
-			Type:    "api.trigger",
-			Payload: make(map[string]any),
+		var err error
+		enqueuePayload, err = s.wrapEventPayload(req.Payload, "api.trigger")
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
-		if len(req.Payload) > 0 {
-			if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
-				s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
-				return
-			}
-		}
-		enqueuePayload, _ = json.Marshal(event)
 	}
 
 	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
@@ -368,17 +322,12 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	// can unmarshal it the same way as routed events.
 	enqueuePayload := req.Payload
 	if commandName == "handle" {
-		event := protocol.Event{
-			Type:    "api.trigger",
-			Payload: make(map[string]any),
+		var err error
+		enqueuePayload, err = s.wrapEventPayload(req.Payload, "api.trigger")
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
-		if len(req.Payload) > 0 {
-			if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
-				s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
-				return
-			}
-		}
-		enqueuePayload, _ = json.Marshal(event)
 	}
 
 	triggerEvent := fmt.Sprintf("%s.%s", pluginName, commandName)
@@ -465,60 +414,8 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Success: Return aggregated results
-		duration := time.Since(startTime)
-
-		var tree []JobResultData
-		var rootResult json.RawMessage
-		finalStatus := string(queue.StatusSucceeded)
-
-		// Find terminal step result (if pipeline has terminal steps)
-		var terminalResult json.RawMessage
-		if pipeline != nil && len(pipeline.TerminalStepIDs) > 0 {
-			// Look for a job matching one of the terminal step IDs
-			for _, res := range results {
-				if slices.Contains(pipeline.TerminalStepIDs, res.StepID) {
-					terminalResult = res.Result
-				}
-				if terminalResult != nil {
-					break
-				}
-			}
-		}
-
-		for _, res := range results {
-			if res.JobID == jobID {
-				rootResult = res.Result
-			}
-			// If any job failed, the overall tree status is failed (for the purpose of the response)
-			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
-				finalStatus = string(res.Status)
-			}
-
-			tree = append(tree, JobResultData{
-				JobID:       res.JobID,
-				Plugin:      res.Plugin,
-				Command:     res.Command,
-				Status:      string(res.Status),
-				Result:      res.Result,
-				LastError:   res.LastError,
-				StartedAt:   res.StartedAt,
-				CompletedAt: res.CompletedAt,
-			})
-		}
-
-		// Use terminal step result if found, otherwise fallback to root job result
-		finalResult := terminalResult
-		if finalResult == nil {
-			finalResult = rootResult
-		}
-
-		respondJSON(w, http.StatusOK, SyncResponse{
-			JobID:      jobID,
-			Status:     finalStatus,
-			DurationMs: duration.Milliseconds(),
-			Result:     finalResult,
-			Tree:       tree,
-		})
+		resp := s.aggregateTreeResults(results, jobID, pipeline, time.Since(startTime))
+		respondJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -731,6 +628,78 @@ func (s *Server) handleWellKnownPlugin(w http.ResponseWriter, r *http.Request) {
 			"url":  "/openapi.json",
 		},
 	})
+}
+
+// wrapEventPayload wraps a raw JSON payload into a protocol.Event envelope.
+// This is used for 'handle' commands to ensure consistent event processing.
+func (s *Server) wrapEventPayload(payload json.RawMessage, eventType string) (json.RawMessage, error) {
+	event := protocol.Event{
+		Type:    eventType,
+		Payload: make(map[string]any),
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &event.Payload); err != nil {
+			return nil, fmt.Errorf("payload must be a JSON object: %w", err)
+		}
+	}
+	wrapped, err := json.Marshal(event)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal event: %w", err)
+	}
+	return wrapped, nil
+}
+
+// aggregateTreeResults collects all results from a job tree and finds the final result.
+func (s *Server) aggregateTreeResults(results []*queue.JobResult, rootJobID string, pipeline *router.PipelineInfo, duration time.Duration) SyncResponse {
+	var tree []JobResultData
+	var rootResult json.RawMessage
+	finalStatus := string(queue.StatusSucceeded)
+
+	// Find terminal step result (if pipeline has terminal steps)
+	var terminalResult json.RawMessage
+	if pipeline != nil && len(pipeline.TerminalStepIDs) > 0 {
+		for _, res := range results {
+			if slices.Contains(pipeline.TerminalStepIDs, res.StepID) {
+				terminalResult = res.Result
+				break
+			}
+		}
+	}
+
+	for _, res := range results {
+		if res.JobID == rootJobID {
+			rootResult = res.Result
+		}
+		// If any job failed, the overall tree status is failed
+		if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
+			finalStatus = string(res.Status)
+		}
+
+		tree = append(tree, JobResultData{
+			JobID:       res.JobID,
+			Plugin:      res.Plugin,
+			Command:     res.Command,
+			Status:      string(res.Status),
+			Result:      res.Result,
+			LastError:   res.LastError,
+			StartedAt:   res.StartedAt,
+			CompletedAt: res.CompletedAt,
+		})
+	}
+
+	// Use terminal step result if found, otherwise fallback to root job result
+	finalResult := terminalResult
+	if finalResult == nil {
+		finalResult = rootResult
+	}
+
+	return SyncResponse{
+		JobID:      rootJobID,
+		Status:     finalStatus,
+		DurationMs: duration.Milliseconds(),
+		Result:     finalResult,
+		Tree:       tree,
+	}
 }
 
 // respondJSON is a helper to write JSON responses
