@@ -18,7 +18,7 @@ func TestValidateRejectsInvalidConditions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := Validate(tt.cond); err == nil {
+			if err := Validate(&tt.cond); err == nil {
 				t.Fatalf("expected validation error")
 			}
 		})
@@ -27,7 +27,7 @@ func TestValidateRejectsInvalidConditions(t *testing.T) {
 
 func TestValidateDepthAndCountLimits(t *testing.T) {
 	deep := Condition{Not: &Condition{Not: &Condition{Not: &Condition{Path: "payload.status", Op: OpEq, Value: "x"}}}}
-	if err := Validate(deep); err == nil {
+	if err := Validate(&deep); err == nil {
 		t.Fatalf("expected depth limit error")
 	}
 
@@ -35,7 +35,7 @@ func TestValidateDepthAndCountLimits(t *testing.T) {
 	for i := 0; i < 21; i++ {
 		many.All = append(many.All, Condition{Path: "payload.status", Op: OpEq, Value: "x"})
 	}
-	if err := Validate(many); err == nil {
+	if err := Validate(&many); err == nil {
 		t.Fatalf("expected predicate count error")
 	}
 }
@@ -49,7 +49,7 @@ func TestValidateAcceptsStringOperators(t *testing.T) {
 	}
 
 	for _, cond := range tests {
-		if err := Validate(cond); err != nil {
+		if err := Validate(&cond); err != nil {
 			t.Fatalf("Validate(%+v) error = %v", cond, err)
 		}
 	}

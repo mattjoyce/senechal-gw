@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"encoding/hex"
 	"testing"
 )
 
@@ -125,11 +126,7 @@ func TestParseSignature(t *testing.T) {
 				return
 			}
 			if !tt.wantErr {
-				gotHex := ""
-				for _, b := range got {
-					gotHex += string("0123456789abcdef"[b>>4])
-					gotHex += string("0123456789abcdef"[b&0xf])
-				}
+				gotHex := hex.EncodeToString(got)
 				if gotHex != tt.want {
 					t.Errorf("parseSignature() = %v, want %v", gotHex, tt.want)
 				}

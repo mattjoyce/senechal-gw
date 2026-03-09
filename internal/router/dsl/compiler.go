@@ -141,7 +141,7 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 
 	var cond *conditions.Condition
 	if step.If != nil {
-		if err := conditions.Validate(*step.If); err != nil {
+		if err := conditions.Validate(step.If); err != nil {
 			return nil, nil, err
 		}
 		clone := *step.If

@@ -1997,26 +1997,28 @@ func collectSystemStatus(configPath string) systemStatusReport {
 	if resolvedConfigPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "config_discovery",
-				OK:     false,
-				Detail: err.Error(),
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "config_load",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "state_db",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "pid_lock",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
+			report.Checks = append(report.Checks,
+				systemStatusCheck{
+					Name:   "config_discovery",
+					OK:     false,
+					Detail: err.Error(),
+				},
+				systemStatusCheck{
+					Name:   "config_load",
+					OK:     false,
+					Detail: "skipped: config discovery failed",
+				},
+				systemStatusCheck{
+					Name:   "state_db",
+					OK:     false,
+					Detail: "skipped: config discovery failed",
+				},
+				systemStatusCheck{
+					Name:   "pid_lock",
+					OK:     false,
+					Detail: "skipped: config discovery failed",
+				},
+			)
 			report.Healthy = false
 			return report
 		}
@@ -2032,22 +2034,24 @@ func collectSystemStatus(configPath string) systemStatusReport {
 
 	cfg, err := config.Load(resolvedConfigPath)
 	if err != nil {
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "config_load",
-			OK:     false,
-			Path:   resolvedConfigPath,
-			Detail: err.Error(),
-		})
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "state_db",
-			OK:     false,
-			Detail: "skipped: config load failed",
-		})
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "pid_lock",
-			OK:     false,
-			Detail: "skipped: config load failed",
-		})
+		report.Checks = append(report.Checks,
+			systemStatusCheck{
+				Name:   "config_load",
+				OK:     false,
+				Path:   resolvedConfigPath,
+				Detail: err.Error(),
+			},
+			systemStatusCheck{
+				Name:   "state_db",
+				OK:     false,
+				Detail: "skipped: config load failed",
+			},
+			systemStatusCheck{
+				Name:   "pid_lock",
+				OK:     false,
+				Detail: "skipped: config load failed",
+			},
+		)
 		report.Healthy = false
 		return report
 	}
