@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -135,13 +136,41 @@ def plugin_ok(*, result: str, events: List[Dict[str, Any]] | None = None, logs: 
     return response
 
 
+def expand_env_vars(args: List[str], env: Dict[str, str]) -> List[str]:
+    """Manually expand environment variables in the arguments list.
+    Supports $VAR and ${VAR} syntax.
+    """
+    out = []
+    for arg in args:
+        # We use a regex to find $VAR or ${VAR}
+        # This is a simplified expansion logic.
+        def replacer(match):
+            var_name = match.group(1) or match.group(2)
+            return env.get(var_name, match.group(0))
+
+        expanded = re.sub(r"\$(?:([A-Za-z0-9_]+)|\{([A-Za-z0-9_]+)\})", replacer, arg)
+        out.append(expanded)
+    return out
+
+
 def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
-    command = str(config.get("command", "")).strip()
-    if not command:
+    command_raw = config.get("command")
+    if not command_raw:
         return plugin_error("config.command is required", retry=False)
 
-    if shutil.which("sh") is None:
-        return plugin_error("shell not available in PATH (sh)", retry=False)
+    if isinstance(command_raw, list):
+        if not command_raw:
+            return plugin_error("config.command list cannot be empty", retry=False)
+        command_args = [str(arg) for arg in command_raw]
+    else:
+        command_args = shlex.split(str(command_raw))
+
+    if not command_args:
+        return plugin_error("config.command must not be empty", retry=False)
+
+    executable = command_args[0]
+    if shutil.which(executable) is None:
+        return plugin_error(f"executable not found in PATH: {executable}", retry=False)
 
     working_dir = str(config.get("working_dir", "")).strip()
     if working_dir:
@@ -153,7 +182,7 @@ def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
         result="sys_exec health check passed",
         logs=[
             {"level": "info", "message": "sys_exec health check passed"},
-            {"level": "debug", "message": f"configured command: {command}"},
+            {"level": "debug", "message": f"configured command: {' '.join(command_args)}"},
         ],
     )
 
@@ -233,9 +262,17 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(config, dict):
         return plugin_error("request.config must be an object", retry=False)
 
-    command = str(config.get("command", "")).strip()
-    if not command:
+    command_raw = config.get("command")
+    if not command_raw:
         return plugin_error("config.command is required", retry=False)
+
+    if isinstance(command_raw, list):
+        command_args = [str(arg) for arg in command_raw]
+    else:
+        command_args = shlex.split(str(command_raw))
+
+    if not command_args:
+        return plugin_error("config.command must not be empty", retry=False)
 
     event = req.get("event", {})
     payload = {}
@@ -259,17 +296,17 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     retry_exit_codes = parse_retry_exit_codes(config)
 
     env = build_exec_env(config, payload, req)
+    expanded_args = expand_env_vars(command_args, env)
     start = time.time()
     try:
         completed = subprocess.run(
-            command,
-            shell=True,
+            expanded_args,
+            shell=False,
             cwd=working_dir,
             env=env,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
-            executable="/bin/sh" if os.path.exists("/bin/sh") else None,
         )
     except subprocess.TimeoutExpired as exc:
         duration_ms = int((time.time() - start) * 1000)
@@ -278,14 +315,14 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
         message = f"command timed out after {timeout_seconds:.3f}s"
         logs = [
             {"level": "error", "message": message},
-            {"level": "debug", "message": f"command: {command}"},
+            {"level": "debug", "message": f"command: {' '.join(expanded_args)}"},
         ]
         if stderr_text:
             logs.append({"level": "error", "message": f"stderr: {stderr_text}"})
         result = plugin_error(message, retry=False, logs=logs)
         if emit_event:
             payload_out: Dict[str, Any] = {
-                "command": command,
+                "command": " ".join(expanded_args),
                 "exit_code": -1,
                 "duration_ms": duration_ms,
                 "timed_out": True,
@@ -311,7 +348,7 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
             "level": "info" if success else "error",
             "message": f"command exited with code {exit_code} in {duration_ms}ms (upstream {upstream})",
         },
-        {"level": "debug", "message": f"command: {command}"},
+        {"level": "debug", "message": f"command: {' '.join(expanded_args)}"},
     ]
     if stdout_text:
         logs.append({"level": "info", "message": f"stdout: {stdout_text}"})
@@ -323,7 +360,7 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
         logs.append({"level": "warn", "message": "stderr truncated"})
 
     event_payload: Dict[str, Any] = {
-        "command": command,
+        "command": " ".join(expanded_args),
         "exit_code": exit_code,
         "duration_ms": duration_ms,
         "stdout_truncated": stdout_truncated,
@@ -338,7 +375,7 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     state_updates = {
         "last_exit_code": exit_code,
         "last_duration_ms": duration_ms,
-        "last_command": command,
+        "last_command": " ".join(expanded_args),
         "last_executed_at": iso_now(),
         "last_status": "ok" if success else "error",
     }
