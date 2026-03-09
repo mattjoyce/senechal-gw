@@ -1,6 +1,6 @@
 # Ductile TUI — Coding Agent Implementation Guide
 
-> Companion to: `Ductile TUI Specification v0.1`
+> Companion to: `Ductile TUI Specification v0.2`
 > Stack: Go · Bubble Tea · Lip Gloss · Bubbles
 > Status: Agent build reference
 
@@ -41,7 +41,7 @@ internal/tui/
     header/      # top status bar
     eventtable/  # reusable scrollable event list
     duelist/     # sorted due-items list
-    treetview/   # execution tree renderer
+    treeview/    # execution tree renderer
     statusbar/   # footer/help bar
   styles/        # all Lip Gloss styles, single source of truth
   client/        # data access boundary — screens never reach past this
@@ -169,15 +169,22 @@ type Client interface {
     RecentEvents(ctx context.Context, limit int) ([]Event, error)
     DueItems(ctx context.Context, within time.Duration) ([]DueItem, error)
     AggregateSummary(ctx context.Context, window time.Duration) (AggregateSummary, error)
+    ListJobs(ctx context.Context, filter JobFilter) ([]JobSummary, error)
     Structure(ctx context.Context) (StructureData, error)
     JobDetail(ctx context.Context, jobID string) (JobDetail, error)
     ExecutionTree(ctx context.Context, rootID string) (TreeNode, error)
 }
 ```
 
+`ListJobs` is required for Past screen drill-down layer 3 (group → individual runs). `JobFilter` holds `plugin`, `route`, `errorSignature`, `window`, `limit`. Without it, Past drill-down dead-ends at layer 2.
+
+`ExecutionTree` requires a `GET /job/{id}/tree` server endpoint that returns a recursive `TreeNode`. Do **not** implement client-side `parent_job_id` chain-walking as a fallback — it costs O(depth) sequential round-trips and will become the permanent solution by accident.
+
 Provide a `MockClient` that returns realistic static data. Wire this first so screens can be developed independently of any live backend.
 
 **SSE does not belong in this interface.** The `/events` stream is not request/response — it is a long-lived connection that feeds a Bubble Tea command loop. Adding it to `Client` forces an abstraction that makes the goroutine lifecycle impossible to manage correctly. Handle SSE directly in the screen that needs it, using the pattern from `watch/client.go`. See §6a.
+
+**Screens do not call `client` directly.** The `app` model owns a `DataCache` struct with fetch timestamps and dispatches all fetches. Screens receive data via `*LoadedMsg` messages. This prevents redundant fetches when multiple screens need the same data (e.g. `Health` for the header on every screen) and enables centrally managed stale-data indicators.
 
 ---
 
@@ -270,6 +277,7 @@ type Model struct {
     structure     structure.Model
     detail        detail.Model
     client        client.Client
+    cache         DataCache   // shared data cache; screens read via messages, not client directly
     err           error
 }
 ```
@@ -317,17 +325,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 ### Layout
 
 ```
-┌─ header ────────────────────────────────────────────────────────────────────┐
-│ health: OK  uptime: 4h32m  queue: 3  running: 2  failed (5m): 0  workers: 2/4 │
+┌─ header (line 1) ───────────────────────────────────────────────────────────┐
+│ ♥ DUCTILE WATCH  ✅ HEALTHY  ⏱ 4h32m  Queue: 3  Plugins: 23  Last: 8s ●●○○○  22:14:01 │
+│ Config: ~/.config/ductile/  |  Bin: ~/.local/bin/ductile  |  Version: 1.0.0  |  API: http://localhost:8081 │
 ├─ Just now ──────────────────┬─ Now ───────────────────────────────────────────┤
-│ 8s ago  job.completed  ...  │ Queue depth:    3                               │
-│ 14s ago job.started    ...  │ Running:        2                               │
-│ 32s ago webhook.recv   ...  │ Delayed:        1                               │
-│ 1m ago  job.failed     ...  │ Dead letter:    0                               │
-│                             │ Oldest queued:  14s                             │
-│                             ├─ Plugin lanes ──────────────────────────────────┤
-│                             │ fabric    1/1  !!                               │
-│                             │ mailer    0/4                                   │
+│ 8s ago  job.completed  ...  │ Worker 1  ◉ job:abc  fabric › poll   14s       │
+│ 14s ago job.started    ...  │ Worker 2  ◉ job:def  mailer › send    2s       │
+│ 32s ago webhook.recv   ...  │ Worker 3  ○ (idle)                             │
+│ 1m ago  job.failed     ...  │ Worker 4  ○ (idle)                             │
+│                             │                                                 │
+│                             │ fabric  1/1 !!   mailer  1/4                   │
+│                             │ Queue: 3  Delayed: 1  Dead: 0                  │
 ├─ Soon ──────────────────────────────────────────────────────────────────────┤
 │ in 4s   retry    job:abc123    fabric                                        │
 │ in 12s  schedule hourly-sync   routes/sync                                   │
@@ -341,6 +349,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 - Header data: every tick
 - Just now / Now: every tick
 - Soon: every 2s (fewer items change)
+
+**SSE events trigger immediate `QueueMetrics` fetch.** On receipt of any SSE event, dispatch an immediate `QueueMetrics` fetch rather than waiting for the next tick. This keeps the Now panel responsive to actual events, not just clock ticks.
 
 ### Focus regions
 

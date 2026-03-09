@@ -1,7 +1,7 @@
 # CLAUDE.md — Ductile
 # Ductile TUI Specification
 
-Status: Draft v0.1
+Status: Draft v0.2
 Target stack: Go, Bubble Tea, Lip Gloss
 Primary audience: coding agents and maintainers implementing the Ductile terminal UI
 
@@ -249,16 +249,33 @@ A simple first implementation can use a two-column top area with a bottom full-w
 
 ### 6.4 Live header contents
 
-Recommended header fields:
+The header is **two lines**, always visible across all screens.
 
-* gateway health
+**Line 1 — operational summary (full width):**
+
+```
+♥ DUCTILE WATCH  ✅ HEALTHY  ⏱ 3h 33m  Queue: 0  Plugins: 23  Last event: 5s ago ●●●○○          22:23:10
+```
+
+Fields left-to-right:
+* heartbeat glyph (♥, SSE-driven, fades between scheduler ticks)
+* title: `DUCTILE WATCH`
+* health icon + status text (`✅ HEALTHY` / `🔌 CONNECTING` / `⚠️ DEGRADED`)
 * uptime
 * queue depth
-  n- running jobs
-* delayed jobs
-* failures in recent window
-* worker usage
-* oldest queued age
+* plugins loaded
+* last event age + activity dots (SSE-driven)
+* clock (right-aligned)
+
+**Line 2 — static metadata (dimmed):**
+
+```
+Config: /home/matt/.config/ductile/  |  Bin: /home/matt/.local/bin/ductile  |  Version: 1.0.0-rc.1  |  API: http://localhost:8081
+```
+
+Fields: config path, binary path, version, API URL. Truncated at terminal width. Dimmed style.
+
+This replaces the previous four-line header design. The two-line form keeps the header compact while retaining all operational and static fields.
 
 ### 6.5 Just now panel contents
 
@@ -284,24 +301,37 @@ Rules:
 
 ### 6.6 Now panel contents
 
-This panel shows current state.
+This panel shows current state and **active work in progress**. It must be focusable and selectable — not a read-only status display.
 
-Suggested sections:
+Primary content: **worker/concurrency slots**, each showing the job currently occupying it. Render one row per slot:
 
-* queue state
-* worker usage
-* plugin lane occupancy
-* current concerns / anomalies
+```
+Worker 1  ◉ job:abc123  fabric › process-order   14s
+Worker 2  ◉ job:def456  mailer › send-confirm      2s
+Worker 3  ○ (idle)
+Worker 4  ○ (idle)
+```
 
-Examples:
+Each occupied slot shows: worker index, job ID, plugin, command/pipeline label, elapsed time. Idle slots are shown explicitly so the operator sees total concurrency capacity at a glance.
+
+Per-plugin lane concurrency is shown beneath the global worker list when plugins have their own caps:
+
+```
+fabric    1/1  !!   (saturated)
+mailer    1/4
+```
+
+Selecting any occupied worker slot allows `enter` to open the job in Detail and `t` to open its execution tree.
+
+Secondary content (summary band, below workers):
 
 * queue depth
-* running jobs
 * delayed jobs
 * retrying jobs
 * dead-letter count
-* plugin lane usage e.g. `fabric 1/1 !`
 * current alerts e.g. `queue age rising`
+
+If all slots are idle, show `(idle)` prominently with queue depth.
 
 ### 6.7 Soon panel contents
 
@@ -877,6 +907,49 @@ The v1 TUI is acceptable when:
 * screen focus and navigation are clear and usable
 * refresh behaviour is stable and not visually noisy
 * styling clearly distinguishes normal, warning, and failure states
+
+---
+
+## 19b. Resolved Design Decisions
+
+These decisions were debated and resolved during design review. Do not re-open them without a compelling reason.
+
+### Data access
+
+**Shared data cache in app model.**
+Screens do not call `client` directly. The `app` model owns a `DataCache` struct with timestamps and dispatches fetches. Screens emit `RequestDataMsg` types and receive `*LoadedMsg` responses. This prevents redundant N fetches per tick when multiple screens need overlapping data (e.g. `Health` for the header) and enables stale-data indicators to be handled centrally.
+
+**SSE feeds Live; REST feeds everything else.**
+The boundary is explicit. `Just now` panel = SSE event log (live, ephemeral). Past screen = SQL job records via REST. SSE is not routed through the `Client` interface — it is handled directly in the Live screen using the proven pattern from `watch/client.go`.
+
+**`ListJobs` must be in the Client interface.**
+`AggregateSummary` alone cannot support Past drill-down layer 3 (group → individual runs). Add:
+```go
+ListJobs(ctx context.Context, filter JobFilter) ([]JobSummary, error)
+```
+where `JobFilter` holds `plugin`, `route`, `errorSignature`, `window`, `limit`. Without this, Past drill-down silently dead-ends.
+
+**`GET /job/{id}/tree` endpoint required.**
+Walking `parent_job_id` chains client-side costs O(depth) sequential round-trips. A server-side tree endpoint is required. The chain-walking fallback must not be implemented as it will become the permanent solution by default.
+
+### Message types
+
+**`msgs/` contains only data-loaded and tick messages.**
+Navigation messages such as `OpenDetailMsg` must not encode knowledge of detail target types in `msgs/`. Use `types.DetailTarget` (an interface defined in `types/`) as the payload. This prevents `msgs/` from coupling to the full set of navigable targets.
+
+### Focus model
+
+**`Now` panel is focusable and selectable.**
+Now shows worker/concurrency slots as the primary view — one row per slot, showing the job currently occupying it (or idle). This makes total concurrency capacity visible at a glance. Per-plugin lane saturation is shown beneath. Selecting an occupied slot allows `enter` → Detail and `t` → execution tree. Queue summary (depth, delayed, dead-letter) appears as a secondary band below workers.
+
+### Refresh and SSE interaction
+
+**SSE events trigger immediate `QueueMetrics` fetch.**
+On receipt of any SSE event in the Live screen, dispatch an immediate `QueueMetrics` fetch rather than waiting for the next 1s tick. This keeps the Now panel responsive to actual events, not just to clock ticks.
+
+### Freeze mode
+
+**Freeze semantics:** data fetches stop; SSE connection stays open; incoming SSE events queue in memory; display does not update. On unfreeze, flush queued events and trigger an immediate full refresh. This is the most useful semantics for debugging a fast-moving screen.
 
 ---
 
