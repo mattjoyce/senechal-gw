@@ -181,7 +181,7 @@ func (m Model) View() string {
 		selected = len(items) - 1
 	}
 
-	header := renderHeader(m.health, m.heartbeat, m.spinner, m.theme, m.width, defaultHeartbeatInterval, m.apiURL)
+	header := ""
 	pipelines := renderPipelines(items, selected, m.theme, m.width)
 	details := renderPipelineDetails(items, selected, m.theme, m.width)
 	schedules := renderSchedules(m.schedules, m.theme, m.width)
