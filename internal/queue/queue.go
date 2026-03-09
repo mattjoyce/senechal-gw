@@ -612,20 +612,20 @@ func (q *Queue) ListJobLogs(ctx context.Context, filter JobLogFilter) ([]*JobLog
 
 	whereClause := strings.Join(whereParts, " AND ")
 
-	countQuery := "SELECT COUNT(*) FROM job_log l LEFT JOIN job_queue q ON l.id = (q.id || '-' || q.attempt) WHERE " + whereClause + ";"
+	countQuery := "SELECT COUNT(*) FROM job_log l LEFT JOIN job_queue q ON l.job_id = q.id AND l.attempt = q.attempt WHERE " + whereClause + ";"
 	var total int
 	if err := q.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count job logs: %w", err)
 	}
 
 	listQuery := strings.Builder{}
-	listQuery.WriteString("\nSELECT\n  COALESCE(q.id, '') AS job_id, l.id, l.plugin, l.command, l.status, l.attempt, l.submitted_by, l.created_at, l.completed_at, l.last_error, l.stderr")
+	listQuery.WriteString("\nSELECT\n  COALESCE(l.job_id, COALESCE(q.id, '')) AS job_id, l.id, l.plugin, l.command, l.status, l.attempt, l.submitted_by, l.created_at, l.completed_at, l.last_error, l.stderr")
 	if filter.IncludeResult {
 		listQuery.WriteString(", l.result")
 	} else {
 		listQuery.WriteString(", NULL")
 	}
-	listQuery.WriteString("\nFROM job_log l\nLEFT JOIN job_queue q ON l.id = (q.id || '-' || q.attempt)\nWHERE ")
+	listQuery.WriteString("\nFROM job_log l\nLEFT JOIN job_queue q ON l.job_id = q.id AND l.attempt = q.attempt\nWHERE ")
 	listQuery.WriteString(whereClause)
 	listQuery.WriteString("\nORDER BY l.completed_at DESC, l.rowid DESC\nLIMIT ?;\n")
 
@@ -1106,10 +1106,10 @@ WHERE id = ?;
 
 	_, err = tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO job_log(
-  id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
+  id, job_id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
 )
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-`, logID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, logID, jobID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID)
 	if err != nil {
 		return fmt.Errorf("insert job_log: %w", err)
 	}
@@ -1136,7 +1136,7 @@ SELECT
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_tree t
-LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt)
+LEFT JOIN job_log l ON l.job_id = t.id AND l.attempt = t.attempt
 LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 `, rootJobID)
 	if err != nil {
@@ -1216,7 +1216,7 @@ SELECT
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_queue q
-LEFT JOIN job_log l ON l.id = (q.id || '-' || q.attempt)
+LEFT JOIN job_log l ON l.job_id = q.id AND l.attempt = q.attempt
 LEFT JOIN event_context ec ON ec.id = q.event_context_id
 WHERE q.id = ?;
 `, jobID)

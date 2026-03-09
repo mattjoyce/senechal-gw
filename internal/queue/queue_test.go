@@ -108,12 +108,18 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 		t.Fatalf("expected 1 job_log row, got %d", count)
 	}
 
-	var gotContextID string
-	if err := db.QueryRow("SELECT event_context_id FROM job_log WHERE id = ?;", id+"-1").Scan(&gotContextID); err != nil {
-		t.Fatalf("select event_context_id: %v", err)
+	var (
+		gotContextID string
+		gotJobID     string
+	)
+	if err := db.QueryRow("SELECT event_context_id, job_id FROM job_log WHERE id = ?;", id+"-1").Scan(&gotContextID, &gotJobID); err != nil {
+		t.Fatalf("select event_context_id/job_id: %v", err)
 	}
 	if gotContextID != contextID {
 		t.Fatalf("event_context_id: got %q want %q", gotContextID, contextID)
+	}
+	if gotJobID != id {
+		t.Fatalf("job_id: got %q want %q", gotJobID, id)
 	}
 }
 
@@ -167,6 +173,47 @@ func TestGetJobByID(t *testing.T) {
 	}
 	if got.CompletedAt == nil {
 		t.Fatalf("expected CompletedAt to be set")
+	}
+}
+
+func TestGetJobByIDUsesJobLogJobIDOnRetryAttempts(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE job_queue SET attempt = 2 WHERE id = ?`, id); err != nil {
+		t.Fatalf("update attempt: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	result := json.RawMessage(`{"status":"ok","result":"retry-ok","logs":[]}`)
+	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	got, err := q.GetJobByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if string(got.Result) != string(result) {
+		t.Fatalf("Result: got %s want %s", string(got.Result), string(result))
 	}
 }
 

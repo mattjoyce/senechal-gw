@@ -93,6 +93,7 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 );`,
 		`CREATE TABLE IF NOT EXISTS job_log (
   id              TEXT PRIMARY KEY,
+  job_id          TEXT,
   plugin          TEXT NOT NULL,
   command         TEXT NOT NULL,
   status          TEXT NOT NULL,
@@ -146,6 +147,12 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 
 	// Migrations: CREATE TABLE IF NOT EXISTS doesn't add new columns.
 	if err := ensureColumnExists(ctx, db, "job_log", "result", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumnExists(ctx, db, "job_log", "job_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureIndexExists(ctx, db, "job_log_job_id_attempt_idx", "CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);"); err != nil {
 		return err
 	}
 	if err := ensureColumnExists(ctx, db, "job_queue", "event_context_id", "TEXT"); err != nil {
@@ -205,6 +212,13 @@ func ensureColumnExists(ctx context.Context, db *sql.DB, table, column, columnDe
 	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", table, column, columnDef)
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("bootstrap sqlite: add %s.%s column: %w", table, column, err)
+	}
+	return nil
+}
+
+func ensureIndexExists(ctx context.Context, db *sql.DB, name, stmt string) error {
+	if _, err := db.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("bootstrap sqlite: ensure index %s: %w", name, err)
 	}
 	return nil
 }
