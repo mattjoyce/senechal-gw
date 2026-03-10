@@ -203,7 +203,6 @@ def main() -> None:
             "status": "ok",
             "result": summary,
             "events": events,
-            "state_updates": {"last_run": iso_now(), "last_summary": summary},
             "logs": logs,
         }
     )

@@ -18,20 +18,6 @@ def pick(payload, context, key, default=None):
     return default
 
 
-def poll_command(config, state):
-    """Poll command - for scheduled execution (not implemented yet)"""
-    return {
-        "status": "ok",
-        "result": "Fabric poll command - no scheduled actions configured",
-        "state_updates": {
-            "last_poll": datetime.now(timezone.utc).isoformat(),
-        },
-        "logs": [
-            {"level": "info", "message": "Fabric poll command - no scheduled actions configured"},
-        ],
-    }
-
-
 def handle_command(config, state, event, context):
     """Handle command - processes events with fabric patterns"""
     payload = event.get("payload", {})
@@ -109,7 +95,6 @@ def handle_command(config, state, event, context):
         return error_response(f"Fabric failed (exit {result.returncode}): {stderr}", retry=True)
 
     output = result.stdout.strip()
-    executions_count = state.get("executions_count", 0) + 1
 
     # Build event payload with fabric results
     event_payload = {
@@ -140,12 +125,6 @@ def handle_command(config, state, event, context):
                 "payload": event_payload,
             }
         ],
-        "state_updates": {
-            "last_run": datetime.now(timezone.utc).isoformat(),
-            "executions_count": executions_count,
-            "last_pattern": pattern or "",
-            "last_prompt": prompt or "",
-        },
         "logs": [
             {
                 "level": "info",
@@ -194,10 +173,6 @@ def health_command(config):
     return {
         "status": "ok",
         "result": f"Fabric healthy, {pattern_count} patterns available",
-        "state_updates": {
-            "available_patterns": pattern_count,
-            "last_health_check": datetime.now(timezone.utc).isoformat(),
-        },
         "logs": [
             {"level": "info", "message": f"Fabric healthy, {pattern_count} patterns available"},
         ],
@@ -238,7 +213,13 @@ def main():
     context = request.get("context", {})
 
     if command == "poll":
-        response = poll_command(config, state)
+        response = {
+            "status": "ok",
+            "result": "Fabric poll command - no scheduled actions configured",
+            "logs": [
+                {"level": "info", "message": "Fabric poll command - no scheduled actions configured"},
+            ],
+        }
     elif command == "handle":
         response = handle_command(config, state, event, context)
     elif command == "health":
