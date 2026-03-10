@@ -39,6 +39,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
+	"github.com/mattjoyce/ductile/internal/tui/app"
 	"github.com/mattjoyce/ductile/internal/tui/watch"
 	"github.com/mattjoyce/ductile/internal/webhook"
 	"github.com/mattjoyce/ductile/internal/workspace"
@@ -253,6 +254,7 @@ System Commands:
   system reset      Reset a plugin/connector circuit breaker
   system reload     Reload configuration in a running gateway
   system watch      Real-time diagnostic monitoring TUI
+  system monitor    Operations monitor TUI (v2)
   system skills     Export capability registry (Skills) as LLM-readable Markdown
 
 Config Commands:
@@ -335,6 +337,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runWatch(actionArgs)
+	case "monitor":
+		if hasHelpFlag(actionArgs) {
+			printSystemMonitorHelp()
+			return 0
+		}
+		return runMonitor(actionArgs)
 	case "help":
 		printSystemNounHelp(os.Stdout)
 		return 0
@@ -771,7 +779,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch, monitor")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -1207,6 +1215,51 @@ func printSystemWatchHelp() {
 	fmt.Println("Keybindings:")
 	fmt.Println("  q, Ctrl+C        Quit")
 	fmt.Println("  ↑/↓, k/j         Navigate pipelines")
+}
+
+func runMonitor(args []string) int {
+	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
+	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
+	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if *apiKey == "" {
+		fmt.Fprintln(os.Stderr, "Error: API key required. Use --api-key or DUCTILE_API_KEY env var.")
+		return 1
+	}
+
+	m := app.New(*apiURL, *apiKey)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func printSystemMonitorHelp() {
+	fmt.Println("Usage: ductile system monitor [flags]")
+	fmt.Println()
+	fmt.Println("Operations monitor TUI (v2).")
+	fmt.Println("Five-screen temporal observatory: Live, Future, Past, Structure, Detail.")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  --api-url URL      Gateway API URL (default: http://localhost:8080)")
+	fmt.Println("  --api-key KEY      API Bearer Token (or DUCTILE_API_KEY env var)")
+	fmt.Println()
+	fmt.Println("Keybindings:")
+	fmt.Println("  1-5              Switch tabs")
+	fmt.Println("  tab/shift+tab    Cycle focus")
+	fmt.Println("  ↑/↓, j/k        Navigate")
+	fmt.Println("  enter            Drill down")
+	fmt.Println("  esc              Go back")
+	fmt.Println("  space            Freeze/unfreeze")
+	fmt.Println("  r                Force refresh")
+	fmt.Println("  ?                Help")
+	fmt.Println("  q                Quit")
 }
 
 func printConfigLockHelp() {
