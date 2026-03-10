@@ -167,6 +167,25 @@ func TestSysExecPlugin_LogIncludesUpstreamPipelinePlugin(t *testing.T) {
 	}
 }
 
+func TestSysExecPlugin_PollSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sys_exec plugin relies on /bin/sh semantics")
+	}
+
+	resp, stderr, err := runSysExec(t, "poll", map[string]any{
+		"command": "echo 'poll-success'",
+	}, nil)
+	if err != nil {
+		t.Fatalf("runSysExec(poll success): %v (stderr=%q)", err, stderr)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("status=%q want ok (stderr=%q)", resp.Status, stderr)
+	}
+	if !strings.Contains(resp.Result, "exited with code 0") {
+		t.Fatalf("result=%q, want success message", resp.Result)
+	}
+}
+
 func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[string]any) (*protocol.Response, string, error) {
 	t.Helper()
 
