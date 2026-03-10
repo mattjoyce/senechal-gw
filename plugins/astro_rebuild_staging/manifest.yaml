@@ -12,6 +12,9 @@ protocol: 2
 entrypoint: run.py
 description: "Rebuild and restart the local Astro staging site via docker compose."
 commands:
+  - name: poll
+    type: write
+    description: "Proactively rebuild the staging site (typically for scheduled rebuilds)."
   - name: handle
     type: write
     description: "Rebuild and restart the local Astro staging site via Docker Compose. No payload required."

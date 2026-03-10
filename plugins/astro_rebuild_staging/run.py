@@ -370,7 +370,7 @@ def main() -> int:
     if not isinstance(config, dict):
         config = {}
 
-    if command == "handle":
+    if command == "handle" or command == "poll":
         resp = handle_exec(req)
     elif command == "health":
         resp = handle_health(config)

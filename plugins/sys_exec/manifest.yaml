@@ -12,6 +12,9 @@ protocol: 2
 entrypoint: run.py
 description: "Execute a configured shell command and emit result events."
 commands:
+  - name: poll
+    type: write
+    description: "Proactively execute the configured shell command (typically for scheduled checks)."
   - name: handle
     type: write
     description: "Execute a pre-configured shell command. The payload is exposed as DUCTILE_PAYLOAD_* environment variables."
