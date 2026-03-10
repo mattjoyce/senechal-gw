@@ -174,7 +174,66 @@ Use this when the plugin is making a domain decision about what happened. Use `i
 
 ---
 
-## 6. Validation
+## 6. Dispatcher Preflight
+
+Before spawning a plugin process, the dispatcher runs a **preflight phase** for every job. Preflight separates orchestration decisions from plugin execution, ensuring consistent data-plane semantics regardless of whether a step runs or is skipped.
+
+### 6.1 Preflight Steps
+
+Preflight executes three operations in order:
+
+1. **Load request context** — Fetches accumulated baggage from the `event_context` table (all upstream metadata for this job's execution tree).
+
+2. **Ensure workspace** — Creates or inherits a workspace directory for the job. If a parent job exists, the workspace is cloned from it (zero-copy hard-link clone). If no parent exists, a fresh workspace is created. This runs *before* condition evaluation so that skipped steps still have a valid workspace for downstream inheritance.
+
+3. **Evaluate `if` condition** — If the job's pipeline step has an `if` condition, evaluates it against the available scope (`payload.*`, `context.*`, `config.*`). Only runs when the job is part of a pipeline with a router.
+
+### 6.2 Preflight Outcomes
+
+| Outcome | When | Effect |
+|---------|------|--------|
+| **run** | No `if` condition, or condition evaluates `true` | Plugin process spawns normally |
+| **skip** | `if` condition evaluates `false` | No plugin spawns; job marked `skipped`; synthetic `ductile.step.skipped` event routed to downstream steps |
+| **fail** | Context load, workspace creation, or condition evaluation returns an error | Job marked `failed`; no plugin spawns; no downstream routing |
+
+### 6.3 Workspace Inheritance for Skipped Steps
+
+A skipped step's workspace is created during preflight, before the condition is evaluated. This means:
+
+- Downstream steps that inherit from a skipped parent receive a valid workspace (cloned from the skipped step's parent).
+- Workspace clone/inheritance is independent of whether the parent ran or was skipped.
+- No data-plane inconsistency: every job in the execution tree has a workspace, regardless of its terminal status.
+
+### 6.4 Skipped Step Routing
+
+When a step is skipped, the dispatcher:
+
+1. Publishes a `job.skipped` event (with `reason`) to the event hub.
+2. Routes a synthetic `ductile.step.skipped` event through the router, allowing downstream steps to execute.
+3. Marks the job as `skipped` with a synthetic result payload: `{"status": "skipped", "reason": "..."}`.
+
+Successor routing happens *before* the job is marked terminal, preventing synchronous callers from seeing the tree as complete before all children are enqueued.
+
+### 6.5 Preflight Events
+
+The dispatcher emits a `job.preflight` event after preflight completes (or fails), with the following payload:
+
+```json
+{
+  "job_id": "uuid",
+  "plugin": "plugin-name",
+  "command": "command-name",
+  "decision": "run | skip | fail",
+  "reason": "",
+  "workspace_dir": "/path/to/workspace"
+}
+```
+
+The `reason` field is empty for `run` decisions, contains the condition failure reason for `skip`, and contains the error message for `fail`. These events enable async consumers (TUI, event streams, monitoring) to distinguish orchestration decisions from plugin execution outcomes.
+
+---
+
+## 7. Validation
 
 Ductile performs several checks when loading pipelines:
 - **Cycle Detection:** Refuses to start if a pipeline calls itself (directly or indirectly).

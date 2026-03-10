@@ -244,9 +244,24 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("job preflight failed: %v", err)
 		jobLogger.Error(errMsg)
+		d.events.Publish("job.preflight", map[string]any{
+			"job_id":   job.ID,
+			"plugin":   job.Plugin,
+			"command":  job.Command,
+			"decision": "fail",
+			"reason":   errMsg,
+		})
 		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
+	d.events.Publish("job.preflight", map[string]any{
+		"job_id":        job.ID,
+		"plugin":        job.Plugin,
+		"command":       job.Command,
+		"decision":      string(preflight.decision),
+		"reason":        preflight.reason,
+		"workspace_dir": preflight.workspaceDir,
+	})
 	if preflight.decision == preflightDecisionSkip {
 		d.skipJob(ctx, jobLogger, job, preflight.requestContext, preflight.reason)
 		return
