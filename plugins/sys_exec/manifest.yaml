@@ -15,6 +15,9 @@ commands:
   - name: handle
     type: write
     description: "Execute a pre-configured shell command. The payload is exposed as DUCTILE_PAYLOAD_* environment variables."
+  - name: poll
+    type: write
+    description: "Execute a pre-configured shell command on a schedule. No incoming payload is expected."
   - name: health
     type: read
     description: "Validate command and runtime prerequisites."
