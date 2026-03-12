@@ -8,7 +8,10 @@ Execute a configured shell command and optionally emit an event with execution m
 
 ## Configuration
 Required:
-- `command`: Shell command to execute.
+- `command`: Command to execute. Can be a string (which will be tokenized) or a list of arguments.
+  Environment variables like `$DUCTILE_PAYLOAD_VAR` are expanded.
+  Shell metacharacters (like `|`, `>`, `;`) are NOT supported in the command string.
+  If you need shell features, use `["/bin/sh", "-c", "your command here"]`.
 
 Optional:
 - `event_type`: Event type to emit (default: `sys_exec.completed`).
@@ -21,7 +24,7 @@ Optional:
 - `stdout_max_bytes`, `stderr_max_bytes`: Truncation limits.
 
 Incoming payload fields are exposed as environment variables with the
-`DUCTILE_PAYLOAD_` prefix.
+`DUCTILE_PAYLOAD_` prefix. These are automatically expanded if used in the `command` string or list.
 
 ## Events
 Emits `event_type` with payload including `command`, `exit_code`, `duration_ms`,

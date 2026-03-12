@@ -19,7 +19,7 @@ func TestSysExecPlugin_HandleSuccessAndPayloadEnv(t *testing.T) {
 	}
 
 	resp, stderr, err := runSysExec(t, "handle", map[string]any{
-		"command":                 `printf '%s' "$DUCTILE_PAYLOAD_NAME"`,
+		"command":                 []any{"printf", "%s", "$DUCTILE_PAYLOAD_NAME"},
 		"include_output_in_event": true,
 	}, map[string]any{
 		"name": "matt",
@@ -50,7 +50,7 @@ func TestSysExecPlugin_HandleNonZeroExitReturnsError(t *testing.T) {
 	}
 
 	resp, stderr, err := runSysExec(t, "handle", map[string]any{
-		"command": `echo "boom" 1>&2; exit 7`,
+		"command": []any{"/bin/sh", "-c", `echo "boom" 1>&2; exit 7`},
 	}, map[string]any{
 		"ignored": "value",
 	})
@@ -80,7 +80,7 @@ func TestSysExecPlugin_HandleRetryOnConfiguredExitCode(t *testing.T) {
 	}
 
 	resp, stderr, err := runSysExec(t, "handle", map[string]any{
-		"command":             `exit 75`,
+		"command":             []any{"/bin/sh", "-c", `exit 75`},
 		"retry_on_exit_codes": []any{75},
 	}, map[string]any{})
 	if err != nil {
