@@ -104,17 +104,21 @@ def handle_command(
                 content = rendered
 
     if not content and not title:
-        content = pick(payload, context, "result", default=None)
-
-    if not content and not title:
+        # Check config-level default_message before falling back to context result.
+        # default_message is an explicit config intent and should not be shadowed by
+        # implicit pipeline result strings leaking through context.
         default_msg = str(config.get("default_message") or "").strip()
         if default_msg:
             content = default_msg
-        else:
-            return error_response(
-                "No message content found in payload (tried: message, content, result, title, message_template)",
-                retry=False,
-            )
+
+    if not content and not title:
+        content = pick(payload, context, "result", default=None)
+
+    if not content and not title:
+        return error_response(
+            "No message content found in payload (tried: message, content, result, title, message_template, default_message)",
+            retry=False,
+        )
 
     # Combine title + body, or use whichever is present
     if title and content:
