@@ -372,14 +372,6 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
         event_payload["stdout"] = stdout_text
         event_payload["stderr"] = stderr_text
 
-    state_updates = {
-        "last_exit_code": exit_code,
-        "last_duration_ms": duration_ms,
-        "last_command": " ".join(expanded_args),
-        "last_executed_at": iso_now(),
-        "last_status": "ok" if success else "error",
-    }
-
     events = [{"type": event_type, "payload": event_payload}] if emit_event else []
 
     if success:
@@ -387,7 +379,6 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
             result=f"command exited with code {exit_code} in {duration_ms}ms",
             events=events,
             logs=logs,
-            state_updates=state_updates,
         )
 
     retry = exit_code in retry_exit_codes
@@ -395,7 +386,6 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     response = plugin_error(error_message, retry=retry, logs=logs)
     if events:
         response["events"] = events
-    response["state_updates"] = state_updates
     return response
 
 
