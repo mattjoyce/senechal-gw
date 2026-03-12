@@ -37,7 +37,7 @@ def handle_command(config, state, event, context):
     payload = event.get("payload", {})
 
     # Extract input parameters (payload first, context fallback)
-    text = pick(payload, context, "text")
+    text = pick(payload, context, "text") or pick(payload, context, "content")
     url = pick(payload, context, "url")
     youtube_url = pick(payload, context, "youtube_url")
 
