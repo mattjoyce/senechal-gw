@@ -257,6 +257,16 @@ class TestHandleCommand(unittest.TestCase):
         _, args, _ = mock_post.mock_calls[0]
         self.assertEqual(args[1]["content"], "step result")
 
+    def test_default_message_takes_priority_over_context_result(self):
+        """default_message config should not be shadowed by a result leaking through context."""
+        cfg = {**CONFIG, "default_message": "Staging rebuild complete."}
+        context = {"result": "command exited with code 0 in 14034ms"}
+        with patch("run.post_to_discord") as mock_post:
+            r = handle_command(cfg, {}, context)
+        self.assertEqual(r["status"], "ok")
+        _, args, _ = mock_post.mock_calls[0]
+        self.assertEqual(args[1]["content"], "Staging rebuild complete.")
+
     def test_empty_template_falls_through_to_default_message(self):
         cfg = {**CONFIG, "message_template": "{missing.field}", "default_message": "fallback"}
         with patch("run.post_to_discord") as mock_post:
