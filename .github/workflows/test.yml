@@ -26,6 +26,8 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+        env:
+          GOTOOLCHAIN: go1.24
 
   docker-validation:
     runs-on: ubuntu-latest
