@@ -19,18 +19,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Setup golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          install-mode: binary
-          args: --version
-
       - name: Run fast tests
         run: ./scripts/test-fast
 
       - name: Run lint
-        run: golangci-lint run ./...
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
 
   docker-validation:
     runs-on: ubuntu-latest
