@@ -1,7 +1,7 @@
 # Ductile
 
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **The Glue for Your Homelab Automation.**
 
