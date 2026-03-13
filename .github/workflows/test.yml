@@ -27,7 +27,7 @@ jobs:
         with:
           version: latest
         env:
-          GOTOOLCHAIN: go1.24
+          GOTOOLCHAIN: go1.24.1
 
   docker-validation:
     runs-on: ubuntu-latest
