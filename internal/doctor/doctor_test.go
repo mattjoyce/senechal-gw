@@ -16,13 +16,13 @@ func validConfig() *config.Config {
 			TickInterval: 60 * time.Second,
 			LogLevel:     "info",
 		},
-		State:      config.StateConfig{Path: "/tmp/test.db"},
-		PluginsDir: "./plugins",
+		State:       config.StateConfig{Path: "/tmp/test.db"},
+		PluginRoots: []string{"./plugins"},
 		Plugins: map[string]config.PluginConf{
 			"echo": {
 				Enabled: true,
-				Schedule: &config.ScheduleConfig{
-					Every: "5m",
+				Schedules: []config.ScheduleConfig{
+					{Every: "5m"},
 				},
 			},
 		},
@@ -57,10 +57,10 @@ func TestValidate_ValidConfig(t *testing.T) {
 	}
 }
 
-func TestValidate_MissingPluginsDir(t *testing.T) {
+func TestValidate_MissingPluginRoots(t *testing.T) {
 	t.Parallel()
 	cfg := validConfig()
-	cfg.PluginsDir = ""
+	cfg.PluginRoots = nil
 	d := New(cfg, registryWith(echoPlugin()))
 	r := d.Validate()
 	if r.Valid {
@@ -101,6 +101,40 @@ func TestValidate_RequiredConfigKey(t *testing.T) {
 		t.Fatal("expected invalid")
 	}
 	assertHasError(t, r, "plugin_refs", "api_token")
+}
+
+func TestValidate_UsesAliasResolves(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Plugins = map[string]config.PluginConf{
+		"check_youtube": {
+			Enabled: true,
+			Uses:    "echo",
+		},
+	}
+	p := echoPlugin()
+	d := New(cfg, registryWith(p))
+	r := d.Validate()
+	if !r.Valid {
+		t.Fatalf("expected valid, got errors: %v", r.Errors)
+	}
+}
+
+func TestValidate_UsesMissingBase(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Plugins = map[string]config.PluginConf{
+		"check_youtube": {
+			Enabled: true,
+			Uses:    "switch",
+		},
+	}
+	d := New(cfg, registryWith(echoPlugin()))
+	r := d.Validate()
+	if r.Valid {
+		t.Fatal("expected invalid")
+	}
+	assertHasError(t, r, "plugin_refs", "switch")
 }
 
 func TestValidate_TokenScopeValidPlugin(t *testing.T) {
@@ -171,8 +205,8 @@ func TestValidate_WebhookPathConflict(t *testing.T) {
 	cfg.Webhooks = &config.WebhooksConfig{
 		Listen: ":9090",
 		Endpoints: []config.WebhookEndpoint{
-			{Path: "/webhook/github", Plugin: "echo", Secret: "s1", SignatureHeader: "X-Hub-Signature-256"},
-			{Path: "/webhook/github/", Plugin: "echo", Secret: "s2", SignatureHeader: "X-Hub-Signature-256"},
+			{Path: "/webhook/github", Plugin: "echo", SecretRef: "s1", SignatureHeader: "X-Hub-Signature-256"},
+			{Path: "/webhook/github/", Plugin: "echo", SecretRef: "s2", SignatureHeader: "X-Hub-Signature-256"},
 		},
 	}
 	d := New(cfg, registryWith(echoPlugin()))
@@ -228,29 +262,6 @@ func TestValidate_WarnUnusedPlugin(t *testing.T) {
 		t.Fatalf("expected valid, got: %v", r.Errors)
 	}
 	assertHasWarning(t, r, "unused", "unused-plugin")
-}
-
-func TestValidate_WarnDeprecatedAPIKey(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.APIKey = "old-key"
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	assertHasWarning(t, r, "deprecated", "api_key")
-}
-
-func TestValidate_WarnBothAPIKeyAndTokens(t *testing.T) {
-	t.Parallel()
-	cfg := validConfig()
-	cfg.API.Enabled = true
-	cfg.API.Listen = "localhost:8080"
-	cfg.API.Auth.APIKey = "old-key"
-	cfg.API.Auth.Tokens = []config.APIToken{{Token: "new-key", Scopes: []string{"*"}}}
-	d := New(cfg, registryWith(echoPlugin()))
-	r := d.Validate()
-	assertHasWarning(t, r, "deprecated", "both")
 }
 
 func TestFormatJSON(t *testing.T) {

@@ -1,0 +1,501 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mattjoyce/ductile/schemas/config.schema.json",
+  "title": "Ductile Configuration",
+  "description": "Schema for ductile config.yaml — the main configuration file for the Ductile automation service. Note: cross-field rules such as plugins.<name>.parallelism <= service.max_workers are enforced by runtime validation, not purely by JSON Schema.",
+  "type": "object",
+  "properties": {
+    "include": {
+      "type": "array",
+      "description": "Multi-file mode: list of YAML files to merge into this config.",
+      "items": { "type": "string" }
+    },
+    "environment_vars": {
+      "$ref": "#/$defs/EnvironmentVarsConfig"
+    },
+    "service": {
+      "$ref": "#/$defs/ServiceConfig"
+    },
+    "state": {
+      "$ref": "#/$defs/StateConfig"
+    },
+    "database": {
+      "$ref": "#/$defs/StateConfig",
+      "description": "Alias for state (user intuition)."
+    },
+    "api": {
+      "$ref": "#/$defs/APIConfig"
+    },
+    "plugin_roots": {
+      "type": "array",
+      "description": "Directories to scan for plugin manifests.",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Per-plugin configuration keyed by plugin name.",
+      "additionalProperties": {
+        "$ref": "#/$defs/PluginConf"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "description": "Legacy event routing rules (prefer pipelines).",
+      "items": { "$ref": "#/$defs/RouteConfig" }
+    },
+    "webhooks": {
+      "$ref": "#/$defs/WebhooksConfig"
+    }
+  },
+  "required": ["service", "state", "plugin_roots"],
+  "additionalProperties": false,
+  "$defs": {
+    "EnvironmentVarsConfig": {
+      "type": "object",
+      "description": "Environment variable file includes for interpolation.",
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ServiceConfig": {
+      "type": "object",
+      "description": "Core service settings.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Service name for logging and identification.",
+          "default": "ductile"
+        },
+        "tick_interval": {
+          "type": "string",
+          "description": "Scheduler tick interval (Go duration, e.g. '60s', '5m').",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "60s"
+        },
+        "log_level": {
+          "type": "string",
+          "description": "Minimum log level.",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info"
+        },
+        "log_format": {
+          "type": "string",
+          "description": "Log output format.",
+          "enum": ["json", "text"],
+          "default": "json"
+        },
+        "dedupe_ttl": {
+          "type": "string",
+          "description": "Default TTL for job deduplication (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "24h"
+        },
+        "job_log_retention": {
+          "type": "string",
+          "description": "How long to retain completed job log entries (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "720h"
+        },
+        "max_workers": {
+          "type": "integer",
+          "description": "Maximum number of concurrent job workers across all plugins.",
+          "minimum": 1,
+          "default": 1
+        },
+        "strict_mode": {
+          "type": "boolean",
+          "description": "Enable strict validation (reject unknown fields, etc.).",
+          "default": false
+        },
+        "allow_symlinks": {
+          "type": "boolean",
+          "description": "Allow symlinks in plugin_roots discovery.",
+          "default": false
+        }
+      },
+      "required": ["tick_interval"],
+      "additionalProperties": false
+    },
+    "StateConfig": {
+      "type": "object",
+      "description": "SQLite state database path.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the SQLite database file (relative to config dir or absolute).",
+          "minLength": 1
+        }
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "APIConfig": {
+      "type": "object",
+      "description": "HTTP API server settings.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "listen": {
+          "type": "string",
+          "description": "Listen address (host:port).",
+          "default": "127.0.0.1:8080"
+        },
+        "auth": {
+          "$ref": "#/$defs/APIAuthConfig"
+        },
+        "max_concurrent_sync": {
+          "type": "integer",
+          "description": "Maximum concurrent synchronous API pipeline executions.",
+          "minimum": 1
+        },
+        "max_sync_timeout": {
+          "type": "string",
+          "description": "Maximum timeout for synchronous pipeline execution (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "APIAuthConfig": {
+      "type": "object",
+      "description": "API authentication configuration.",
+      "properties": {
+        "tokens": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/APIToken" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "APIToken": {
+      "type": "object",
+      "description": "A bearer token with scoped permissions.",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "Bearer token value (use ${ENV_VAR} for secrets).",
+          "minLength": 1
+        },
+        "scopes": {
+          "type": "array",
+          "description": "Permission scopes for this token.",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      },
+      "required": ["token", "scopes"],
+      "additionalProperties": false
+    },
+    "PluginConf": {
+      "type": "object",
+      "description": "Configuration for a single plugin.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the plugin is active.",
+          "default": true
+        },
+        "uses": {
+          "type": "string",
+          "description": "Alias: use another plugin's implementation by name."
+        },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleConfig",
+          "description": "Deprecated: use 'schedules' (array) instead.",
+          "deprecated": true
+        },
+        "schedules": {
+          "type": "array",
+          "description": "One or more schedule entries for this plugin.",
+          "items": { "$ref": "#/$defs/ScheduleConfig" }
+        },
+        "config": {
+          "type": "object",
+          "description": "Plugin-specific configuration passed in the protocol request.",
+          "additionalProperties": true
+        },
+        "retry": {
+          "$ref": "#/$defs/RetryConfig"
+        },
+        "timeouts": {
+          "$ref": "#/$defs/TimeoutsConfig"
+        },
+        "circuit_breaker": {
+          "$ref": "#/$defs/CircuitBreakerConfig"
+        },
+        "max_outstanding_polls": {
+          "type": "integer",
+          "description": "Maximum queued+running poll jobs for this plugin before the scheduler skips.",
+          "minimum": 1,
+          "default": 1
+        },
+        "parallelism": {
+          "type": "integer",
+          "description": "Maximum concurrent jobs for this plugin. Runtime validation enforces parallelism <= service.max_workers (cross-field constraint).",
+          "minimum": 1,
+          "default": 1
+        }
+      },
+      "required": ["enabled"],
+      "additionalProperties": false
+    },
+    "ScheduleConfig": {
+      "type": "object",
+      "description": "Defines when and how a plugin command should be scheduled.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this schedule entry (default: 'default')."
+        },
+        "every": {
+          "type": "string",
+          "description": "Interval schedule: Go duration, extended suffix (3d, 2w), or alias (hourly, daily, weekly, monthly).",
+          "examples": ["5m", "1h", "3d", "hourly", "daily"]
+        },
+        "cron": {
+          "type": "string",
+          "description": "Standard 5-field cron expression.",
+          "examples": ["*/5 * * * *", "0 2 * * *"]
+        },
+        "at": {
+          "type": "string",
+          "description": "One-shot schedule: RFC3339 timestamp.",
+          "format": "date-time"
+        },
+        "after": {
+          "type": "string",
+          "description": "One-shot delay from service start (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "jitter": {
+          "type": "string",
+          "description": "Random jitter added to schedule interval (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "catch_up": {
+          "type": "string",
+          "description": "Behavior when the service starts and missed intervals have passed.",
+          "enum": ["skip", "run_once", "run_all"],
+          "default": "skip"
+        },
+        "if_running": {
+          "type": "string",
+          "description": "Behavior when a schedule fires but a previous job is still running.",
+          "enum": ["skip", "queue", "cancel"],
+          "default": "skip"
+        },
+        "only_between": {
+          "type": "string",
+          "description": "Time window constraint (HH:MM-HH:MM). Jobs only fire within this window.",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]-[0-2][0-9]:[0-5][0-9]$"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone for schedule evaluation (e.g. 'Australia/Melbourne')."
+        },
+        "not_on": {
+          "type": "array",
+          "description": "Days to skip. Weekday names (mon, tue) or integers (0=mon, 6=sun, 7=sun).",
+          "items": {
+            "oneOf": [
+              { "type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] },
+              { "type": "integer", "minimum": 0, "maximum": 7 }
+            ]
+          }
+        },
+        "command": {
+          "type": "string",
+          "description": "Plugin command to invoke (default: 'poll').",
+          "default": "poll"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Static payload merged into the protocol request for this schedule.",
+          "additionalProperties": true
+        },
+        "preferred_window": {
+          "$ref": "#/$defs/PreferredWindow"
+        }
+      },
+      "oneOf": [
+        { "required": ["every"] },
+        { "required": ["cron"] },
+        { "required": ["at"] },
+        { "required": ["after"] },
+        {
+          "not": {
+            "anyOf": [
+              { "required": ["every"] },
+              { "required": ["cron"] },
+              { "required": ["at"] },
+              { "required": ["after"] }
+            ]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "PreferredWindow": {
+      "type": "object",
+      "description": "Time-of-day constraint for scheduling.",
+      "properties": {
+        "start": {
+          "type": "string",
+          "description": "Window start (HH:MM).",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        },
+        "end": {
+          "type": "string",
+          "description": "Window end (HH:MM).",
+          "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+        }
+      },
+      "required": ["start", "end"],
+      "additionalProperties": false
+    },
+    "RetryConfig": {
+      "type": "object",
+      "description": "Retry behavior for failed jobs.",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "description": "Total attempts including the initial run.",
+          "minimum": 1,
+          "default": 4
+        },
+        "backoff_base": {
+          "type": "string",
+          "description": "Base delay for exponential backoff (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TimeoutsConfig": {
+      "type": "object",
+      "description": "Per-command execution timeouts.",
+      "properties": {
+        "poll": {
+          "type": "string",
+          "description": "Timeout for poll commands (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "60s"
+        },
+        "handle": {
+          "type": "string",
+          "description": "Timeout for handle commands (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "120s"
+        },
+        "health": {
+          "type": "string",
+          "description": "Timeout for health commands (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "10s"
+        },
+        "init": {
+          "type": "string",
+          "description": "Timeout for init commands (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CircuitBreakerConfig": {
+      "type": "object",
+      "description": "Circuit breaker settings to halt a repeatedly-failing plugin.",
+      "properties": {
+        "threshold": {
+          "type": "integer",
+          "description": "Consecutive failures before opening the circuit.",
+          "minimum": 1,
+          "default": 3
+        },
+        "reset_after": {
+          "type": "string",
+          "description": "Duration before a half-open probe is attempted (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$",
+          "default": "30m"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RouteConfig": {
+      "type": "object",
+      "description": "Legacy event routing rule.",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Source plugin name."
+        },
+        "event_type": {
+          "type": "string",
+          "description": "Event type to match."
+        },
+        "to": {
+          "type": "string",
+          "description": "Target plugin name."
+        }
+      },
+      "required": ["from", "event_type", "to"],
+      "additionalProperties": false
+    },
+    "WebhooksConfig": {
+      "type": "object",
+      "description": "Webhook listener settings.",
+      "properties": {
+        "listen": {
+          "type": "string",
+          "description": "Listen address for webhook server."
+        },
+        "endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/WebhookEndpoint" }
+        }
+      },
+      "required": ["listen", "endpoints"],
+      "additionalProperties": false
+    },
+    "WebhookEndpoint": {
+      "type": "object",
+      "description": "A single webhook endpoint.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Endpoint name (directory mode)."
+        },
+        "path": {
+          "type": "string",
+          "description": "URL path for this endpoint."
+        },
+        "plugin": {
+          "type": "string",
+          "description": "Plugin to invoke when this webhook fires."
+        },
+        "secret_ref": {
+          "type": "string",
+          "description": "Reference to a shared secret for signature validation."
+        },
+        "signature_header": {
+          "type": "string",
+          "description": "HTTP header containing the request signature."
+        },
+        "max_body_size": {
+          "type": "string",
+          "description": "Maximum request body size (e.g. '1MB')."
+        }
+      },
+      "required": ["path", "plugin"],
+      "additionalProperties": false
+    }
+  }
+}

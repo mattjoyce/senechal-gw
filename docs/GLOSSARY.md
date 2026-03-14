@@ -1,0 +1,112 @@
+# Ductile Glossary
+
+Key terms used throughout Ductile's documentation and configuration.
+
+---
+
+## Gateway
+
+The `ductile` binary — the central runtime that manages plugins, schedules work, routes events, and maintains the execution ledger.
+
+## Plugin / Connector
+
+A polyglot adapter that connects Ductile to an external system (an API, a database, a shell command). Written in any language; communicates via JSON over stdin/stdout. 
+- **Plugin:** The code and manifest (the implementation).
+- **Connector:** The logical integration point (the "skill").
+
+## Alias (Plugin Instance)
+
+A uniquely named and configured instance of a base plugin. Defined in `plugins.yaml` using the `uses:` field. Allows running multiple copies of the same logic (e.g., `discord_alerts` vs `discord_logs`) with different settings.
+
+## Command
+
+A discrete operation provided by a plugin. Common commands include:
+
+- **`poll`** — proactive; Ductile calls the plugin on a schedule to pull data.
+- **`handle`** — reactive; the plugin processes an incoming event.
+- **`health`** — diagnostic; verifies the plugin's prerequisites are met.
+- **`init`** — one-time setup; runs when a plugin is first registered.
+
+## Pipeline
+
+A high-level workflow orchestration defined in YAML. Pipelines react to a single trigger event and execute a sequence of plugin steps, automatically passing data between them.
+
+## Event Bus
+
+The internal routing layer that decouples producers (schedules, webhooks, API) from consumers (pipelines, plugins). It ensures events are distributed to all matching routes.
+
+## Event
+
+A typed packet of data (e.g., `youtube.playlist_item`) that signals an occurrence and triggers routing within the gateway.
+
+## Payload
+
+The JSON object attached to an event. Payload fields are passed to downstream plugins when the event is routed.
+
+## Context (Baggage)
+
+Immutable metadata (e.g., `origin_user_id`, `trace_id`) that persists across every hop of a multi-step pipeline. Carried in the `event_context` ledger and automatically merged into downstream requests.
+
+## Worker Pool (Max Workers)
+
+The global set of execution slots that process jobs in parallel. Controlled by `service.max_workers` (defaults to `CPU-1`).
+
+## Parallelism
+
+The maximum number of concurrent jobs allowed for a specific plugin or alias. Prevents a single resource-heavy plugin from saturating the worker pool.
+
+## Concurrency Safe
+
+A boolean hint in a plugin's `manifest.yaml`. If false (default), the plugin is restricted to a parallelism of 1 (serial execution) to prevent race conditions.
+
+## Smart Dequeue
+
+The logic that skips jobs in the queue if their target plugin has already reached its parallelism limit, allowing other plugins to proceed.
+
+## Result
+
+The human-readable summary or data returned by a plugin in its protocol response. Often used as the input for the next step in a pipeline.
+
+## State (Plugin State)
+
+A persistent JSON blob stored in SQLite for each plugin instance. Plugins can read their state and return `state_updates` to store data (e.g., OAuth tokens, last-seen IDs) across runs.
+
+## Job
+
+The atomic unit of work in Ductile. Every command invocation creates an immutable Job record capturing input, output, logs, and status.
+
+## Queue
+
+The persistent, SQLite-backed job queue. All triggers (scheduler, router, API, webhooks) submit jobs here for the worker pool to pick up.
+
+## Schedule
+
+A configuration entry that tells the scheduler when and how to run a plugin command (e.g., `every: 5m`, `cron: "0 * * * *"`).
+
+## Jitter
+
+A random offset applied to schedules to prevent multiple jobs from triggering at the exact same millisecond (the "thundering herd" problem).
+
+## Dedupe Key
+
+A unique string used to suppress duplicate enqueues. If a job with the same key is already queued or recently succeeded, the new enqueue is ignored.
+
+## Circuit Breaker
+
+An automated safety switch that "opens" after repeated plugin failures, temporarily blocking scheduled runs to allow the system or external API to recover.
+
+## Webhook
+
+An HMAC-verified HTTP endpoint that accepts external events and injects them into the Ductile event bus.
+
+## Skill
+
+A machine-readable description of a capability (either an atomic plugin command or an orchestrated pipeline), exported via `/skills` or `/openapi.json`.
+
+## Workspace
+
+A dedicated, ephemeral directory on the filesystem created for each job. Used for storing artifacts like downloads or generated reports.
+
+## Execution Ledger
+
+The persistent history of all jobs, pipeline steps, and event transitions. Used for the TUI "Overwatch" and audit logging.

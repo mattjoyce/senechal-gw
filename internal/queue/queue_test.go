@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -107,12 +108,18 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 		t.Fatalf("expected 1 job_log row, got %d", count)
 	}
 
-	var gotContextID string
-	if err := db.QueryRow("SELECT event_context_id FROM job_log WHERE id = ?;", id+"-1").Scan(&gotContextID); err != nil {
-		t.Fatalf("select event_context_id: %v", err)
+	var (
+		gotContextID string
+		gotJobID     string
+	)
+	if err := db.QueryRow("SELECT event_context_id, job_id FROM job_log WHERE id = ?;", id+"-1").Scan(&gotContextID, &gotJobID); err != nil {
+		t.Fatalf("select event_context_id/job_id: %v", err)
 	}
 	if gotContextID != contextID {
 		t.Fatalf("event_context_id: got %q want %q", gotContextID, contextID)
+	}
+	if gotJobID != id {
+		t.Fatalf("job_id: got %q want %q", gotJobID, id)
 	}
 }
 
@@ -140,7 +147,7 @@ func TestGetJobByID(t *testing.T) {
 		t.Fatalf("Dequeue: %v", err)
 	}
 
-	result := json.RawMessage(`{"status":"ok","logs":[]}`)
+	result := json.RawMessage(`{"status":"ok","result":"ok","logs":[]}`)
 	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -166,6 +173,47 @@ func TestGetJobByID(t *testing.T) {
 	}
 	if got.CompletedAt == nil {
 		t.Fatalf("expected CompletedAt to be set")
+	}
+}
+
+func TestGetJobByIDUsesJobLogJobIDOnRetryAttempts(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE job_queue SET attempt = 2 WHERE id = ?`, id); err != nil {
+		t.Fatalf("update attempt: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	result := json.RawMessage(`{"status":"ok","result":"retry-ok","logs":[]}`)
+	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, result, nil, nil); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	got, err := q.GetJobByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if string(got.Result) != string(result) {
+		t.Fatalf("Result: got %s want %s", string(got.Result), string(result))
 	}
 }
 
@@ -286,6 +334,72 @@ UPDATE job_queue SET status = ?, attempt = 3, created_at = ?, started_at = ?, co
 	}
 }
 
+func TestListJobLogsFilters(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "api",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	stderr := "stderr output"
+	lastErr := "Boom"
+	result := json.RawMessage(`{"status":"error","error":"Boom"}`)
+	if err := q.CompleteWithResult(context.Background(), id, StatusFailed, result, &lastErr, &stderr); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	since := time.Now().UTC().Add(-1 * time.Minute)
+	until := time.Now().UTC().Add(1 * time.Minute)
+	status := StatusFailed
+
+	filter := JobLogFilter{
+		Plugin:        "echo",
+		Status:        &status,
+		Query:         "boom",
+		Since:         &since,
+		Until:         &until,
+		Limit:         10,
+		IncludeResult: true,
+	}
+
+	logs, total, err := q.ListJobLogs(context.Background(), filter)
+	if err != nil {
+		t.Fatalf("ListJobLogs: %v", err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("expected 1 log, got total=%d len=%d", total, len(logs))
+	}
+	if logs[0].JobID != id {
+		t.Fatalf("job_id mismatch: got %q want %q", logs[0].JobID, id)
+	}
+	if logs[0].LastError == nil || *logs[0].LastError != lastErr {
+		t.Fatalf("last_error mismatch: %#v", logs[0].LastError)
+	}
+	if logs[0].Stderr == nil || *logs[0].Stderr != stderr {
+		t.Fatalf("stderr mismatch: %#v", logs[0].Stderr)
+	}
+	if string(logs[0].Result) != string(result) {
+		t.Fatalf("result mismatch: got %s want %s", string(logs[0].Result), string(result))
+	}
+}
+
 func TestQueueDequeueRespectsNextRetryAtStrictly(t *testing.T) {
 	t.Parallel()
 
@@ -364,6 +478,13 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("outstanding queued count=%d, want 1", n)
 	}
+	n, err = q.CountOutstandingJobs(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("CountOutstandingJobs queued: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("generic outstanding queued count=%d, want 1", n)
+	}
 
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
@@ -375,8 +496,15 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("outstanding running count=%d, want 1", n)
 	}
+	n, err = q.CountOutstandingJobs(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("CountOutstandingJobs running: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("generic outstanding running count=%d, want 1", n)
+	}
 
-	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), id, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	n, err = q.CountOutstandingPollJobs(context.Background(), "echo")
@@ -385,6 +513,63 @@ func TestQueueCountOutstandingPollJobs(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("outstanding completed count=%d, want 0", n)
+	}
+	n, err = q.CountOutstandingJobs(context.Background(), "echo", "poll")
+	if err != nil {
+		t.Fatalf("CountOutstandingJobs completed: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("generic outstanding completed count=%d, want 0", n)
+	}
+}
+
+func TestQueueCancelOutstandingJobs(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+
+	cancelled, err := q.CancelOutstandingJobs(context.Background(), "echo", "poll", "cancelled by test")
+	if err != nil {
+		t.Fatalf("CancelOutstandingJobs: %v", err)
+	}
+	if cancelled != 1 {
+		t.Fatalf("cancelled=%d want 1", cancelled)
+	}
+
+	var (
+		status    string
+		lastError sql.NullString
+		completed sql.NullString
+	)
+	if err := db.QueryRow(`SELECT status, last_error, completed_at FROM job_queue WHERE id = ?`, id).Scan(&status, &lastError, &completed); err != nil {
+		t.Fatalf("query cancelled job: %v", err)
+	}
+	if status != string(StatusDead) {
+		t.Fatalf("status=%q want %q", status, StatusDead)
+	}
+	if !lastError.Valid || lastError.String != "cancelled by test" {
+		t.Fatalf("last_error=%v want %q", lastError, "cancelled by test")
+	}
+	if !completed.Valid || completed.String == "" {
+		t.Fatalf("completed_at=%v want non-empty", completed)
 	}
 }
 
@@ -430,6 +615,17 @@ func TestQueueLatestCompletedPollResult(t *testing.T) {
 	}
 	if res.CompletedAt.IsZero() {
 		t.Fatal("expected completed_at timestamp")
+	}
+
+	generic, err := q.LatestCompletedCommandResult(context.Background(), "echo", "poll", "ductile")
+	if err != nil {
+		t.Fatalf("LatestCompletedCommandResult: %v", err)
+	}
+	if generic == nil {
+		t.Fatal("expected latest completed command result")
+	}
+	if generic.JobID != id {
+		t.Fatalf("generic job id=%q want %q", generic.JobID, id)
 	}
 
 	res, err = q.LatestCompletedPollResult(context.Background(), "echo", "scheduler")
@@ -517,6 +713,98 @@ func TestQueueCircuitBreakerRoundTripAndReset(t *testing.T) {
 	}
 }
 
+func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+
+	got, err := q.GetScheduleEntryState(context.Background(), "echo", "default")
+	if err != nil {
+		t.Fatalf("GetScheduleEntryState initial: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil initial state, got %#v", got)
+	}
+
+	reason := "command_not_supported"
+	lastFiredAt := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Microsecond)
+	lastSuccessJobID := "job-123"
+	lastSuccessAt := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Microsecond)
+	nextRunAt := time.Now().UTC().Add(50 * time.Minute).Truncate(time.Microsecond)
+	if err := q.UpsertScheduleEntryState(context.Background(), ScheduleEntryState{
+		Plugin:           "echo",
+		ScheduleID:       "default",
+		Command:          "token_refresh",
+		Status:           ScheduleEntryPausedInvalid,
+		Reason:           &reason,
+		LastFiredAt:      &lastFiredAt,
+		LastSuccessJobID: &lastSuccessJobID,
+		LastSuccessAt:    &lastSuccessAt,
+		NextRunAt:        &nextRunAt,
+	}); err != nil {
+		t.Fatalf("UpsertScheduleEntryState insert: %v", err)
+	}
+
+	got, err = q.GetScheduleEntryState(context.Background(), "echo", "default")
+	if err != nil {
+		t.Fatalf("GetScheduleEntryState after insert: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected persisted schedule state")
+	}
+	if got.Status != ScheduleEntryPausedInvalid {
+		t.Fatalf("status=%q want %q", got.Status, ScheduleEntryPausedInvalid)
+	}
+	if got.Reason == nil || *got.Reason != reason {
+		t.Fatalf("reason=%v want %q", got.Reason, reason)
+	}
+	if got.LastFiredAt == nil || !got.LastFiredAt.Equal(lastFiredAt) {
+		t.Fatalf("last_fired_at=%v want %v", got.LastFiredAt, lastFiredAt)
+	}
+	if got.LastSuccessJobID == nil || *got.LastSuccessJobID != lastSuccessJobID {
+		t.Fatalf("last_success_job_id=%v want %q", got.LastSuccessJobID, lastSuccessJobID)
+	}
+	if got.LastSuccessAt == nil || !got.LastSuccessAt.Equal(lastSuccessAt) {
+		t.Fatalf("last_success_at=%v want %v", got.LastSuccessAt, lastSuccessAt)
+	}
+	if got.NextRunAt == nil || !got.NextRunAt.Equal(nextRunAt) {
+		t.Fatalf("next_run_at=%v want %v", got.NextRunAt, nextRunAt)
+	}
+
+	if err := q.UpsertScheduleEntryState(context.Background(), ScheduleEntryState{
+		Plugin:     "echo",
+		ScheduleID: "default",
+		Command:    "token_refresh",
+		Status:     ScheduleEntryActive,
+	}); err != nil {
+		t.Fatalf("UpsertScheduleEntryState update: %v", err)
+	}
+
+	got, err = q.GetScheduleEntryState(context.Background(), "echo", "default")
+	if err != nil {
+		t.Fatalf("GetScheduleEntryState after update: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected state after update")
+	}
+	if got.Status != ScheduleEntryActive {
+		t.Fatalf("status=%q want %q", got.Status, ScheduleEntryActive)
+	}
+	if got.Reason != nil {
+		t.Fatalf("expected nil reason after activate, got %v", *got.Reason)
+	}
+	if got.LastFiredAt != nil || got.LastSuccessJobID != nil || got.LastSuccessAt != nil || got.NextRunAt != nil {
+		t.Fatalf("expected timing fields cleared after activate update, got %#v", got)
+	}
+}
+
 func TestQueueEnqueueDedupeMissBeforeSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -560,6 +848,53 @@ func TestQueueEnqueueDedupeMissBeforeSuccess(t *testing.T) {
 	}
 }
 
+func TestQueueEnqueueDedupeOverrideBlocksOutstanding(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db, WithLogger(slog.Default()), WithDedupeTTL(24*time.Hour))
+	key := "poll:echo"
+	overrideTTL := 1 * time.Minute
+
+	firstID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+		DedupeTTL:   &overrideTTL,
+	})
+	if err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+	if firstID == "" {
+		t.Fatal("first enqueue returned empty job id")
+	}
+
+	dupID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+		DedupeTTL:   &overrideTTL,
+	})
+	if err == nil {
+		t.Fatalf("expected dedupe drop error for outstanding job, got nil with id=%q", dupID)
+	}
+	var dedupeErr *DedupeDropError
+	if !errors.As(err, &dedupeErr) {
+		t.Fatalf("expected DedupeDropError, got %T: %v", err, err)
+	}
+	if dedupeErr.ExistingJobID != firstID {
+		t.Fatalf("existing job id = %q, want %q", dedupeErr.ExistingJobID, firstID)
+	}
+}
+
 func TestQueueEnqueueDedupeHitAfterSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -585,7 +920,7 @@ func TestQueueEnqueueDedupeHitAfterSuccess(t *testing.T) {
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
 	}
-	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete success: %v", err)
 	}
 
@@ -640,7 +975,7 @@ func TestQueueEnqueueDedupeTTLExpiredAllowsNewJob(t *testing.T) {
 	if _, err := q.Dequeue(context.Background()); err != nil {
 		t.Fatalf("dequeue: %v", err)
 	}
-	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
 		t.Fatalf("complete success: %v", err)
 	}
 
@@ -660,5 +995,236 @@ func TestQueueEnqueueDedupeTTLExpiredAllowsNewJob(t *testing.T) {
 	}
 	if secondID == "" {
 		t.Fatal("second enqueue returned empty job id")
+	}
+}
+
+func TestQueueEnqueueDedupeTTLOverride(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db, WithLogger(slog.Default()), WithDedupeTTL(24*time.Hour))
+	key := "poll:echo"
+
+	firstID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+	})
+	if err != nil {
+		t.Fatalf("first enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	if err := q.CompleteWithResult(context.Background(), firstID, StatusSucceeded, json.RawMessage(`{"status":"ok","result":"ok"}`), nil, nil); err != nil {
+		t.Fatalf("complete success: %v", err)
+	}
+
+	completedAt := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339Nano)
+	if _, err := db.Exec(`UPDATE job_queue SET completed_at = ? WHERE id = ?`, completedAt, firstID); err != nil {
+		t.Fatalf("set completed_at: %v", err)
+	}
+
+	_, err = q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+	})
+	var dedupeErr *DedupeDropError
+	if !errors.As(err, &dedupeErr) {
+		t.Fatalf("expected global dedupe hit, got %v", err)
+	}
+
+	overrideTTL := 1 * time.Minute
+	secondID, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+		DedupeKey:   &key,
+		DedupeTTL:   &overrideTTL,
+	})
+	if err != nil {
+		t.Fatalf("enqueue with dedupe ttl override: %v", err)
+	}
+	if secondID == "" {
+		t.Fatal("second enqueue returned empty job id")
+	}
+}
+
+func TestDequeueEligibleSkipsPlugins(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	// Enqueue jobs for two plugins in order: alpha, beta, alpha
+	for _, p := range []string{"alpha", "beta", "alpha"} {
+		if _, err := q.Enqueue(ctx, EnqueueRequest{
+			Plugin: p, Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %s: %v", p, err)
+		}
+	}
+
+	// Skip alpha — should get beta
+	j, err := q.DequeueEligible(ctx, []string{"alpha"}, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.Plugin != "beta" {
+		t.Fatalf("expected beta, got %v", j)
+	}
+
+	// Skip alpha again — no eligible jobs left (beta already claimed)
+	j2, err := q.DequeueEligible(ctx, []string{"alpha"}, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible 2: %v", err)
+	}
+	if j2 != nil {
+		t.Fatalf("expected nil, got %v", j2)
+	}
+
+	// No skip — should get first alpha
+	j3, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible 3: %v", err)
+	}
+	if j3 == nil || j3.Plugin != "alpha" {
+		t.Fatalf("expected alpha, got %v", j3)
+	}
+}
+
+func TestDequeueEligibleSkipsConcurrencyKeys(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	keyA := "git_repo_sync:owner/repoA"
+	keyB := "git_repo_sync:owner/repoB"
+
+	// Enqueue: repoA first, then repoB
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "git_repo_sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyA,
+	}); err != nil {
+		t.Fatalf("Enqueue A: %v", err)
+	}
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "git_repo_sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyB,
+	}); err != nil {
+		t.Fatalf("Enqueue B: %v", err)
+	}
+
+	// Block keyA — should get repoB
+	j, err := q.DequeueEligible(ctx, nil, []string{keyA})
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.DedupeKey == nil || *j.DedupeKey != keyB {
+		t.Fatalf("expected repoB key, got %v", j)
+	}
+
+	// Block keyA still — no eligible (repoB already claimed)
+	j2, err := q.DequeueEligible(ctx, nil, []string{keyA})
+	if err != nil {
+		t.Fatalf("DequeueEligible 2: %v", err)
+	}
+	if j2 != nil {
+		t.Fatalf("expected nil, got %v", j2)
+	}
+}
+
+func TestDequeueEligibleEmptyFiltersMatchesDequeue(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	id, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "echo", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	j, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.ID != id {
+		t.Fatalf("expected job %s, got %v", id, j)
+	}
+}
+
+func TestDequeueEligibleCombinedFilters(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	keyX := "sync:repoX"
+
+	// Job 1: plugin alpha (will be skipped)
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "alpha", Command: "poll", SubmittedBy: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Job 2: plugin beta with keyX (key will be blocked)
+	if _, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "beta", Command: "handle", SubmittedBy: "test", DedupeKey: &keyX,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Job 3: plugin beta without key (should be picked)
+	id3, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "beta", Command: "poll", SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := q.DequeueEligible(ctx, []string{"alpha"}, []string{keyX})
+	if err != nil {
+		t.Fatalf("DequeueEligible: %v", err)
+	}
+	if j == nil || j.ID != id3 {
+		t.Fatalf("expected job %s (beta no-key), got %v", id3, j)
 	}
 }

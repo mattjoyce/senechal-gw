@@ -13,6 +13,7 @@ const (
 	StatusQueued    Status = "queued"
 	StatusRunning   Status = "running"
 	StatusSucceeded Status = "succeeded"
+	StatusSkipped   Status = "skipped"
 	StatusFailed    Status = "failed"
 	StatusTimedOut  Status = "timed_out"
 	StatusDead      Status = "dead"
@@ -45,6 +46,7 @@ type EnqueueRequest struct {
 	MaxAttempts    int
 	SubmittedBy    string
 	DedupeKey      *string
+	DedupeTTL      *time.Duration
 	ParentJobID    *string
 	EventContextID *string
 	SourceEventID  *string
@@ -56,6 +58,36 @@ type ListJobsFilter struct {
 	Command string
 	Status  *Status
 	Limit   int
+}
+
+// JobLogFilter defines optional filters for listing job logs.
+type JobLogFilter struct {
+	JobID         string
+	Plugin        string
+	Command       string
+	Status        *Status
+	SubmittedBy   string
+	Query         string
+	Since         *time.Time
+	Until         *time.Time
+	Limit         int
+	IncludeResult bool
+}
+
+// JobLogEntry represents a stored job log record for audit/query.
+type JobLogEntry struct {
+	JobID       string
+	LogID       string
+	Plugin      string
+	Command     string
+	Status      Status
+	Attempt     int
+	SubmittedBy string
+	CreatedAt   time.Time
+	CompletedAt time.Time
+	LastError   *string
+	Stderr      *string
+	Result      json.RawMessage
 }
 
 type CircuitState string
@@ -77,10 +109,35 @@ type CircuitBreaker struct {
 	UpdatedAt    time.Time
 }
 
-type PollResult struct {
+type CommandResult struct {
 	JobID       string
 	Status      Status
 	CompletedAt time.Time
+}
+
+// PollResult is kept as an alias for compatibility with existing tests/callers.
+type PollResult = CommandResult
+
+type ScheduleEntryStatus string
+
+const (
+	ScheduleEntryActive        ScheduleEntryStatus = "active"
+	ScheduleEntryPausedManual  ScheduleEntryStatus = "paused_manual"
+	ScheduleEntryPausedInvalid ScheduleEntryStatus = "paused_invalid"
+	ScheduleEntryExhausted     ScheduleEntryStatus = "exhausted"
+)
+
+type ScheduleEntryState struct {
+	Plugin           string
+	ScheduleID       string
+	Command          string
+	Status           ScheduleEntryStatus
+	Reason           *string
+	LastFiredAt      *time.Time
+	LastSuccessJobID *string
+	LastSuccessAt    *time.Time
+	NextRunAt        *time.Time
+	UpdatedAt        time.Time
 }
 
 var ErrJobNotFound = errors.New("job not found")

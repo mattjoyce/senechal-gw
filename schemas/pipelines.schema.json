@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mattjoyce/ductile/schemas/pipelines.schema.json",
+  "title": "Ductile Pipelines",
+  "description": "Schema for ductile pipelines.yaml — defines event-driven pipeline orchestration.",
+  "type": "object",
+  "properties": {
+    "pipelines": {
+      "type": "array",
+      "description": "List of pipeline definitions.",
+      "items": { "$ref": "#/$defs/PipelineEntry" }
+    }
+  },
+  "required": ["pipelines"],
+  "additionalProperties": false,
+  "$defs": {
+    "PipelineEntry": {
+      "type": "object",
+      "description": "A named pipeline triggered by an event type.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique pipeline name.",
+          "minLength": 1
+        },
+        "on": {
+          "type": "string",
+          "description": "Event type that triggers this pipeline.",
+          "minLength": 1
+        },
+        "steps": {
+          "type": "array",
+          "description": "Ordered steps in the pipeline.",
+          "items": { "$ref": "#/$defs/StepEntry" }
+        },
+        "execution_mode": {
+          "type": "string",
+          "description": "How the pipeline is triggered and results returned.",
+          "enum": ["async", "synchronous"],
+          "default": "async"
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Maximum duration for synchronous pipeline execution (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        }
+      },
+      "required": ["name", "on"],
+      "additionalProperties": false
+    },
+    "Condition": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+        "op": {
+          "type": "string",
+          "enum": ["exists", "eq", "neq", "in", "gt", "gte", "lt", "lte"]
+        },
+        "value": {},
+        "all": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Condition" }
+        },
+        "any": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Condition" }
+        },
+        "not": {
+          "$ref": "#/$defs/Condition"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StepEntry": {
+      "type": "object",
+      "description": "A single step in a pipeline.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Step identifier (auto-generated if omitted)."
+        },
+        "uses": {
+          "type": "string",
+          "description": "Plugin name to invoke for this step."
+        },
+        "call": {
+          "type": "string",
+          "description": "Inline call expression (alternative to uses)."
+        },
+        "if": {
+          "$ref": "#/$defs/Condition",
+          "description": "Optional structured condition controlling whether the step runs."
+        },
+        "steps": {
+          "type": "array",
+          "description": "Nested sequential sub-steps.",
+          "items": { "$ref": "#/$defs/StepEntry" }
+        },
+        "split": {
+          "type": "array",
+          "description": "Parallel fan-out sub-steps.",
+          "items": { "$ref": "#/$defs/StepEntry" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

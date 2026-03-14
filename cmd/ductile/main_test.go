@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
@@ -88,7 +88,7 @@ include:
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -97,25 +97,17 @@ include:
 		t.Fatalf("runConfigHashUpdate() code = %d, stderr: %s", code, stderr)
 	}
 
-	if !strings.Contains(stdout, "Processing directory") {
+	if !strings.Contains(stdout, "Processing directory (v2 manifest)") {
 		t.Fatalf("stdout missing verbose directory progress: %s", stdout)
 	}
-	if !strings.Contains(stdout, "HASH tokens.yaml:") {
-		t.Fatalf("stdout missing tokens hash line: %s", stdout)
-	}
-	if !strings.Contains(stdout, "SKIP webhooks.yaml: not found (optional)") {
-		t.Fatalf("stdout missing optional skip line: %s", stdout)
+	if !strings.Contains(stdout, "DISCOVER [high-security]") {
+		t.Fatalf("stdout missing discovery lines: %s", stdout)
 	}
 	if !strings.Contains(stdout, "DRY-RUN .checksums:") {
 		t.Fatalf("stdout missing dry-run line: %s", stdout)
 	}
 	if !strings.Contains(stdout, "Dry run completed") {
 		t.Fatalf("stdout missing dry-run summary: %s", stdout)
-	}
-
-	hashPattern := regexp.MustCompile(`HASH tokens\.yaml: [a-f0-9]{64}`)
-	if !hashPattern.MatchString(stdout) {
-		t.Fatalf("stdout missing valid hash output: %s", stdout)
 	}
 
 	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); !os.IsNotExist(err) {
@@ -134,7 +126,7 @@ include:
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("api_key: test\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: test\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -152,6 +144,68 @@ include:
 
 	if _, err := os.Stat(filepath.Join(tmpDir, ".checksums")); err != nil {
 		t.Fatalf("expected .checksums to be written: %v", err)
+	}
+}
+
+func TestLoadWebhooksFileAcceptsNestedDocumentedShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "webhooks.yaml")
+	raw := `
+webhooks:
+  endpoints:
+    - name: github
+      path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+      max_body_size: 1MB
+`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadWebhooksFile(path)
+	if err != nil {
+		t.Fatalf("loadWebhooksFile() failed: %v", err)
+	}
+	if len(cfg.Webhooks) != 1 {
+		t.Fatalf("len(cfg.Webhooks) = %d, want 1", len(cfg.Webhooks))
+	}
+	if cfg.Webhooks[0].Path != "/webhook/github" {
+		t.Fatalf("cfg.Webhooks[0].Path = %q, want /webhook/github", cfg.Webhooks[0].Path)
+	}
+}
+
+func TestWriteWebhooksFileUsesNestedDocumentedShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "webhooks.yaml")
+	cfg := &config.WebhooksFileConfig{
+		Webhooks: config.WebhookEndpoints{
+			{
+				Name:            "github",
+				Path:            "/webhook/github",
+				Plugin:          "echo",
+				SecretRef:       "github_webhook_secret",
+				SignatureHeader: "X-Hub-Signature-256",
+				MaxBodySize:     "1MB",
+			},
+		},
+	}
+
+	if err := writeWebhooksFile(path, cfg); err != nil {
+		t.Fatalf("writeWebhooksFile() failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("os.ReadFile() failed: %v", err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "webhooks:") {
+		t.Fatalf("written file missing webhooks root: %s", text)
+	}
+	if !strings.Contains(text, "endpoints:") {
+		t.Fatalf("written file missing endpoints nesting: %s", text)
 	}
 }
 
@@ -287,18 +341,23 @@ func TestRunConfigSetApplyRejectsInvalidConfigAndRollsBack(t *testing.T) {
 	configYAML := `
 service:
   name: test-gw
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	code, _, stderr := captureOutputWithExitCode(t, func() int {
-		return runConfigSet([]string{"--config", configPath, "--apply", "plugins.echo.schedule.every="})
+		return runConfigSet([]string{"--config", configPath, "--apply", "service.log_level=invalid"})
 	})
 	if code == 0 {
 		t.Fatalf("runConfigSet() should fail for invalid apply, stderr: %s", stderr)
@@ -311,8 +370,8 @@ plugins:
 	if err != nil {
 		t.Fatalf("config should still be valid after failed apply: %v", err)
 	}
-	if got := reloaded.Plugins["echo"].Schedule.Every; got != "5m" {
-		t.Fatalf("plugins.echo.schedule.every should remain %q after failed apply, got %q", "5m", got)
+	if got := reloaded.Service.LogLevel; got != "info" {
+		t.Fatalf("service.log_level should remain %q after failed apply, got %q", "info", got)
 	}
 }
 
@@ -323,6 +382,8 @@ func TestRunSystemResetResetsCircuitBreaker(t *testing.T) {
 	configYAML := `
 state:
   path: ` + dbPath + `
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: false
@@ -374,6 +435,176 @@ plugins:
 	}
 }
 
+func TestRunSystemSkillsFallsBackWithoutUsableAutoConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("DUCTILE_CONFIG_DIR", tmpDir)
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills(nil)
+	})
+	if code != 0 {
+		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "AI Operator Guide (Core Mode)") {
+		t.Fatalf("stdout missing core fallback header: %s", stdout)
+	}
+	if !strings.Contains(stdout, "token-frugal baseline") {
+		t.Fatalf("stdout missing fallback guidance: %s", stdout)
+	}
+	if !strings.Contains(stdout, "`ductile config check --json`") {
+		t.Fatalf("stdout missing quick-loop command: %s", stdout)
+	}
+}
+
+func TestRunSystemSkillsExplicitConfigLoadFailureReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	missingConfigPath := filepath.Join(tmpDir, "missing-config.yaml")
+
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", missingConfigPath})
+	})
+	if code == 0 {
+		t.Fatalf("runSystemSkills() should fail for explicit invalid config, stderr: %s", stderr)
+	}
+	if !strings.Contains(stderr, "Failed to load config:") {
+		t.Fatalf("stderr missing explicit load failure: %s", stderr)
+	}
+}
+
+func TestRunSystemSkillsWithConfigEmitsLiveManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "LLM Operator Skill Manifest") {
+		t.Fatalf("stdout missing live manifest header: %s", stdout)
+	}
+	if strings.Contains(stdout, "AI Operator Guide (Core Mode)") {
+		t.Fatalf("stdout should not fall back in configured mode: %s", stdout)
+	}
+}
+
+func writeConfigDirFixtureWithPlugin(t *testing.T, dir string) {
+	t.Helper()
+
+	pluginsDir := filepath.Join(dir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+service:
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ` + filepath.Join(dir, "state.db") + `
+plugin_roots:
+  - ` + pluginsDir + `
+plugins: {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write an echo-style plugin with a write command (has semantic anchors).
+	pluginDir := filepath.Join(pluginsDir, "echo")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: echo
+version: "1.0.0"
+protocol: 2
+entrypoint: run.sh
+description: "Test echo plugin."
+commands:
+  - name: poll
+    type: write
+    description: "Emit events."
+    idempotent: false
+    retry_safe: false
+  - name: health
+    type: read
+    description: "Health check."
+    idempotent: true
+    retry_safe: true
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunSystemSkillsPluginCommandHasSemanticAnchors(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixtureWithPlugin(t, tmpDir)
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemSkills() code = %d, stderr: %s", code, stderr)
+	}
+	for _, want := range []string{
+		"tier=WRITE",
+		"mut=1",
+		"idem=0",
+		"retry=0",
+		"m=POST",
+		"p=/plugin/",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q: %s", want, stdout)
+		}
+	}
+}
+
+func TestRunSystemSkillsOutputIsDeterministic(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixtureWithPlugin(t, tmpDir)
+
+	_, stdout1, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	_, stdout2, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if stdout1 != stdout2 {
+		t.Fatalf("runSystemSkills() output is not deterministic:\nrun1=%s\nrun2=%s", stdout1, stdout2)
+	}
+}
+
+func TestRunSystemSkillsOperatorGuidancePresent(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("DUCTILE_CONFIG_DIR", tmpDir)
+
+	// Core mode: guidance must be present.
+	_, coreStdout, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills(nil)
+	})
+	if !strings.Contains(coreStdout, "progressive disclosure") {
+		t.Fatalf("core-mode stdout missing progressive disclosure guidance: %s", coreStdout)
+	}
+
+	// Full manifest: guidance must be present.
+	writeConfigDirFixtureWithPlugin(t, tmpDir)
+	_, fullStdout, _ := captureOutputWithExitCode(t, func() int {
+		return runSystemSkills([]string{"--config", tmpDir})
+	})
+	if !strings.Contains(fullStdout, "Operator guidance: use `--json`") {
+		t.Fatalf("full-manifest stdout missing operator guidance: %s", fullStdout)
+	}
+}
+
 func writeConfigDirFixture(t *testing.T, dir string) {
 	t.Helper()
 
@@ -388,7 +619,8 @@ service:
   log_level: info
 state:
   path: ` + filepath.Join(dir, "state.db") + `
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins: {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
@@ -533,16 +765,17 @@ service:
   log_level: info
 state:
   path: ` + filepath.Join(dir, "state.db") + `
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins:
   withings:
     enabled: false
-    schedule:
-      every: daily
+    schedules:
+      - every: daily
   slack:
     enabled: false
-    schedule:
-      every: daily
+    schedules:
+      - every: daily
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
 		t.Fatal(err)
@@ -583,7 +816,7 @@ func TestRunConfigPluginSetCreatesPluginFile(t *testing.T) {
 	code, _, stderr := captureOutputWithExitCode(t, func() int {
 		return runConfigPluginSet([]string{
 			"echo",
-			"schedule.every",
+			"schedules.0.every",
 			"2h",
 			"--config-dir", tmpDir,
 		})
@@ -651,7 +884,7 @@ func TestRunConfigWebhookAddAndList(t *testing.T) {
 			"--name", "github",
 			"--path", "/webhook/github",
 			"--plugin", "github-handler",
-			"--secret", "abc123",
+			"--secret-ref", "github_secret",
 		})
 	})
 	if addCode != 0 && addCode != 2 {
@@ -757,6 +990,35 @@ func TestRunConfigGetAndSetSupportConfigDirFlag(t *testing.T) {
 	}
 }
 
+func TestRunConfigShow(t *testing.T) {
+	tmpDir := t.TempDir()
+	writeConfigDirFixture(t, tmpDir)
+
+	t.Run("show full config yaml", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runConfigShow([]string{"--config-dir", tmpDir})
+		})
+		if code != 0 {
+			t.Fatalf("runConfigShow() code = %d, stderr: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "service:") {
+			t.Fatalf("stdout missing service section: %s", stdout)
+		}
+	})
+
+	t.Run("show specific field json", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runConfigShow([]string{"--config-dir", tmpDir, "--json", "service.log_level"})
+		})
+		if code != 0 {
+			t.Fatalf("runConfigShow() code = %d, stderr: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "\"info\"") {
+			t.Fatalf("stdout missing log_level value: %s", stdout)
+		}
+	})
+}
+
 func TestRunSystemStatusJSONHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")
@@ -777,7 +1039,8 @@ service:
   log_level: info
 state:
   path: ` + dbPath + `
-plugins_dir: ` + filepath.Join(tmpDir, "plugins") + `
+plugin_roots:
+  - ` + filepath.Join(tmpDir, "plugins") + `
 plugins: {}
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
@@ -850,7 +1113,8 @@ service:
   log_level: info
 state:
   path: ` + dbPath + `
-plugins_dir: ` + filepath.Join(tmpDir, "plugins") + `
+plugin_roots:
+  - ` + filepath.Join(tmpDir, "plugins") + `
 plugins: {}
 `
 	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
@@ -905,5 +1169,142 @@ plugins: {}
 	}
 	if !foundPIDCheck {
 		t.Fatalf("expected pid_lock check in output; output=%s", stdout)
+	}
+}
+
+func TestValidateScheduledCommands(t *testing.T) {
+	registry := plugin.NewRegistry()
+	if err := registry.Add(&plugin.Plugin{
+		Name: "echo",
+		Commands: plugin.Commands{
+			{Name: "poll", Type: plugin.CommandTypeWrite},
+			{Name: "token_refresh", Type: plugin.CommandTypeWrite},
+		},
+	}); err != nil {
+		t.Fatalf("registry add: %v", err)
+	}
+
+	t.Run("valid scheduled command", func(t *testing.T) {
+		cfg := &config.Config{
+			Plugins: map[string]config.PluginConf{
+				"echo": {
+					Enabled: true,
+					Schedules: []config.ScheduleConfig{
+						{ID: "refresh", Every: "1h", Command: "token_refresh"},
+					},
+				},
+			},
+		}
+		if err := validateScheduledCommands(cfg, registry); err != nil {
+			t.Fatalf("validateScheduledCommands() error = %v", err)
+		}
+	})
+
+	t.Run("unsupported scheduled command", func(t *testing.T) {
+		cfg := &config.Config{
+			Plugins: map[string]config.PluginConf{
+				"echo": {
+					Enabled: true,
+					Schedules: []config.ScheduleConfig{
+						{ID: "bad", Every: "1h", Command: "missing"},
+					},
+				},
+			},
+		}
+		err := validateScheduledCommands(cfg, registry)
+		if err == nil {
+			t.Fatal("expected error for unsupported scheduled command")
+		}
+		if !strings.Contains(err.Error(), `unsupported command "missing"`) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestRunJobInspect(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configYAML := `
+service:
+  name: test-gw
+state:
+  path: ` + dbPath + `
+plugin_roots:
+  - ./plugins
+plugins: {}
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := queue.New(db)
+	jobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	t.Run("inspect human output", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runInspect([]string{"--config", configPath, jobID})
+		})
+		if code != 0 {
+			t.Fatalf("runInspect() code = %d, stderr: %s", code, stderr)
+		}
+		if !strings.Contains(stdout, "Lineage Report") || !strings.Contains(stdout, jobID) {
+			t.Fatalf("stdout missing report headers or job ID: %s", stdout)
+		}
+	})
+
+	t.Run("inspect json output", func(t *testing.T) {
+		code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+			return runInspect([]string{"--config", configPath, jobID, "--json"})
+		})
+		if code != 0 {
+			t.Fatalf("runInspect() code = %d, stderr: %s", code, stderr)
+		}
+		var report struct {
+			JobID string `json:"job_id"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+			t.Fatalf("failed to parse JSON report: %v\noutput=%s", err, stdout)
+		}
+		if report.JobID != jobID {
+			t.Fatalf("job_id mismatch: got %s, want %s", report.JobID, jobID)
+		}
+	})
+}
+
+func TestResolveConfigDirFromFilePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("service: {}\nstate: {path: ./state.db}\nplugins: {}\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	resolved := resolveConfigDir(configPath)
+	if resolved != tmpDir {
+		t.Fatalf("resolveConfigDir(file) = %q, want %q", resolved, tmpDir)
+	}
+}
+
+func TestResolveConfigDirFromDirectoryPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	resolved := resolveConfigDir(tmpDir)
+	if resolved != tmpDir {
+		t.Fatalf("resolveConfigDir(dir) = %q, want %q", resolved, tmpDir)
 	}
 }

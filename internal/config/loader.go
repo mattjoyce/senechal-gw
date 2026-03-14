@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"maps"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/scheduleexpr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,7 +27,7 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to resolve config path %q: %w", configPath, err)
 	}
 
-	// Check if path is directory (legacy multi-file discovery) or file
+	// Check if path is directory and resolve config.yaml
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("config file not found: %s\n"+
@@ -33,17 +35,6 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	if info.IsDir() {
-		// Check if this is a CONFIG_SPEC directory (has config.yaml + indicators)
-		if IsConfigSpecDir(absPath) {
-			cfg, warnings, err := LoadDir(absPath)
-			if err != nil {
-				return nil, err
-			}
-			// Log warnings (caller can inspect cfg for details)
-			_ = warnings
-			return cfg, nil
-		}
-		// Fallback: directory provided - look for config.yaml inside
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
@@ -58,6 +49,7 @@ func Load(configPath string) (*Config, error) {
 	cfg.SourceFiles = make(map[string]*yaml.Node)
 
 	// Add root node to SourceFiles (manually since loadConfigFile returns a partial Config)
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	rootData, _ := os.ReadFile(absPath)
 	var rootNode yaml.Node
 	if err := yaml.Unmarshal(rootData, &rootNode); err == nil {
@@ -79,6 +71,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Apply config defaults before validation
 	cfg = applyConfigDefaults(cfg)
+	resolveStatePath(cfg, filepath.Dir(absPath))
 
 	// Hash-verify scope files (tokens.yaml, webhooks.yaml)
 	if err := verifyScopeFilesRecursively(includedPaths); err != nil {
@@ -105,7 +98,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Apply plugin defaults
 	for name, pluginConf := range cfg.Plugins {
-		merged := mergePluginDefaults(pluginConf)
+		merged := mergePluginDefaults(pluginConf, cfg.Service.MaxWorkers)
 		cfg.Plugins[name] = merged
 	}
 
@@ -113,10 +106,11 @@ func Load(configPath string) (*Config, error) {
 }
 
 // DiscoverConfigDir finds the config directory by checking standard locations.
-// Priority order: --config-dir flag, $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile, ./config.yaml (legacy)
+// Priority order: --config-dir flag, $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile.
 func DiscoverConfigDir() (string, error) {
 	// 1. Check environment variable
 	if dir := os.Getenv("DUCTILE_CONFIG_DIR"); dir != "" {
+		// #nosec G703 -- config dir is operator-controlled (local operator input).
 		if _, err := os.Stat(dir); err == nil {
 			return dir, nil
 		}
@@ -136,13 +130,7 @@ func DiscoverConfigDir() (string, error) {
 		return systemConfigDir, nil
 	}
 
-	// 4. Fallback to legacy single-file config in current directory
-	legacyConfigPath := "./config.yaml"
-	if _, err := os.Stat(legacyConfigPath); err == nil {
-		return legacyConfigPath, nil
-	}
-
-	return "", fmt.Errorf("no config found (checked: $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile, ./config.yaml)")
+	return "", fmt.Errorf("no config found (checked: $DUCTILE_CONFIG_DIR, ~/.config/ductile, /etc/ductile)")
 }
 
 // DiscoverScopeDirs returns config directories that need .checksums updates.
@@ -162,10 +150,6 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 	}
 
 	if info.IsDir() {
-		// Directory mode: return the single root directory
-		if IsConfigSpecDir(absPath) {
-			return []string{absPath}, nil
-		}
 		absPath = filepath.Join(absPath, "config.yaml")
 		if _, err := os.Stat(absPath); err != nil {
 			return nil, fmt.Errorf("directory provided but config.yaml not found: %s", absPath)
@@ -228,13 +212,8 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 			return fmt.Errorf("include[%d]: failed to resolve path %q: %w", i, includePath, err)
 		}
 
-		// Check for cycles
-		if visited[absPath] {
-			return fmt.Errorf("include[%d]: circular dependency detected: %s", i, absPath)
-		}
-
-		// Check if file exists - HARD FAIL with good UX
-		if _, err := os.Stat(absPath); err != nil {
+		info, err := os.Stat(absPath)
+		if err != nil {
 			if os.IsNotExist(err) {
 				return fmt.Errorf("include[%d]: file not found: %s\n"+
 					"Referenced from: %s\n"+
@@ -243,43 +222,156 @@ func loadIncludes(cfg *Config, includes []string, baseDir string, visited map[st
 			return fmt.Errorf("include[%d]: failed to access file %s: %w", i, absPath, err)
 		}
 
-		visited[absPath] = true
-
-		// Load included file
-		includedData, _ := os.ReadFile(absPath)
-		var includedNode yaml.Node
-		if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
-			cfg.SourceFiles[absPath] = &includedNode
-		}
-
-		includedCfg, err := loadConfigFile(absPath, visited)
-		if err != nil {
-			return fmt.Errorf("include[%d] (%s): %w", i, includePath, err)
-		}
-
-		// Deep merge included config into main config
-		if err := deepMergeConfig(cfg, includedCfg); err != nil {
-			return fmt.Errorf("include[%d] (%s): merge failed: %w", i, includePath, err)
-		}
-
-		// If included file has its own includes, recursively load them
-		if len(includedCfg.Include) > 0 {
-			includedBaseDir := filepath.Dir(absPath)
-			if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
-				return err
+		if info.IsDir() {
+			files, err := walkDirWithExt(absPath, ".yaml")
+			if err != nil {
+				return fmt.Errorf("include[%d] (%s): failed to read directory: %w", i, includePath, err)
 			}
+			for _, file := range files {
+				if err := loadIncludeFile(cfg, i, includePath, file, visited); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		if err := loadIncludeFile(cfg, i, includePath, absPath, visited); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
+func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath string, visited map[string]bool) error {
+	if visited[absPath] {
+		return fmt.Errorf("include[%d]: circular dependency detected: %s", includeIndex, absPath)
+	}
+	visited[absPath] = true
+
+	// Load included file
+	// #nosec G304 -- config include paths are operator-controlled local inputs.
+	includedData, _ := os.ReadFile(absPath)
+	var includedNode yaml.Node
+	if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
+		cfg.SourceFiles[absPath] = &includedNode
+	}
+
+	includedCfg, err := loadConfigFile(absPath, visited)
+	if err != nil {
+		return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
+	}
+
+	// Special handling for scope files with non-YAML-serialisable fields
+	if filepath.Base(absPath) == "tokens.yaml" {
+		if err := graftTokens(cfg, absPath); err != nil {
+			return fmt.Errorf("include[%d] (%s): %w", includeIndex, includePath, err)
+		}
+	}
+
+	// Deep merge included config into main config
+	if err := deepMergeConfig(cfg, includedCfg); err != nil {
+		return fmt.Errorf("include[%d] (%s): merge failed: %w", includeIndex, includePath, err)
+	}
+
+	// If included file has its own includes, recursively load them
+	if len(includedCfg.Include) > 0 {
+		includedBaseDir := filepath.Dir(absPath)
+		if err := loadIncludes(cfg, includedCfg.Include, includedBaseDir, visited); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func loadEnvIncludes(path string, data []byte) error {
+	var envCfg struct {
+		EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars"`
+	}
+	if err := yaml.Unmarshal(data, &envCfg); err != nil {
+		return fmt.Errorf("failed to parse environment_vars from %s: %w", path, err)
+	}
+	if len(envCfg.EnvironmentVars.Include) == 0 {
+		return nil
+	}
+
+	baseDir := filepath.Dir(path)
+	for i, includePath := range envCfg.EnvironmentVars.Include {
+		resolved := interpolateEnv(includePath)
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(baseDir, resolved)
+		}
+		absPath, err := filepath.Abs(resolved)
+		if err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: failed to resolve path %q: %w", i, includePath, err)
+		}
+		if _, err := os.Stat(absPath); err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: file not found: %s", i, absPath)
+		}
+		if err := loadEnvFile(absPath); err != nil {
+			return fmt.Errorf("environment_vars.include[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func loadEnvFile(path string) error {
+	// #nosec G304 -- env include paths are operator-controlled local inputs.
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open env file %s: %w", path, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	scanner := bufio.NewScanner(file)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("invalid env line %d in %s", lineNo, path)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" {
+			return fmt.Errorf("invalid env line %d in %s", lineNo, path)
+		}
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+		if _, exists := os.LookupEnv(key); !exists {
+			if err := os.Setenv(key, value); err != nil {
+				return fmt.Errorf("failed to set env %s from %s: %w", key, path, err)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read env file %s: %w", path, err)
+	}
+	return nil
+}
+
 // loadConfigFile loads and parses a single config file.
 // visited is used for cycle detection when loading includes (nil for top-level).
 func loadConfigFile(path string, visited map[string]bool) (*Config, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	if err := loadEnvIncludes(path, data); err != nil {
+		return nil, err
 	}
 
 	// Apply environment variable interpolation
@@ -328,17 +420,11 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.API.Listen != "" {
 		dst.API.Listen = src.API.Listen
 	}
-	if src.API.Auth.APIKey != "" {
-		dst.API.Auth.APIKey = src.API.Auth.APIKey
-	}
 	if len(src.API.Auth.Tokens) > 0 {
 		dst.API.Auth.Tokens = append(dst.API.Auth.Tokens, src.API.Auth.Tokens...)
 	}
 
-	// Merge plugins_dir
-	if src.PluginsDir != "" {
-		dst.PluginsDir = src.PluginsDir
-	}
+	// Merge plugin_roots
 	if len(src.PluginRoots) > 0 {
 		dst.PluginRoots = append(dst.PluginRoots, src.PluginRoots...)
 	}
@@ -391,23 +477,22 @@ func verifyScopeFilesRecursively(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("checksum verification failed in %s: %w\n"+
 				"Scope files (tokens.yaml, webhooks.yaml) require hash verification.\n"+
-				"Run: ductile config hash-update --config-dir %s", dir, err, dir)
+				"Run: ductile config lock --config-dir %s", dir, err, dir)
 		}
 
 		// Verify each scope file in this directory
 		for _, path := range files {
-			// LoadChecksums migrates v1 keys to absolute paths, so look up by absolute path
 			absPath, _ := filepath.Abs(path)
 			expectedHash, ok := checksums.Hashes[absPath]
 			if !ok {
 				return fmt.Errorf("scope file %s has no hash in checksums at %s\n"+
-					"Run: ductile config hash-update --config-dir %s", filepath.Base(path), dir, dir)
+					"Run: ductile config lock --config-dir %s", filepath.Base(path), dir, dir)
 			}
 
 			if err := VerifyFileHash(path, expectedHash); err != nil {
 				return fmt.Errorf("scope file verification failed for %s: %w\n"+
 					"This indicates tampering or unauthorized modification.\n"+
-					"If you edited this file intentionally, run: ductile config hash-update --config-dir %s", path, err, dir)
+					"If you edited this file intentionally, run: ductile config lock --config-dir %s", path, err, dir)
 			}
 		}
 	}
@@ -416,12 +501,12 @@ func verifyScopeFilesRecursively(paths []string) error {
 }
 
 // extractTokensFromConfig extracts token definitions from config for cross-validation.
-// In include-based mode, tokens are defined inline in config (not separate file).
 func extractTokensFromConfig(cfg *Config) map[string]string {
-	// In the include approach, tokens would be merged into the config
-	// For now, return empty map - tokens validation will be updated separately
-	// when we determine how tokens are structured in this approach
-	return make(map[string]string)
+	m := make(map[string]string, len(cfg.Tokens))
+	for _, t := range cfg.Tokens {
+		m[t.Name] = t.Key
+	}
+	return m
 }
 
 // applyConfigDefaults merges default values into config where not explicitly set.
@@ -447,6 +532,9 @@ func applyConfigDefaults(cfg *Config) *Config {
 	if cfg.Service.JobLogRetention == 0 {
 		cfg.Service.JobLogRetention = defaults.Service.JobLogRetention
 	}
+	if cfg.Service.MaxWorkers == 0 {
+		cfg.Service.MaxWorkers = defaults.Service.MaxWorkers
+	}
 
 	// Handle database alias
 	if cfg.State.Path == "" && cfg.Database.Path != "" {
@@ -469,12 +557,23 @@ func applyConfigDefaults(cfg *Config) *Config {
 		cfg.API.MaxSyncTimeout = 5 * time.Minute
 	}
 
-	// Apply plugins_dir default if not set
-	if cfg.PluginsDir == "" {
-		cfg.PluginsDir = defaults.PluginsDir
-	}
-
 	return cfg
+}
+
+func resolveStatePath(cfg *Config, baseDir string) {
+	if cfg == nil {
+		return
+	}
+	if strings.TrimSpace(baseDir) == "" {
+		return
+	}
+	if cfg.State.Path == "" {
+		return
+	}
+	if filepath.IsAbs(cfg.State.Path) {
+		return
+	}
+	cfg.State.Path = filepath.Clean(filepath.Join(baseDir, cfg.State.Path))
 }
 
 // interpolateEnv replaces ${VAR} with environment variable values.
@@ -500,6 +599,9 @@ func validate(cfg *Config) error {
 	if cfg.Service.TickInterval <= 0 {
 		return fmt.Errorf("service.tick_interval must be positive")
 	}
+	if cfg.Service.MaxWorkers <= 0 {
+		return fmt.Errorf("service.max_workers must be positive")
+	}
 
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLogLevels[cfg.Service.LogLevel] {
@@ -513,18 +615,13 @@ func validate(cfg *Config) error {
 
 	// Plugin roots validation
 	if len(cfg.EffectivePluginRoots()) == 0 {
-		return fmt.Errorf("plugin_roots or plugins_dir is required")
+		return fmt.Errorf("plugin_roots is required")
 	}
 
 	// API auth validation
 	if cfg.API.Enabled {
-		// If tokens are configured, validate them. api_key remains supported for back-compat.
-		if envVarPattern.MatchString(cfg.API.Auth.APIKey) {
-			matches := envVarPattern.FindStringSubmatch(cfg.API.Auth.APIKey)
-			if len(matches) > 1 {
-				return fmt.Errorf("api.auth.api_key: environment variable ${%s} is not set", matches[1])
-			}
-			return fmt.Errorf("api.auth.api_key: unresolved environment variable")
+		if len(cfg.API.Auth.Tokens) == 0 {
+			return fmt.Errorf("api.auth.tokens must be configured when API is enabled")
 		}
 		for i, tok := range cfg.API.Auth.Tokens {
 			if tok.Token == "" {
@@ -549,16 +646,34 @@ func validate(cfg *Config) error {
 			continue // Skip disabled plugins
 		}
 
-		// Validate schedule if present (plugins without a schedule are API-triggered only)
 		if plugin.Schedule != nil {
-			if plugin.Schedule.Every == "" {
-				return fmt.Errorf("plugin %q: schedule.every is required", name)
+			return fmt.Errorf("plugin %q: schedule is no longer supported; use schedules[]", name)
+		}
+
+		parallelism := plugin.Parallelism
+		if parallelism == 0 {
+			parallelism = DefaultPluginConf().Parallelism
+		}
+		if parallelism < 1 {
+			return fmt.Errorf("plugin %q: parallelism must be >= 1", name)
+		}
+		if parallelism > cfg.Service.MaxWorkers {
+			return fmt.Errorf("plugin %q: parallelism (%d) cannot exceed service.max_workers (%d)", name, parallelism, cfg.Service.MaxWorkers)
+		}
+
+		// Validate schedule entries if present (plugins without schedules are API-triggered only).
+		scheduleIDs := make(map[string]struct{}, len(plugin.Schedules))
+		for i, schedule := range plugin.NormalizedSchedules() {
+			sourcePath := fmt.Sprintf("schedules[%d]", i)
+			if err := validateScheduleConfig(name, sourcePath, schedule); err != nil {
+				return err
 			}
 
-			// Validate schedule.every with flexible parser.
-			if _, err := ParseInterval(plugin.Schedule.Every); err != nil {
-				return fmt.Errorf("plugin %q: %w", name, err)
+			id := strings.TrimSpace(schedule.ID)
+			if _, exists := scheduleIDs[id]; exists {
+				return fmt.Errorf("plugin %q: duplicate schedule id %q", name, id)
 			}
+			scheduleIDs[id] = struct{}{}
 		}
 
 		// Check for unresolved env vars in config (security: no secrets leaked in logs)
@@ -570,6 +685,174 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func validateScheduleConfig(pluginName, sourcePath string, schedule ScheduleConfig) error {
+	hasEvery := strings.TrimSpace(schedule.Every) != ""
+	hasCron := strings.TrimSpace(schedule.Cron) != ""
+	hasAt := strings.TrimSpace(schedule.At) != ""
+	hasAfter := schedule.After > 0
+
+	modeCount := 0
+	for _, mode := range []bool{hasEvery, hasCron, hasAt, hasAfter} {
+		if mode {
+			modeCount++
+		}
+	}
+	if modeCount == 0 {
+		return fmt.Errorf("plugin %q: %s requires one of every, cron, at, or after", pluginName, sourcePath)
+	}
+	if modeCount > 1 {
+		return fmt.Errorf("plugin %q: %s must set exactly one of every, cron, at, or after", pluginName, sourcePath)
+	}
+
+	if hasEvery {
+		// Validate schedule.every with flexible parser.
+		if _, err := ParseInterval(schedule.Every); err != nil {
+			return fmt.Errorf("plugin %q: %w", pluginName, err)
+		}
+	}
+	if hasCron {
+		if _, err := scheduleexpr.ParseCron(schedule.Cron); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.cron: %w", pluginName, sourcePath, err)
+		}
+	}
+	if hasAt {
+		if _, err := time.Parse(time.RFC3339, schedule.At); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.at %q: expected RFC3339 timestamp", pluginName, sourcePath, schedule.At)
+		}
+	}
+	if schedule.After < 0 {
+		return fmt.Errorf("plugin %q: invalid %s.after %q: duration must be positive", pluginName, sourcePath, schedule.After)
+	}
+	if catchUp := strings.TrimSpace(schedule.CatchUp); catchUp != "" {
+		switch catchUp {
+		case "skip", "run_once", "run_all":
+			// valid
+		default:
+			return fmt.Errorf("plugin %q: invalid %s.catch_up %q: expected skip, run_once, or run_all", pluginName, sourcePath, schedule.CatchUp)
+		}
+		if !hasEvery && catchUp != "skip" {
+			return fmt.Errorf("plugin %q: %s.catch_up %q is only supported for every schedules", pluginName, sourcePath, catchUp)
+		}
+	}
+	if ifRunning := strings.TrimSpace(schedule.IfRunning); ifRunning != "" {
+		switch ifRunning {
+		case "skip", "queue", "cancel":
+			// valid
+		default:
+			return fmt.Errorf("plugin %q: invalid %s.if_running %q: expected skip, queue, or cancel", pluginName, sourcePath, schedule.IfRunning)
+		}
+	}
+	if err := validateScheduleConstraints(pluginName, sourcePath, schedule); err != nil {
+		return err
+	}
+
+	command := strings.TrimSpace(schedule.Command)
+	if command == "" {
+		command = "poll"
+	}
+	if command == "handle" {
+		return fmt.Errorf("plugin %q: %s.command %q cannot be scheduled", pluginName, sourcePath, command)
+	}
+
+	return nil
+}
+
+func validateScheduleConstraints(pluginName, sourcePath string, schedule ScheduleConfig) error {
+	if tz := strings.TrimSpace(schedule.Timezone); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.timezone %q: %w", pluginName, sourcePath, schedule.Timezone, err)
+		}
+	}
+
+	if window := strings.TrimSpace(schedule.OnlyBetween); window != "" {
+		parts := strings.Split(window, "-")
+		if len(parts) != 2 {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: expected HH:MM-HH:MM", pluginName, sourcePath, schedule.OnlyBetween)
+		}
+		startMin, err := parseClockMinute(parts[0])
+		if err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: %w", pluginName, sourcePath, schedule.OnlyBetween, err)
+		}
+		endMin, err := parseClockMinute(parts[1])
+		if err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: %w", pluginName, sourcePath, schedule.OnlyBetween, err)
+		}
+		if startMin == endMin {
+			return fmt.Errorf("plugin %q: invalid %s.only_between %q: start and end cannot be equal", pluginName, sourcePath, schedule.OnlyBetween)
+		}
+	}
+
+	for i, token := range schedule.NotOn {
+		if _, err := parseWeekdayToken(token); err != nil {
+			return fmt.Errorf("plugin %q: invalid %s.not_on[%d]: %w", pluginName, sourcePath, i, err)
+		}
+	}
+
+	return nil
+}
+
+func parseClockMinute(raw string) (int, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return 0, fmt.Errorf("empty time")
+	}
+	parsed, err := time.Parse("15:04", s)
+	if err != nil {
+		return 0, fmt.Errorf("expected HH:MM")
+	}
+	return parsed.Hour()*60 + parsed.Minute(), nil
+}
+
+func parseWeekdayToken(token any) (time.Weekday, error) {
+	switch v := token.(type) {
+	case int:
+		return parseWeekdayInt(v)
+	case int64:
+		return parseWeekdayInt(int(v))
+	case float64:
+		if v != float64(int(v)) {
+			return 0, fmt.Errorf("weekday number must be an integer: %v", v)
+		}
+		return parseWeekdayInt(int(v))
+	case string:
+		return parseWeekdayString(v)
+	default:
+		return 0, fmt.Errorf("unsupported type %T (expected weekday name or integer)", token)
+	}
+}
+
+func parseWeekdayInt(v int) (time.Weekday, error) {
+	if v == 7 {
+		return time.Sunday, nil
+	}
+	if v < 0 || v > 6 {
+		return 0, fmt.Errorf("weekday number %d out of range [0,6] or 7 for sunday", v)
+	}
+	return time.Weekday(v), nil
+}
+
+func parseWeekdayString(raw string) (time.Weekday, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "sun", "sunday":
+		return time.Sunday, nil
+	case "mon", "monday":
+		return time.Monday, nil
+	case "tue", "tues", "tuesday":
+		return time.Tuesday, nil
+	case "wed", "wednesday":
+		return time.Wednesday, nil
+	case "thu", "thurs", "thursday":
+		return time.Thursday, nil
+	case "fri", "friday":
+		return time.Friday, nil
+	case "sat", "saturday":
+		return time.Saturday, nil
+	default:
+		return 0, fmt.Errorf("unknown weekday %q", raw)
+	}
 }
 
 // checkUnresolvedEnvVars recursively checks for ${VAR} placeholders in config values.
@@ -595,7 +878,8 @@ func checkUnresolvedEnvVars(data map[string]any, pluginName string) error {
 }
 
 // mergePluginDefaults applies default values to plugin config where not specified.
-func mergePluginDefaults(plugin PluginConf) PluginConf {
+// maxWorkers is the resolved service.max_workers value, used as the default parallelism.
+func mergePluginDefaults(plugin PluginConf, maxWorkers int) PluginConf {
 	defaults := DefaultPluginConf()
 
 	if plugin.Retry == nil {
@@ -612,6 +896,9 @@ func mergePluginDefaults(plugin PluginConf) PluginConf {
 
 	if plugin.MaxOutstandingPolls == 0 {
 		plugin.MaxOutstandingPolls = defaults.MaxOutstandingPolls
+	}
+	if plugin.Parallelism == 0 {
+		plugin.Parallelism = maxWorkers
 	}
 
 	return plugin

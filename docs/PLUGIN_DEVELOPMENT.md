@@ -37,6 +37,7 @@ When a job is triggered (via scheduler, API, or webhook):
 ```json
 {
   "status": "ok | error",
+  "result": "short human-readable summary",
   "error": "message",
   "retry": true,
   "events": [],
@@ -44,6 +45,7 @@ When a job is triggered (via scheduler, API, or webhook):
   "logs": []
 }
 ```
+-   `result`: **Required for `status: ok`**. A short human-readable summary of what the plugin did.
 -   `state_updates`: Top-level keys here are shallow-merged into the plugin's persistent state.
 -   `events`: An array of `{ "type": "...", "payload": {} }` to trigger downstream pipelines.
 
@@ -70,6 +72,7 @@ echo "$MESSAGE" > "$WORKSPACE/output.txt"
 cat <<EOF
 {
   "status": "ok",
+  "result": "Command $COMMAND executed successfully",
   "logs": [{"level": "info", "message": "Command $COMMAND executed successfully"}]
 }
 EOF
@@ -79,11 +82,12 @@ EOF
 
 ## 4. Python Example
 
-Python plugins should use **uv** (installed in the ductile runtime image) with [PEP 723 inline script metadata](https://peps.python.org/pep-0723/). Declare dependencies at the top of the script — no `requirements.txt` or separate venv management needed.
+Python plugins should use **uv** (installed in the ductile runtime image) with [PEP 723 inline script metadata](https://peps.python.org/pep-0723/). Declare dependencies at the top of the script.
 
-The manifest entrypoint stays as `run.py`; ductile invokes it via `uv run run.py`.
+Important runtime detail: Ductile executes the manifest `entrypoint` directly. It does not wrap Python entrypoints with `uv` automatically. Use a uv shebang (or wrapper script) in the entrypoint.
 
 ```python
+#!/usr/bin/env -S uv run --script
 # /// script
 # dependencies = [
 #   "requests>=2.31",
@@ -106,6 +110,7 @@ def main():
     # Build response
     resp = {
         "status": "ok",
+        "result": "Python plugin active",
         "state_updates": {"last_seen": "now"},
         "logs": [{"level": "info", "message": "Python plugin active"}]
     }
@@ -121,12 +126,13 @@ if __name__ == "__main__":
 ```
 plugins/my-plugin/
 ├── manifest.yaml    # entrypoint: run.py
-└── run.py           # inline deps via PEP 723 header
+└── run.py           # executable + PEP 723 inline deps
 ```
 
-> If your plugin has no third-party dependencies, the `# /// script` block can be omitted and `run.py` is invoked directly. uv falls back gracefully.
-
-> **Legacy plugins** (fabric, file_handler, jina-reader, youtube_transcript) still use `requirements.txt` — see kanban #116 for the uplift backlog.
+Ensure the entrypoint is executable:
+```bash
+chmod +x plugins/my-plugin/run.py
+```
 
 ---
 
@@ -182,11 +188,21 @@ for field in ["pattern", "prompt", "model", "output_dir", "output_path", "filena
 
 Simply emit your event with standard fields (`text`, `result`, `source_url`, `source_type`) and the dispatcher handles propagation.
 
+### Baggage (Context) Fallback
+
+Every event payload is shallow-merged into the persistent **context** ledger. Downstream plugins receive this accumulated baggage in `request.context`. If a field may be produced by an upstream step, prefer:
+
+1. Read from `event.payload` (step-specific input).
+2. Fall back to `request.context` for accumulated values.
+
+This makes pipelines resilient when intermediate plugins emit narrower payloads.
+
 ### Example Event Payload
 
 ```python
 return {
     "status": "ok",
+    "result": "Scraped https://example.com",
     "events": [{
         "type": "jina_reader.scraped",
         "payload": {
@@ -214,6 +230,7 @@ version: 0.1.0
 protocol: 2
 entrypoint: run.sh
 description: "A demonstration plugin that echoes input." # Used by LLM operators
+concurrency_safe: true # Optional; default true. Set false for functional-state plugins.
 commands:
   - name: poll
     type: write
@@ -231,6 +248,7 @@ commands:
 - `manifest_spec`: Required manifest schema identifier. Current supported value: `ductile.plugin`.
 - `manifest_version`: Required manifest schema version. Current supported value: `1`.
 - `description`: A human-readable (and LLM-readable) summary of what the plugin or command does.
+- `concurrency_safe`: Optional boolean concurrency hint. Default is `true`. Set `false` for plugins whose correctness depends on serialized execution (e.g. functional state snapshots). Runtime behavior: `false` plugins run serial by default unless operator explicitly overrides `plugins.<name>.parallelism > 1` in config.
 - `type`: `read` (no side effects) or `write` (mutates state or external systems). This determines the token scope required to invoke it.
 - `input_schema` / `output_schema`: (Optional) JSON Schema describing the command's expected payload and result.
 
@@ -259,7 +277,47 @@ If you need more control (descriptions, constraints), you can provide a full JSO
 
 ---
 
-## 7. Security & Isolation
+## 7. Built-in Plugin: `if` Classifier
+
+The `if` plugin is a general-purpose field classifier. It evaluates an ordered list of checks against a payload field and emits the **first** matching event type with the payload unchanged.
+
+### Config (per instance)
+
+```yaml
+plugins:
+  check_youtube:
+    enabled: true
+    config:
+      field: text
+      checks:
+        - contains: "youtu.be"
+          emit: youtube.url.detected
+        - contains: "youtube.com"
+          emit: youtube.url.detected
+        - startswith: "http"
+          emit: web.url.detected
+        - default: text.received
+```
+
+### Supported checks (v1)
+
+- `contains`, `startswith`, `endswith`, `equals` (case-insensitive)
+- `regex` (Python `re.fullmatch` against the field value)
+- `default` (always matches if reached)
+
+### Semantics
+
+- Checks are evaluated in order; first match wins.
+- Missing fields are treated as empty strings.
+- No match + no default → `status: error` with `retry: false`.
+
+### Instance naming
+
+Ductile currently uses manifest names as plugin names. To create multiple instances, copy the plugin directory and give each manifest a unique `name` (for example `check_youtube`).
+
+---
+
+## 8. Security & Isolation
 
 -   **Allowed Paths:** Plugins should only read/write within their provided `workspace_dir` or explicitly configured paths.
 -   **Execution:** Plugins run as the same OS user as the gateway. Use filesystem permissions to limit their scope.

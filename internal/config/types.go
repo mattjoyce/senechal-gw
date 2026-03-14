@@ -1,6 +1,7 @@
 package config
 
 import (
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -10,20 +11,25 @@ import (
 
 // Config represents the complete ductile configuration.
 type Config struct {
-	Include     []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
-	Service     ServiceConfig         `yaml:"service"`
-	State       StateConfig           `yaml:"state"`
-	Database    StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
-	API         APIConfig             `yaml:"api,omitempty"`
-	PluginsDir  string                `yaml:"plugins_dir"`
-	PluginRoots []string              `yaml:"plugin_roots,omitempty"`
-	Plugins     map[string]PluginConf `yaml:"plugins"`
-	Routes      []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
-	Webhooks    *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
-	SourceFiles map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
-	Tokens      []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
-	Pipelines   []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
-	ConfigDir   string                `yaml:"-"`                  // Directory mode: root config directory
+	Include         []string              `yaml:"include,omitempty"` // Multi-file mode: files to merge
+	EnvironmentVars EnvironmentVarsConfig `yaml:"environment_vars,omitempty"`
+	Service         ServiceConfig         `yaml:"service"`
+	State           StateConfig           `yaml:"state"`
+	Database        StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
+	API             APIConfig             `yaml:"api,omitempty"`
+	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
+	Plugins         map[string]PluginConf `yaml:"plugins"`
+	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
+	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
+	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
+	Tokens          []TokenEntry          `yaml:"-"`                  // Directory mode: token entries from tokens.yaml
+	Pipelines       []PipelineEntry       `yaml:"-"`                  // Directory mode: pipeline entries
+	ConfigDir       string                `yaml:"-"`                  // Directory mode: root config directory
+}
+
+// EnvironmentVarsConfig defines env file includes for interpolation.
+type EnvironmentVarsConfig struct {
+	Include []string `yaml:"include,omitempty"`
 }
 
 // ServiceConfig defines core service settings.
@@ -34,7 +40,9 @@ type ServiceConfig struct {
 	LogFormat       string        `yaml:"log_format"`
 	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
 	JobLogRetention time.Duration `yaml:"job_log_retention"`
+	MaxWorkers      int           `yaml:"max_workers,omitempty"`
 	StrictMode      bool          `yaml:"strict_mode"`
+	AllowSymlinks   bool          `yaml:"allow_symlinks"`
 }
 
 // StateConfig defines state storage settings.
@@ -53,9 +61,6 @@ type APIConfig struct {
 
 // APIAuthConfig defines API authentication settings.
 type APIAuthConfig struct {
-	// APIKey is the legacy single bearer token (admin/full access).
-	// Prefer Tokens for scoped access.
-	APIKey string     `yaml:"api_key"`
 	Tokens []APIToken `yaml:"tokens,omitempty"`
 }
 
@@ -68,19 +73,81 @@ type APIToken struct {
 // PluginConf defines configuration for a single plugin.
 type PluginConf struct {
 	Enabled             bool                  `yaml:"enabled"`
-	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"`
+	Uses                string                `yaml:"uses,omitempty"`
+	Schedule            *ScheduleConfig       `yaml:"schedule,omitempty"` // Deprecated: use schedules.
+	Schedules           []ScheduleConfig      `yaml:"schedules,omitempty"`
 	Config              map[string]any        `yaml:"config,omitempty"`
 	Retry               *RetryConfig          `yaml:"retry,omitempty"`
 	Timeouts            *TimeoutsConfig       `yaml:"timeouts,omitempty"`
 	CircuitBreaker      *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty"`
 	MaxOutstandingPolls int                   `yaml:"max_outstanding_polls,omitempty"`
+	Parallelism         int                   `yaml:"parallelism,omitempty"`
 }
 
-// ScheduleConfig defines when a plugin should be polled.
+// ScheduleConfig defines when a plugin command should be scheduled.
 type ScheduleConfig struct {
-	Every           string           `yaml:"every"` // e.g., "5m", "hourly", "daily"
+	ID              string           `yaml:"id,omitempty"`
+	Every           string           `yaml:"every,omitempty"` // e.g., "5m", "hourly", "daily"
+	Cron            string           `yaml:"cron,omitempty"`  // standard 5-field cron expression
+	At              string           `yaml:"at,omitempty"`    // one-shot RFC3339 timestamp
+	After           time.Duration    `yaml:"after,omitempty"` // one-shot delay from service start
 	Jitter          time.Duration    `yaml:"jitter,omitempty"`
+	CatchUp         string           `yaml:"catch_up,omitempty"`         // skip|run_once|run_all (every schedules)
+	IfRunning       string           `yaml:"if_running,omitempty"`       // skip|queue|cancel
+	OnlyBetween     string           `yaml:"only_between,omitempty"`     // "HH:MM-HH:MM"
+	Timezone        string           `yaml:"timezone,omitempty"`         // IANA timezone name
+	NotOn           []any            `yaml:"not_on,omitempty"`           // weekday names (mon) or ints (0-6, 7=sun)
+	Command         string           `yaml:"command,omitempty"`          // default: "poll"
+	Payload         map[string]any   `yaml:"payload,omitempty"`          // default: {}
 	PreferredWindow *PreferredWindow `yaml:"preferred_window,omitempty"` // Not in MVP
+}
+
+// NormalizedSchedules returns the schedule list with defaults applied.
+func (p PluginConf) NormalizedSchedules() []ScheduleConfig {
+	if len(p.Schedules) == 0 {
+		return nil
+	}
+
+	out := make([]ScheduleConfig, 0, len(p.Schedules))
+	for _, s := range p.Schedules {
+		entry := s.copy()
+		if strings.TrimSpace(entry.ID) == "" {
+			entry.ID = "default"
+		}
+		entry.applyDefaults()
+		out = append(out, entry)
+	}
+	return out
+}
+
+// applyDefaults applies per-entry defaults in-place.
+func (s *ScheduleConfig) applyDefaults() {
+	if strings.TrimSpace(s.Command) == "" {
+		s.Command = "poll"
+	}
+	if strings.TrimSpace(s.CatchUp) == "" {
+		s.CatchUp = "skip"
+	}
+	if strings.TrimSpace(s.IfRunning) == "" {
+		s.IfRunning = "skip"
+	}
+	if s.Payload == nil {
+		s.Payload = map[string]any{}
+	}
+}
+
+func (s ScheduleConfig) copy() ScheduleConfig {
+	copied := s
+	if s.Payload != nil {
+		copied.Payload = make(map[string]any, len(s.Payload))
+		for k, v := range s.Payload {
+			copied.Payload[k] = v
+		}
+	}
+	if s.NotOn != nil {
+		copied.NotOn = append([]any(nil), s.NotOn...)
+	}
+	return copied
 }
 
 // PreferredWindow defines time-of-day constraints for scheduling.
@@ -127,8 +194,7 @@ type WebhookEndpoint struct {
 	Name            string `yaml:"name,omitempty"` // Directory mode: endpoint name
 	Path            string `yaml:"path"`
 	Plugin          string `yaml:"plugin"`
-	Secret          string `yaml:"secret,omitempty"`     // Legacy: direct secret (deprecated)
-	SecretRef       string `yaml:"secret_ref,omitempty"` // Preferred: reference to tokens.yaml
+	SecretRef       string `yaml:"secret_ref,omitempty"`
 	SignatureHeader string `yaml:"signature_header"`
 	MaxBodySize     string `yaml:"max_body_size"`
 }
@@ -171,8 +237,46 @@ type TokensFileConfig struct {
 }
 
 // WebhooksFileConfig wraps webhook endpoints for standalone webhooks.yaml.
+// It accepts the documented nested form:
+//
+//	webhooks:
+//	  endpoints: [...]
+//
+// and also preserves compatibility with the older flat form:
+//
+//	webhooks: [...]
 type WebhooksFileConfig struct {
-	Webhooks []WebhookEndpoint `yaml:"webhooks"`
+	Webhooks WebhookEndpoints `yaml:"webhooks"`
+}
+
+// WebhookEndpoints supports both nested and legacy flat standalone webhooks.yaml shapes.
+type WebhookEndpoints []WebhookEndpoint
+
+// UnmarshalYAML accepts either:
+//   - webhooks: [{...}]
+//   - webhooks: { endpoints: [{...}] }
+func (w *WebhookEndpoints) UnmarshalYAML(value *yaml.Node) error {
+	var flat []WebhookEndpoint
+	if err := value.Decode(&flat); err == nil {
+		*w = flat
+		return nil
+	}
+
+	var nested struct {
+		Endpoints []WebhookEndpoint `yaml:"endpoints"`
+	}
+	if err := value.Decode(&nested); err != nil {
+		return err
+	}
+	*w = nested.Endpoints
+	return nil
+}
+
+// MarshalYAML writes the documented nested standalone form.
+func (w WebhookEndpoints) MarshalYAML() (any, error) {
+	return struct {
+		Endpoints []WebhookEndpoint `yaml:"endpoints"`
+	}{Endpoints: []WebhookEndpoint(w)}, nil
 }
 
 // ExecutionMode defines how a pipeline should be triggered and its results returned.
@@ -302,6 +406,8 @@ func Defaults() *Config {
 			LogFormat:       "json",
 			DedupeTTL:       24 * time.Hour,
 			JobLogRetention: 30 * 24 * time.Hour,
+			MaxWorkers:      max(1, runtime.NumCPU()-1),
+			AllowSymlinks:   false,
 		},
 		State: StateConfig{
 			Path: "./data/state.db",
@@ -309,24 +415,15 @@ func Defaults() *Config {
 		API: APIConfig{
 			Enabled: false,
 			Listen:  "127.0.0.1:8080",
-			Auth: APIAuthConfig{
-				APIKey: "",
-			},
 		},
-		PluginsDir: "./plugins",
-		Plugins:    make(map[string]PluginConf),
+		Plugins: make(map[string]PluginConf),
 	}
 }
 
 // EffectivePluginRoots returns deduplicated plugin roots in priority order.
-// plugin_roots takes precedence over plugins_dir. Empty values are ignored.
 func (c *Config) EffectivePluginRoots() []string {
-	roots := make([]string, 0, len(c.PluginRoots)+1)
-	if len(c.PluginRoots) > 0 {
-		roots = append(roots, c.PluginRoots...)
-	} else if c.PluginsDir != "" {
-		roots = append(roots, c.PluginsDir)
-	}
+	roots := make([]string, 0, len(c.PluginRoots))
+	roots = append(roots, c.PluginRoots...)
 
 	seen := make(map[string]struct{}, len(roots))
 	out := make([]string, 0, len(roots))
@@ -363,5 +460,6 @@ func DefaultPluginConf() PluginConf {
 			ResetAfter: 30 * time.Minute,
 		},
 		MaxOutstandingPolls: 1,
+		Parallelism:         1,
 	}
 }

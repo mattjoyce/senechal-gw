@@ -8,6 +8,18 @@ Ductile is a lightweight, YAML-configured integration gateway written in Go. It 
 
 **Core Philosophy:** Simple enough to understand in an afternoon. Extensible enough to grow with new connectors. Plugins stay dumb; the core controls flow.
 
+## Claude Code Skill
+
+A pre-built Claude Code skill for operating ductile is included at `skills/ductile/`.
+
+**Install:**
+```bash
+cp -r skills/ductile/ ~/.claude/skills/ductile/
+```
+
+Once installed, Claude will automatically use it when working with ductile commands,
+config, pipelines, and the REST API.
+
 ## Architecture
 
 ### Central Abstractions
@@ -120,15 +132,14 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never in config 
 5. CLI & Ops (status/reload/reset, systemd unit)
 6. First Plugins (port Withings/Garmin from existing Ductile)
 
-## Multi-Agent Coordination
+## Workflow
 
-**See COORDINATION.md for complete guide** when working with multiple agents in parallel.
+See `CONTRIBUTING.md` for the full contributor workflow.
 
 **Quick Reference:**
-- **Branching:** Individual feature branches per component (`feature/config-loader`, `feature/state-queue`)
+- **Branching:** `<component>/card<id>-<short-description>`
 - **Commits:** `<component>: <action> <what>` (never attribute Claude/AI)
-- **Work Assignment:** 3-agent split defined in COORDINATION.md with dependency graph
-- **Merge Order:** Skeleton → Foundation (parallel) → Integration (collaborative)
+- **Rule:** One card → one branch → one PR → merge → next card
 
 ## Development Commands
 
@@ -168,10 +179,9 @@ go test ./...
 
 ## Kanban Workflow
 
-Tasks tracked in `kanban/*.md` with YAML frontmatter:
+Tasks tracked as cards in `~/kanban/ductile/cards/` with YAML frontmatter:
 - `id`, `status` (todo/doing/done), `priority`, `blocked_by`, `tags`
-- Sprint-1 cards focus on MVP core loop (see `kanban/sprint-1-mvp-core-loop.md`)
-- Epic cards: `sprint-1-mvp-core-loop`, `sprint-2-routing`, `sprint-3-webhooks-healthz`, `sprint-4-reliability-controls`
+- Use the `kanban-ai` skill to create, view, and manage cards
 
 ## Critical References
 

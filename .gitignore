@@ -43,6 +43,14 @@ go.work.sum
 # Claude Code local settings
 .claude/
 
+# Beads local database
+.beads/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Security scan reports
+gosec.json
+__pycache__/
+test-artifacts/

@@ -1,92 +1,129 @@
-# Ductile (ductile)
+# Ductile
 
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Ductile is an LLM Boundary Layer Affordance.**
+**The Glue for Your Homelab Automation.**
 
-It sits between model intent and real-world side effects, turning "do this" into safe, bounded, and observable execution.
+Ductile is a lightweight, polyglot integration engine that turns simple scripts into reliable, event-driven pipelines. It fills the gap between fragile cron jobs and heavy-duty automation platforms (n8n, Node-RED).
 
-In practical terms: Ductile is the control plane that gives an LLM useful affordances for operations without giving it unconstrained access to your systems.
+A single Go binary orchestrates connectors written in any language via a simple JSON protocol. No cluster, no managed services, no ops overhead—just your logic, unified.
 
 ---
 
-## What This Means
+## Grokking Ductile in 30 Seconds
 
-An LLM is good at intent and synthesis, but weak at execution safety.
-
-Ductile provides the missing layer:
-
-- **Bounded capability surface:** plugin manifests, command types, and scoped auth tokens.
-- **Safe execution semantics:** queued jobs, retries, backoff, poll guards, and circuit breakers.
-- **Governed routing:** explicit pipeline/event transitions instead of ad-hoc tool chaining.
-- **Operator controls:** dry-run paths, config integrity checks, and reset/diagnostic utilities.
-- **Auditability:** event context lineage, structured logs, job history, and real-time event streams.
-
-## What Ductile Is (and Is Not)
-
-- **Is:** a governed execution boundary for LLM and human operators.
-- **Is:** a reliability-first integration runtime with clear operational controls.
-- **Is not:** a general autonomous agent framework.
-- **Is not:** a direct "LLM-to-external-system" bypass.
-
-## Architecture (Mental Model)
+Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an internal **Event Bus**.
 
 ```text
-LLM/Human Intent
-      |
-      v
- Ductile Boundary Layer
-  - Auth + scopes
-  - Policy + routing
-  - Queue + retries + circuit breakers
-  - Event context + audit trail
-      |
-      v
-Polyglot Plugins -> External APIs/Systems
+[ Trigger ] --(event)--> [ Pipeline ] --(step 1)--> [ Connector A ]
+                                      --(step 2)--> [ Connector B ]
+                                      --(step 3)--> [ Connector C ]
 ```
 
-## Documentation Index
-
-We have reorganized our documentation into role-based manuals to improve clarity for both humans and LLM operators.
-
-### [Getting Started](docs/GETTING_STARTED.md)
-The absolute first stop. Installation, basic usage, and core CLI principles.
-
-### [Operator Guide](docs/OPERATOR_GUIDE.md)
-The manual for running the system. Monitoring (TUI), system maintenance, and API control.
-
-### [Plugin Development](docs/PLUGIN_DEVELOPMENT.md)
-A guide for developers building new capabilities (Skills) using Protocol v2.
-
-### [Architecture & Pipelines](docs/ARCHITECTURE.md)
-Deep dive into the engine, the Governance Hybrid model, and the Pipeline DSL.
-
-### [Configuration Reference](docs/CONFIG_REFERENCE.md)
-Strict technical specification for YAML structure and integrity verification.
+1.  **Connectors** do the work (fetch a URL, run a shell command, send a Discord message).
+2.  **Schedules** or **Webhooks** trigger the first event.
+3.  **Pipelines** react to events and chain connectors together, passing data (the "payload") between them.
+4.  **The Queue** ensures every step is retried on failure and tracked in real-time.
 
 ---
 
-## Key Features
+## Core Capabilities
 
-- **Polyglot Plugins:** Write logic in any language. If it can read `stdin` and write `stdout`, it's a plugin.
-- **Reliability First:** Crash recovery, retries with exponential backoff, and circuit breakers.
-- **Governance Hybrid:** Automatic metadata ("Baggage") accumulation and zero-copy workspace cloning.
-- **Security by Design:** BLAKE3-based integrity verification and scoped Bearer tokens.
-- **Real-Time Monitoring:** SSE event stream and a built-in "btop-style" TUI dashboard.
+-   **Polyglot Runtime** — Write connectors in Python, Bash, Node.js, Go, or Rust. If it reads `stdin` and writes `stdout` JSON, it works.
+-   **Event-Driven Pipelines** — Chain connectors into multi-step workflows. Pass data downstream with automatic metadata (baggage) propagation.
+-   **Smart Scheduling** — Support for `cron`, fuzzy intervals, and jitter to avoid thundering herds.
+-   **Secure Webhooks** — Inbound HMAC-verified endpoints for GitHub, Discord, or custom services.
+-   **Parallel Dispatch** — Bounded worker pool with per-plugin concurrency caps and "concurrency-safe" manifest hints.
+-   **Plugin Aliasing** — Run multiple instances of the same connector (e.g., three different Discord notifications) without duplicating code.
+-   **Resilient Queue** — SQLite-backed, at-least-once delivery. Automatically recovers and retries orphaned jobs after a system crash.
+-   **TUI "Overwatch"** — A beautiful terminal dashboard to monitor every job, retry, and event in real-time.
+-   **LLM-First Discovery** — Built-in `/skills` registry and auto-generated OpenAPI specs for seamless AI agent operation.
+-   **Local & Private** — Zero-ops, single-binary architecture. Your data, your keys, your hardware.
+
+---
+
+## What Can You Build?
+
+### 1. The "YouTube Wisdom" Pipeline
+Automatically fetch, transcribe, and AI-summarize new videos from a playlist, then save them to your blog and notify Discord.
+
+```yaml
+# Define the workflow in pipelines.yaml
+pipelines:
+  - name: playlist-to-knowledge-base
+    on: youtube.playlist_item
+    steps:
+      - uses: youtube_transcript   # Fetches raw transcript
+      - uses: fabric               # AI-summarizes via LLM (Fabric)
+      - uses: file_handler         # Saves markdown to your repo
+      - uses: discord_notify       # Pings you when it's done
+```
+
+### 2. The "Repo Sentinel"
+Monitor your GitHub repositories for new PRs, run a custom policy check (e.g., license or format), and notify your team of violations.
+
+```yaml
+pipelines:
+  - name: github-policy-guard
+    on: github.webhook.pull_request
+    steps:
+      - uses: repo_policy          # Custom script checking for README/License
+      - uses: discord_notify       # Alert if policy fails
+        if: payload.policy_failed == true
+```
+
+### 3. The "Astro Staging Rebuild"
+Watch a local folder for new markdown files (e.g., from an AI summary pipeline) and trigger a site rebuild only when changes are detected.
+
+```yaml
+plugins:
+  folder_watch:
+    schedules:
+      - every: 1m
+    config:
+      root: "./content/summaries"
+      event_type: summaries.updated
+
+pipelines:
+  - name: rebuild-on-update
+    on: summaries.updated
+    steps:
+      - uses: sys_exec
+        config:
+          command: "npm run build && docker restart astro-site"
+```
+
+---
 
 ## Quick Start
 
 ```bash
-# Build
+# 1. Build the binary
 go build -o ductile ./cmd/ductile
 
-# Start the gateway
+# 2. Start the gateway (uses ./config by default)
 ./ductile system start
 
-# Launch the monitor/watch UI (in another terminal)
-./ductile system monitor --api-key "your-token"
+# 3. Launch the TUI (in another terminal) to watch the magic
+./ductile system watch
 ```
 
+![Ductile system watch TUI](docs/Ductile-system-watch-screenshot.png)
+
+## Documentation
+
+-   [**Getting Started**](docs/GETTING_STARTED.md) — From zero to your first pipeline.
+-   [**Cookbook**](docs/COOKBOOK.md) — Real-world recipes (Discord, YouTube, Astro, etc.).
+-   [**10 Idioms of Ductile**](docs/10_IDIOMS_OF_DUCTILE.md) — How to think in Ductile.
+-   [**Core Architecture**](docs/ARCHITECTURE.md) — The technical deep dive.
+-   [**Database Reference**](docs/DATABASE.md) — Schemas and useful SQL queries.
+-   [**Plugin Development**](docs/PLUGIN_DEVELOPMENT.md) — Build your own connectors.
+
+---
+
 ## License
-MIT. See [LICENSE](LICENSE) for details. (Note: Project is in MVP stage).
+MIT. See [LICENSE](LICENSE) for details.
+
+## Changelog
+See [CHANGELOG.md](CHANGELOG.md).

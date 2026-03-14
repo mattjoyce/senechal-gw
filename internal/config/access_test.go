@@ -18,8 +18,8 @@ func TestGetPath(t *testing.T) {
 		Plugins: map[string]PluginConf{
 			"echo": {
 				Enabled: true,
-				Schedule: &ScheduleConfig{
-					Every: "5m",
+				Schedules: []ScheduleConfig{
+					{Every: "5m"},
 				},
 			},
 		},
@@ -40,11 +40,6 @@ func TestGetPath(t *testing.T) {
 			name: "nested plugin field",
 			path: "plugins.echo.enabled",
 			want: true,
-		},
-		{
-			name: "deep schedule field",
-			path: "plugins.echo.schedule.every",
-			want: "5m",
 		},
 		{
 			name:    "invalid path",
@@ -105,11 +100,14 @@ func TestSetPath(t *testing.T) {
 	initialYAML := `
 service:
   name: old-name
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - id: default
+        every: 5m
 `
 	err := os.WriteFile(configPath, []byte(initialYAML), 0644)
 	assert.NoError(t, err)
@@ -147,11 +145,14 @@ func TestSetPathRollbackOnValidationFailure(t *testing.T) {
 	initialYAML := `
 service:
   name: test-gw
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - id: default
+        every: 5m
 `
 	err := os.WriteFile(configPath, []byte(initialYAML), 0644)
 	assert.NoError(t, err)
@@ -161,7 +162,7 @@ plugins:
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	err = cfg.SetPath("plugins.echo.schedule.every", "", true)
+	err = cfg.SetPath("service.log_level", "invalid", true)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "validation failed")
 
@@ -170,5 +171,5 @@ plugins:
 	if err != nil {
 		t.Fatalf("Load reloaded failed: %v", err)
 	}
-	assert.Equal(t, "5m", reloaded.Plugins["echo"].Schedule.Every)
+	assert.Equal(t, "info", reloaded.Service.LogLevel)
 }

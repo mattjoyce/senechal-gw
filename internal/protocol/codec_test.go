@@ -98,11 +98,14 @@ func TestDecodeResponse(t *testing.T) {
 	}{
 		{
 			name:    "valid ok response",
-			input:   `{"status":"ok","state_updates":{"last_run":"2026-02-08"}}`,
+			input:   `{"status":"ok","result":"ran","state_updates":{"last_run":"2026-02-08"}}`,
 			wantErr: false,
 			checkFn: func(t *testing.T, resp *Response) {
 				if resp.Status != "ok" {
 					t.Errorf("want status=ok, got %s", resp.Status)
+				}
+				if resp.Result != "ran" {
+					t.Errorf("want result=ran, got %s", resp.Result)
 				}
 				if resp.StateUpdates["last_run"] != "2026-02-08" {
 					t.Error("state_updates not parsed correctly")
@@ -137,7 +140,7 @@ func TestDecodeResponse(t *testing.T) {
 		},
 		{
 			name:    "response with events",
-			input:   `{"status":"ok","events":[{"type":"data_ready","payload":{"value":42}}]}`,
+			input:   `{"status":"ok","result":"ok","events":[{"type":"data_ready","payload":{"value":42}}]}`,
 			wantErr: false,
 			checkFn: func(t *testing.T, resp *Response) {
 				if len(resp.Events) != 1 {
@@ -150,7 +153,7 @@ func TestDecodeResponse(t *testing.T) {
 		},
 		{
 			name:    "response with logs",
-			input:   `{"status":"ok","logs":[{"level":"info","message":"test log"}]}`,
+			input:   `{"status":"ok","result":"ok","logs":[{"level":"info","message":"test log"}]}`,
 			wantErr: false,
 			checkFn: func(t *testing.T, resp *Response) {
 				if len(resp.Logs) != 1 {
@@ -160,6 +163,11 @@ func TestDecodeResponse(t *testing.T) {
 					t.Error("log level not parsed")
 				}
 			},
+		},
+		{
+			name:    "ok response missing result",
+			input:   `{"status":"ok","logs":[]}`,
+			wantErr: true,
 		},
 		{
 			name:    "missing status field",
@@ -214,7 +222,7 @@ func TestDecodeResponseLenient(t *testing.T) {
 	}{
 		{
 			name:        "valid JSON response",
-			input:       `{"status":"ok"}`,
+			input:       `{"status":"ok","result":"ok"}`,
 			wantErr:     false,
 			wantRawData: true,
 		},

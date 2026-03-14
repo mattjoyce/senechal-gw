@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,7 +15,24 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/router"
 )
+
+// handleRoot handles GET / — unauthenticated discovery index for humans and agents.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, RootResponse{
+		Name:          "Ductile Gateway",
+		Description:   "Lightweight, open-source integration engine for the agentic era.",
+		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
+		Discovery: map[string]string{
+			"health":    "/healthz",
+			"skills":    "/skills",
+			"plugins":   "/plugins",
+			"openapi":   "/openapi.json",
+			"ai_plugin": "/.well-known/ai-plugin.json",
+		},
+	})
+}
 
 // handleHealthz handles GET /healthz (no auth).
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -33,11 +49,29 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		QueueDepth:         depth,
 		PluginsLoaded:      len(s.registry.All()),
 		PluginsCircuitOpen: 0,
+		ConfigPath:         strings.TrimSpace(s.config.ConfigPath),
+		BinaryPath:         strings.TrimSpace(s.config.BinaryPath),
+		Version:            strings.TrimSpace(s.config.Version),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleSystemReload(w http.ResponseWriter, r *http.Request) {
+	if s.reloadFunc == nil {
+		s.writeError(w, http.StatusNotImplemented, "reload not supported")
+		return
+	}
+
+	resp, err := s.reloadFunc(r.Context())
+	if err != nil {
+		s.writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // handlePipelineTrigger handles POST /pipeline/{pipeline}
@@ -188,7 +222,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Process results (Fixed consistency with handleTrigger)
+		// Process results for synchronous pipeline responses.
 		var tree []JobResultData
 		var rootResult json.RawMessage
 		finalStatus := string(queue.StatusSucceeded)
@@ -323,218 +357,6 @@ func (s *Server) handlePluginTrigger(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleTrigger handles POST /trigger/{plugin}/{command}
-// DEPRECATED: Use /plugin/{plugin}/{command} for direct execution or /pipeline/{name} for pipelines.
-func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("X-Ductile-Deprecation", "The /trigger endpoint is ambiguous and will be removed in a future version. Use /plugin or /pipeline instead.")
-	pluginName := chi.URLParam(r, "plugin")
-	commandName := chi.URLParam(r, "command")
-
-	// Validate plugin exists
-	plug, ok := s.registry.Get(pluginName)
-	if !ok {
-		s.writeError(w, http.StatusBadRequest, "plugin not found")
-		return
-	}
-
-	// Validate command is supported by plugin
-	if !plug.SupportsCommand(commandName) {
-		s.writeError(w, http.StatusBadRequest, "command not supported by plugin")
-		return
-	}
-
-	// Enforce token scopes. plugin:ro may only invoke read commands.
-	principal, _ := auth.PrincipalFromContext(r.Context())
-	cmdType, _ := plug.CommandTypeFor(commandName)
-	if cmdType == plugin.CommandTypeRead {
-		// already allowed by route middleware
-	} else {
-		if !auth.HasAnyScope(principal, "plugin:rw", "*") {
-			s.writeError(w, http.StatusForbidden, "insufficient scope")
-			return
-		}
-	}
-
-	// Parse request body (optional payload)
-	var req TriggerRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			s.writeError(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-	}
-
-	// For handle commands, wrap payload in Event envelope so the dispatcher
-	// can unmarshal it the same way as routed events.
-	enqueuePayload := req.Payload
-	if commandName == "handle" {
-		event := protocol.Event{
-			Type:    "api.trigger",
-			Payload: make(map[string]any),
-		}
-		if len(req.Payload) > 0 {
-			if err := json.Unmarshal(req.Payload, &event.Payload); err != nil {
-				s.writeError(w, http.StatusBadRequest, "payload must be a JSON object")
-				return
-			}
-		}
-		enqueuePayload, _ = json.Marshal(event)
-	}
-
-	triggerEvent := fmt.Sprintf("%s.%s", pluginName, commandName)
-	pipeline := s.router.GetPipelineByTrigger(triggerEvent)
-
-	var eventContextID *string
-	if pipeline != nil && s.contextStore != nil {
-		root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, pipeline.EntryStepID, json.RawMessage(`{}`))
-		if err != nil {
-			s.logger.Error(
-				"failed to create event context for trigger",
-				"pipeline", pipeline.Name,
-				"step_id", pipeline.EntryStepID,
-				"error", err,
-			)
-			s.writeError(w, http.StatusInternalServerError, "failed to create event context")
-			return
-		}
-		eventContextID = &root.ID
-	}
-
-	// Enqueue job
-	startTime := time.Now()
-	jobID, err := s.queue.Enqueue(r.Context(), queue.EnqueueRequest{
-		Plugin:         pluginName,
-		Command:        commandName,
-		Payload:        enqueuePayload,
-		SubmittedBy:    "api",
-		EventContextID: eventContextID,
-	})
-	if err != nil {
-		s.logger.Error("failed to enqueue job", "plugin", pluginName, "command", commandName, "error", err)
-		s.writeError(w, http.StatusInternalServerError, "failed to enqueue job")
-		return
-	}
-
-	s.events.Publish("job.enqueued", map[string]any{
-		"at":           time.Now().UTC().Format(time.RFC3339Nano),
-		"job_id":       jobID,
-		"plugin":       pluginName,
-		"command":      commandName,
-		"submitted_by": "api",
-	})
-
-	s.logger.Info("job enqueued via API", "job_id", jobID, "plugin", pluginName, "command", commandName)
-
-	// Allow query param override for async mode
-	forceAsync := r.URL.Query().Get("async") == "true"
-
-	if pipeline != nil && pipeline.ExecutionMode == "synchronous" && !forceAsync {
-		// Acquire semaphore to limit concurrent synchronous requests
-		select {
-		case s.syncSemaphore <- struct{}{}:
-			defer func() { <-s.syncSemaphore }()
-		default:
-			s.logger.Warn("too many concurrent synchronous requests", "job_id", jobID)
-			s.writeError(w, http.StatusServiceUnavailable, "too many concurrent synchronous requests, please try again later or use async mode")
-			return
-		}
-
-		// Enforce server-side maximum timeout
-		waitTimeout := pipeline.Timeout
-		if s.config.MaxSyncTimeout > 0 && waitTimeout > s.config.MaxSyncTimeout {
-			waitTimeout = s.config.MaxSyncTimeout
-		}
-
-		s.logger.Info("waiting for synchronous pipeline", "job_id", jobID, "pipeline", pipeline.Name, "timeout", waitTimeout)
-
-		results, err := s.waiter.WaitForJobTree(r.Context(), jobID, waitTimeout)
-		if err != nil {
-			// Check if it was a timeout
-			if err == context.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "timeout") {
-				respondJSON(w, http.StatusAccepted, TimeoutResponse{
-					JobID:           jobID,
-					Status:          "running",
-					TimeoutExceeded: true,
-					Message:         "Pipeline still running after timeout. Check /job/" + jobID,
-				})
-				return
-			}
-			s.logger.Error("failed to wait for job tree", "job_id", jobID, "error", err)
-			s.writeError(w, http.StatusInternalServerError, "failed to wait for job completion: "+err.Error())
-			return
-		}
-
-		// Success: Return aggregated results
-		duration := time.Since(startTime)
-
-		var tree []JobResultData
-		var rootResult json.RawMessage
-		finalStatus := string(queue.StatusSucceeded)
-
-		// Find terminal step result (if pipeline has terminal steps)
-		var terminalResult json.RawMessage
-		if pipeline != nil && len(pipeline.TerminalStepIDs) > 0 {
-			// Look for a job matching one of the terminal step IDs
-			for _, res := range results {
-				if slices.Contains(pipeline.TerminalStepIDs, res.StepID) {
-					terminalResult = res.Result
-				}
-				if terminalResult != nil {
-					break
-				}
-			}
-		}
-
-		for _, res := range results {
-			if res.JobID == jobID {
-				rootResult = res.Result
-			}
-			// If any job failed, the overall tree status is failed (for the purpose of the response)
-			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
-				finalStatus = string(res.Status)
-			}
-
-			tree = append(tree, JobResultData{
-				JobID:       res.JobID,
-				Plugin:      res.Plugin,
-				Command:     res.Command,
-				Status:      string(res.Status),
-				Result:      res.Result,
-				LastError:   res.LastError,
-				StartedAt:   res.StartedAt,
-				CompletedAt: res.CompletedAt,
-			})
-		}
-
-		// Use terminal step result if found, otherwise fallback to root job result
-		finalResult := terminalResult
-		if finalResult == nil {
-			finalResult = rootResult
-		}
-
-		respondJSON(w, http.StatusOK, SyncResponse{
-			JobID:      jobID,
-			Status:     finalStatus,
-			DurationMs: duration.Milliseconds(),
-			Result:     finalResult,
-			Tree:       tree,
-		})
-		return
-	}
-
-	// Default: Return success response immediately (async)
-	resp := TriggerResponse{
-		JobID:   jobID,
-		Status:  "queued",
-		Plugin:  pluginName,
-		Command: commandName,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(resp)
-}
-
 // handleGetJob handles GET /job/{jobID}
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	jobID := chi.URLParam(r, "jobID")
@@ -564,7 +386,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Error("failed to write job response", "error", err)
+	}
 }
 
 // handleListJobs handles GET /jobs.
@@ -622,6 +446,94 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, resp)
 }
 
+// handleListJobLogs handles GET /job-logs.
+func (s *Server) handleListJobLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	filter := queue.JobLogFilter{
+		JobID:       strings.TrimSpace(q.Get("job_id")),
+		Plugin:      strings.TrimSpace(q.Get("plugin")),
+		Command:     strings.TrimSpace(q.Get("command")),
+		SubmittedBy: strings.TrimSpace(q.Get("submitted_by")),
+		Query:       strings.TrimSpace(q.Get("query")),
+		Limit:       50,
+	}
+
+	if rawLimit := strings.TrimSpace(q.Get("limit")); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit <= 0 {
+			s.writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if limit > 200 {
+			s.writeError(w, http.StatusBadRequest, "limit must be <= 200")
+			return
+		}
+		filter.Limit = limit
+	}
+
+	if rawStatus := strings.TrimSpace(q.Get("status")); rawStatus != "" {
+		status, ok := parseJobStatusFilter(rawStatus)
+		if !ok {
+			s.writeError(w, http.StatusBadRequest, "invalid status filter")
+			return
+		}
+		filter.Status = &status
+	}
+
+	if rawFrom := strings.TrimSpace(q.Get("from")); rawFrom != "" {
+		parsed, err := parseTimeParam(rawFrom)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid from timestamp")
+			return
+		}
+		filter.Since = &parsed
+	}
+
+	if rawTo := strings.TrimSpace(q.Get("to")); rawTo != "" {
+		parsed, err := parseTimeParam(rawTo)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "invalid to timestamp")
+			return
+		}
+		filter.Until = &parsed
+	}
+
+	if strings.EqualFold(strings.TrimSpace(q.Get("include_result")), "true") {
+		filter.IncludeResult = true
+	}
+
+	logs, total, err := s.queue.ListJobLogs(r.Context(), filter)
+	if err != nil {
+		s.logger.Error("failed to list job logs", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to list job logs")
+		return
+	}
+
+	resp := JobLogListResponse{
+		Logs:  make([]JobLogItem, 0, len(logs)),
+		Total: total,
+	}
+	for _, logEntry := range logs {
+		resp.Logs = append(resp.Logs, JobLogItem{
+			JobID:       logEntry.JobID,
+			LogID:       logEntry.LogID,
+			Plugin:      logEntry.Plugin,
+			Command:     logEntry.Command,
+			Status:      string(logEntry.Status),
+			Attempt:     logEntry.Attempt,
+			SubmittedBy: logEntry.SubmittedBy,
+			CreatedAt:   logEntry.CreatedAt,
+			CompletedAt: logEntry.CompletedAt,
+			LastError:   logEntry.LastError,
+			Stderr:      logEntry.Stderr,
+			Result:      logEntry.Result,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
 func parseJobStatusFilter(raw string) (queue.Status, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "pending":
@@ -637,7 +549,17 @@ func parseJobStatusFilter(raw string) (queue.Status, bool) {
 	}
 }
 
-// handleListPlugins handles GET /plugins and GET /skills.
+func parseTimeParam(raw string) (time.Time, error) {
+	layouts := []string{time.RFC3339Nano, time.RFC3339}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid time")
+}
+
+// handleListPlugins handles GET /plugins.
 func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	plugins := s.registry.All()
 	var pNames []string
@@ -662,6 +584,70 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			summary.Commands = append(summary.Commands, cmd.Name)
 		}
 		resp.Plugins = append(resp.Plugins, summary)
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
+// handleListSkills handles GET /skills.
+// It returns a unified capability index (the Connector Catalog) with atomic plugin operations and orchestrated pipelines.
+func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
+	plugins := s.registry.All()
+	var pNames []string
+	for name := range plugins {
+		pNames = append(pNames, name)
+	}
+	sort.Strings(pNames)
+
+	resp := SkillsIndexResponse{
+		Skills: make([]SkillSummary, 0, len(pNames)),
+	}
+
+	for _, name := range pNames {
+		p := plugins[name]
+		commands := append([]plugin.Command(nil), p.Commands...)
+		sort.Slice(commands, func(i, j int) bool { return commands[i].Name < commands[j].Name })
+
+		for _, cmd := range commands {
+			tier := "WRITE"
+			if cmd.Type == plugin.CommandTypeRead {
+				tier = "READ"
+			}
+			resp.Skills = append(resp.Skills, SkillSummary{
+				Name:        fmt.Sprintf("plugin.%s.%s", p.Name, cmd.Name),
+				Kind:        "plugin",
+				Description: cmd.Description,
+				Endpoint:    fmt.Sprintf("/plugin/%s/%s", p.Name, cmd.Name),
+				Tier:        tier,
+				Plugin:      p.Name,
+				Command:     cmd.Name,
+			})
+		}
+	}
+
+	type pipelineSummarizer interface {
+		PipelineSummary() []router.PipelineInfo
+	}
+	if summarizer, ok := s.router.(pipelineSummarizer); ok && summarizer != nil {
+		pipelines := summarizer.PipelineSummary()
+		for _, p := range pipelines {
+			mode := strings.TrimSpace(p.ExecutionMode)
+			if mode == "" {
+				mode = "asynchronous"
+			}
+			skill := SkillSummary{
+				Name:          fmt.Sprintf("pipeline.%s", p.Name),
+				Kind:          "pipeline",
+				Endpoint:      fmt.Sprintf("/pipeline/%s", p.Name),
+				Pipeline:      p.Name,
+				Trigger:       p.Trigger,
+				ExecutionMode: mode,
+			}
+			if p.Timeout > 0 {
+				skill.TimeoutSecs = int64(p.Timeout.Seconds())
+			}
+			resp.Skills = append(resp.Skills, skill)
+		}
 	}
 
 	respondJSON(w, http.StatusOK, resp)

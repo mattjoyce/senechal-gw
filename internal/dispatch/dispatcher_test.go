@@ -52,13 +52,17 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 	hub := events.NewHub(128)
 
 	cfg := config.Defaults()
-	cfg.PluginsDir = pluginsDir
+	cfg.PluginRoots = []string{pluginsDir}
 
 	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
 
 	cleanup := func() {
-		db.Close()
-		os.RemoveAll(tmpDir)
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Fatalf("RemoveAll(%s): %v", tmpDir, err)
+		}
 	}
 
 	return disp, db, pluginsDir, cleanup
@@ -79,7 +83,13 @@ name: %s
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll, handle, health]
+commands:
+  - name: poll
+    type: write
+  - name: handle
+    type: write
+  - name: health
+    type: read
 `, name)
 
 	manifestPath := filepath.Join(pluginDir, "manifest.yaml")
@@ -114,10 +124,12 @@ func TestDispatcher_ExecuteJob_Success(t *testing.T) {
 	// Create a simple echo plugin that returns success
 	script := `#!/bin/bash
 read input
-echo '{"status": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
+echo '{"status": "ok", "result": "ok", "state_updates": {"last_run": "2024-01-01T00:00:00Z"}}'
 `
 	plug := createTestPlugin(t, pluginsDir, "echo", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(echo): %v", err)
+	}
 
 	// Configure plugin
 	disp.cfg.Plugins["echo"] = config.PluginConf{
@@ -188,7 +200,9 @@ read input
 echo '{"status": "error", "error": "something went wrong"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "failing", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(failing): %v", err)
+	}
 
 	disp.cfg.Plugins["failing"] = config.PluginConf{
 		Enabled: true,
@@ -243,7 +257,9 @@ read input
 exec sleep 10
 `
 	plug := createTestPlugin(t, pluginsDir, "sleeper", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(sleeper): %v", err)
+	}
 
 	disp.cfg.Plugins["sleeper"] = config.PluginConf{
 		Enabled: true,
@@ -300,7 +316,9 @@ read input
 echo 'not valid json'
 `
 	plug := createTestPlugin(t, pluginsDir, "broken", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(broken): %v", err)
+	}
 
 	disp.cfg.Plugins["broken"] = config.PluginConf{
 		Enabled: true,
@@ -368,7 +386,9 @@ read input
 echo '{"status":"error","error":"transient failure"}'
 `
 	plug := createTestPlugin(t, pluginsDir, "retrying", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 	disp.cfg.Plugins["retrying"] = config.PluginConf{
 		Enabled: true,
 		Retry: &config.RetryConfig{
@@ -429,7 +449,9 @@ read input
 echo '{"status":"error","error":"bad request","retry":false}'
 `
 	plug := createTestPlugin(t, pluginsDir, "noretry", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 	disp.cfg.Plugins["noretry"] = config.PluginConf{
 		Enabled: true,
 		Retry: &config.RetryConfig{
@@ -484,7 +506,9 @@ echo '{"status":"error","error":"config invalid"}'
 exit 78
 `
 	plug := createTestPlugin(t, pluginsDir, "exit78", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 	disp.cfg.Plugins["exit78"] = config.PluginConf{
 		Enabled: true,
 		Retry: &config.RetryConfig{
@@ -533,10 +557,12 @@ func TestDispatcher_ExecuteJob_HandleCommand(t *testing.T) {
 	script := `#!/bin/bash
 read input
 # Extract event type from JSON (basic bash parsing)
-echo '{"status": "ok", "logs": [{"level": "info", "message": "handled event"}]}'
+echo '{"status": "ok", "result": "handled event", "logs": [{"level": "info", "message": "handled event"}]}'
 `
 	plug := createTestPlugin(t, pluginsDir, "handler", script)
-	disp.registry.Add(plug)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
 
 	disp.cfg.Plugins["handler"] = config.PluginConf{
 		Enabled: true,
@@ -685,7 +711,11 @@ func TestDispatcher_RoutesTwoHopChainWithContextAndWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
 
 	q := queue.New(db)
 	st := state.NewStore(db)
@@ -698,11 +728,11 @@ if [ -n "$workspace_dir" ]; then
   mkdir -p "$workspace_dir"
   echo "artifact-from-a" > "$workspace_dir/artifact.txt"
 fi
-echo '{"status":"ok","events":[{"type":"chain.start","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
+echo '{"status":"ok","result":"chain start","events":[{"type":"chain.start","dedupe_key":"chain:start:hello","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
 `
 	scriptB := `#!/bin/bash
 read input
-echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
+echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"handled by b"}]}'
 `
 
 	registry := plugin.NewRegistry()
@@ -715,10 +745,6 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 		t.Fatalf("registry.Add(plugin-b): %v", err)
 	}
 
-	pipelinesDir := filepath.Join(tmpDir, "pipelines")
-	if err := os.MkdirAll(pipelinesDir, 0755); err != nil {
-		t.Fatalf("MkdirAll(pipelinesDir): %v", err)
-	}
 	pipelineYAML := `pipelines:
   - name: chain
     on: chain.start
@@ -726,13 +752,14 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
       - id: step_b
         uses: plugin-b
 `
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "chain.yaml"), []byte(pipelineYAML), 0644); err != nil {
-		t.Fatalf("WriteFile(chain.yaml): %v", err)
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
 	}
 
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
-		t.Fatalf("LoadFromConfigDir: %v", err)
+		t.Fatalf("LoadFromConfigFiles: %v", err)
 	}
 	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
 	wsManager, err := workspace.NewFSManager(workspaceBaseDir)
@@ -741,7 +768,7 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 	}
 
 	cfg := config.Defaults()
-	cfg.PluginsDir = pluginsDir
+	cfg.PluginRoots = []string{pluginsDir}
 	cfg.Plugins["plugin-a"] = config.PluginConf{
 		Enabled: true,
 		Timeouts: &config.TimeoutsConfig{
@@ -801,6 +828,9 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 	if childJob.EventContextID == nil {
 		t.Fatalf("child event_context_id is nil")
 	}
+	if childJob.DedupeKey == nil || *childJob.DedupeKey != "chain:start:hello" {
+		t.Fatalf("child dedupe_key = %v, want %q", childJob.DedupeKey, "chain:start:hello")
+	}
 
 	var routedEvent protocol.Event
 	if err := json.Unmarshal(childJob.Payload, &routedEvent); err != nil {
@@ -845,6 +875,149 @@ echo '{"status":"ok","logs":[{"level":"info","message":"handled by b"}]}'
 	}
 }
 
+func TestDispatcher_ExecuteJob_SkipsConditionalStepAndContinues(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll(pluginsDir): %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
+	wsManager, err := workspace.NewFSManager(workspaceBaseDir)
+	if err != nil {
+		t.Fatalf("NewFSManager: %v", err)
+	}
+
+	scriptA := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"start","events":[{"type":"chain.start","payload":{"status":"ok"}}]}'
+`
+	scriptB := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"should-not-run"}'
+`
+	scriptC := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"ran-c"}'
+`
+	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
+	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
+	plugC := createTestPlugin(t, pluginsDir, "plugin-c", scriptC)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
+	if err := registry.Add(plugC); err != nil {
+		t.Fatalf("registry.Add(plugin-c): %v", err)
+	}
+
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: step_b
+        uses: plugin-b
+        if:
+          path: payload.status
+          op: contains
+          value: error
+      - id: step_c
+        uses: plugin-c
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["plugin-a"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Poll: 5 * time.Second}}
+	cfg.Plugins["plugin-b"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+	cfg.Plugins["plugin-c"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+
+	disp := New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	ctx := context.Background()
+
+	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{Plugin: "plugin-a", Command: "poll", SubmittedBy: "test"})
+	if err != nil {
+		t.Fatalf("Enqueue(root): %v", err)
+	}
+	rootJob, err := q.Dequeue(ctx)
+	if err != nil || rootJob == nil {
+		t.Fatalf("Dequeue(root): job=%v err=%v", rootJob, err)
+	}
+	disp.executeJob(ctx, rootJob)
+
+	stepBJob, err := q.Dequeue(ctx)
+	if err != nil || stepBJob == nil {
+		t.Fatalf("Dequeue(step_b): job=%v err=%v", stepBJob, err)
+	}
+	disp.executeJob(ctx, stepBJob)
+
+	stepCJob, err := q.Dequeue(ctx)
+	if err != nil || stepCJob == nil {
+		t.Fatalf("Dequeue(step_c): job=%v err=%v", stepCJob, err)
+	}
+	if stepCJob.Plugin != "plugin-c" {
+		t.Fatalf("step_c plugin = %q, want %q", stepCJob.Plugin, "plugin-c")
+	}
+	disp.executeJob(ctx, stepCJob)
+
+	stepBResult, err := q.GetJobByID(ctx, stepBJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(step_b): %v", err)
+	}
+	if stepBResult.Status != queue.StatusSkipped {
+		t.Fatalf("step_b status = %q, want %q", stepBResult.Status, queue.StatusSkipped)
+	}
+	if stepBResult.LastError == nil || *stepBResult.LastError != "if condition evaluated false" {
+		t.Fatalf("step_b last_error = %#v", stepBResult.LastError)
+	}
+	if string(stepBResult.Result) == "" {
+		t.Fatalf("expected skipped result payload")
+	}
+
+	stepCResult, err := q.GetJobByID(ctx, stepCJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(step_c): %v", err)
+	}
+	if stepCResult.Status != queue.StatusSucceeded {
+		t.Fatalf("step_c status = %q, want %q", stepCResult.Status, queue.StatusSucceeded)
+	}
+
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepBJob.ID)); err != nil {
+		t.Fatalf("stat skipped step workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepCJob.ID)); err != nil {
+		t.Fatalf("stat successor workspace: %v", err)
+	}
+
+	_ = rootJobID
+}
+
 func filterEventsByType(eventsIn []events.Event, typ string) []events.Event {
 	out := make([]events.Event, 0, len(eventsIn))
 	for _, ev := range eventsIn {
@@ -853,4 +1026,296 @@ func filterEventsByType(eventsIn []events.Event, typ string) []events.Event {
 		}
 	}
 	return out
+}
+
+func TestDispatcher_Start_ParallelExecution(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	// Plugin that sleeps 1s then succeeds — long enough to observe concurrency
+	script := `#!/bin/bash
+read input
+sleep 1
+echo '{"status":"ok","result":"done"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "slow", script)
+	if err := registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Service.MaxWorkers = 3
+	cfg.Plugins["slow"] = config.PluginConf{
+		Enabled:     true,
+		Parallelism: 3,
+		Timeouts:    &config.TimeoutsConfig{Poll: 10 * time.Second},
+	}
+
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enqueue 3 jobs
+	for i := 0; i < 3; i++ {
+		if _, err := q.Enqueue(ctx, queue.EnqueueRequest{
+			Plugin: "slow", Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	// Start dispatcher in background
+	dispErr := make(chan error, 1)
+	go func() { dispErr <- disp.Start(ctx) }()
+
+	// Wait for all 3 to complete — if parallel, ~1s; if serial, ~3s
+	start := time.Now()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for parallel jobs")
+		case <-time.After(200 * time.Millisecond):
+			var completed int
+			if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed); err != nil {
+				t.Fatalf("count succeeded jobs: %v", err)
+			}
+			if completed >= 3 {
+				elapsed := time.Since(start)
+				cancel()
+				<-dispErr
+				// If truly parallel: ~1s. If serial: ~3s. Accept up to 2.5s.
+				if elapsed > 2500*time.Millisecond {
+					t.Fatalf("jobs took %v — likely serial, not parallel", elapsed)
+				}
+				t.Logf("3 parallel jobs completed in %v", elapsed)
+				return
+			}
+		}
+	}
+}
+
+func TestDispatcher_Start_PerPluginParallelismCap(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	// Plugin that sleeps 1s
+	script := `#!/bin/bash
+read input
+sleep 1
+echo '{"status":"ok","result":"done"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "capped", script)
+	if err := registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Service.MaxWorkers = 4
+	cfg.Plugins["capped"] = config.PluginConf{
+		Enabled:     true,
+		Parallelism: 1, // Only 1 at a time despite 4 workers
+		Timeouts:    &config.TimeoutsConfig{Poll: 10 * time.Second},
+	}
+
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enqueue 2 jobs
+	for i := 0; i < 2; i++ {
+		if _, err := q.Enqueue(ctx, queue.EnqueueRequest{
+			Plugin: "capped", Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	dispErr := make(chan error, 1)
+	go func() { dispErr <- disp.Start(ctx) }()
+
+	start := time.Now()
+	deadline := time.After(8 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for capped jobs")
+		case <-time.After(200 * time.Millisecond):
+			var completed int
+			if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed); err != nil {
+				t.Fatalf("count succeeded jobs: %v", err)
+			}
+			if completed >= 2 {
+				elapsed := time.Since(start)
+				cancel()
+				<-dispErr
+				// With parallelism=1, 2 jobs should take ~2s (serial)
+				if elapsed < 1800*time.Millisecond {
+					t.Fatalf("jobs took %v — should be serial with parallelism=1", elapsed)
+				}
+				t.Logf("2 serial-capped jobs completed in %v", elapsed)
+				return
+			}
+		}
+	}
+}
+
+func TestDispatcher_Start_SerialDefaultBackcompat(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	script := `#!/bin/bash
+read input
+sleep 1
+echo '{"status":"ok","result":"done"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "serial", script)
+	if err := registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
+
+	// Default config: max_workers=1, parallelism=1
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["serial"] = config.PluginConf{
+		Enabled:  true,
+		Timeouts: &config.TimeoutsConfig{Poll: 10 * time.Second},
+	}
+
+	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enqueue 2 jobs
+	for i := 0; i < 2; i++ {
+		if _, err := q.Enqueue(ctx, queue.EnqueueRequest{
+			Plugin: "serial", Command: "poll", SubmittedBy: "test",
+		}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	dispErr := make(chan error, 1)
+	go func() { dispErr <- disp.Start(ctx) }()
+
+	start := time.Now()
+	deadline := time.After(8 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			cancel()
+			t.Fatal("timed out waiting for serial jobs")
+		case <-time.After(200 * time.Millisecond):
+			var completed int
+			if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE status = ?", queue.StatusSucceeded).Scan(&completed); err != nil {
+				t.Fatalf("count succeeded jobs: %v", err)
+			}
+			if completed >= 2 {
+				elapsed := time.Since(start)
+				cancel()
+				<-dispErr
+				// Default serial: 2 jobs at 1s each ≈ 2s minimum
+				if elapsed < 1800*time.Millisecond {
+					t.Fatalf("jobs took %v — should be serial with default config", elapsed)
+				}
+				t.Logf("2 default-serial jobs completed in %v", elapsed)
+				return
+			}
+		}
+	}
+}
+
+func TestDispatcher_PluginParallelism_RespectsConcurrencySafeHint(t *testing.T) {
+	disp, _, _, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	unsafePlugin := &plugin.Plugin{Name: "unsafe", ConcurrencySafe: false}
+	safePlugin := &plugin.Plugin{Name: "safe", ConcurrencySafe: true}
+	if err := disp.registry.Add(unsafePlugin); err != nil {
+		t.Fatalf("registry.Add(unsafe): %v", err)
+	}
+	if err := disp.registry.Add(safePlugin); err != nil {
+		t.Fatalf("registry.Add(safe): %v", err)
+	}
+
+	disp.cfg.Service.MaxWorkers = 6
+	disp.cfg.Plugins["unsafe"] = config.PluginConf{Enabled: true, Parallelism: 1}
+	disp.cfg.Plugins["safe"] = config.PluginConf{Enabled: true, Parallelism: 6}
+
+	if got := disp.pluginParallelism("unsafe"); got != 1 {
+		t.Fatalf("unsafe plugin default should be serial, got %d", got)
+	}
+
+	if got := disp.pluginParallelism("safe"); got != 6 {
+		t.Fatalf("safe plugin should use configured parallelism, got %d", got)
+	}
+
+	// Explicit operator override: allow unsafe plugin >1.
+	pc := disp.cfg.Plugins["unsafe"]
+	pc.Parallelism = 4
+	disp.cfg.Plugins["unsafe"] = pc
+	if got := disp.pluginParallelism("unsafe"); got != 4 {
+		t.Fatalf("unsafe plugin override should be honored, got %d", got)
+	}
 }

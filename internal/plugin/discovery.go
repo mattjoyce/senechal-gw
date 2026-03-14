@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,10 @@ func (r *Registry) Add(plugin *Plugin) error {
 	return nil
 }
 
+type DiscoverOptions struct {
+	AllowSymlinks bool
+}
+
 // Discover scans a single pluginsDir for plugins with manifest.yaml and validates them.
 // Returns a registry of valid plugins. Invalid plugins are logged but not fatal.
 func Discover(pluginsDir string, logger func(level, msg string, args ...any)) (*Registry, error) {
@@ -56,6 +61,11 @@ func Discover(pluginsDir string, logger func(level, msg string, args ...any)) (*
 // DiscoverMany scans multiple plugin roots for manifest.yaml files and validates plugins.
 // Roots are processed in input order; duplicate plugin names keep the first discovered plugin.
 func DiscoverMany(pluginRoots []string, logger func(level, msg string, args ...any)) (*Registry, error) {
+	return DiscoverManyWithOptions(pluginRoots, logger, DiscoverOptions{AllowSymlinks: true})
+}
+
+// DiscoverManyWithOptions scans multiple plugin roots with configurable settings.
+func DiscoverManyWithOptions(pluginRoots []string, logger func(level, msg string, args ...any), opts DiscoverOptions) (*Registry, error) {
 	if logger == nil {
 		logger = func(level, msg string, args ...any) {}
 	}
@@ -84,6 +94,13 @@ func DiscoverMany(pluginRoots []string, logger func(level, msg string, args ...a
 		if !info.IsDir() {
 			return nil, fmt.Errorf("plugin root is not a directory: %s", absRoot)
 		}
+		resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve plugin root symlink %s: %w", absRoot, err)
+		}
+		if err := warnOrErrorOnSymlink(logger, "plugin_root", absRoot, resolvedRoot, opts.AllowSymlinks); err != nil {
+			return nil, err
+		}
 		if _, ok := seenRoots[absRoot]; ok {
 			continue
 		}
@@ -107,7 +124,7 @@ func DiscoverMany(pluginRoots []string, logger func(level, msg string, args ...a
 			pluginPath := filepath.Dir(path)
 			pluginDirName := filepath.Base(pluginPath)
 
-			plugin, err := loadPlugin(pluginDirName, pluginPath, root)
+			plugin, err := loadPlugin(pluginDirName, pluginPath, root, opts.AllowSymlinks, logger)
 			if err != nil {
 				logger("warn", "failed to load plugin", "root", root, "path", pluginPath, "error", err.Error())
 				return nil
@@ -140,10 +157,11 @@ func DiscoverMany(pluginRoots []string, logger func(level, msg string, args ...a
 }
 
 // loadPlugin reads and validates a single plugin.
-func loadPlugin(name, pluginPath, pluginsDir string) (*Plugin, error) {
+func loadPlugin(name, pluginPath, pluginsDir string, allowSymlinks bool, logger func(level, msg string, args ...any)) (*Plugin, error) {
 	manifestPath := filepath.Join(pluginPath, manifestFilename)
 
 	// Read manifest file
+	// #nosec G304 -- plugin manifests are operator-controlled local inputs.
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
@@ -169,8 +187,13 @@ func loadPlugin(name, pluginPath, pluginsDir string) (*Plugin, error) {
 	entrypointPath := filepath.Join(pluginPath, manifest.Entrypoint)
 
 	// Trust checks (SPEC §5.5)
-	if err := validateTrust(entrypointPath, pluginPath, pluginsDir); err != nil {
+	if err := validateTrust(entrypointPath, pluginPath, pluginsDir, allowSymlinks, logger); err != nil {
 		return nil, fmt.Errorf("trust validation failed: %w", err)
+	}
+
+	concurrencySafe := true
+	if manifest.ConcurrencySafe != nil {
+		concurrencySafe = *manifest.ConcurrencySafe
 	}
 
 	return &Plugin{
@@ -182,6 +205,7 @@ func loadPlugin(name, pluginPath, pluginsDir string) (*Plugin, error) {
 		Protocol:        manifest.Protocol,
 		Version:         manifest.Version,
 		Description:     manifest.Description,
+		ConcurrencySafe: concurrencySafe,
 		Commands:        manifest.Commands,
 		ConfigKeys:      manifest.ConfigKeys,
 	}, nil
@@ -223,14 +247,12 @@ func validateManifest(m *Manifest) error {
 		return fmt.Errorf("at least one command must be declared")
 	}
 
-	// Validate command names
-	validCommands := map[string]bool{"poll": true, "handle": true, "health": true, "init": true}
 	for _, cmd := range m.Commands {
 		if cmd.Name == "" {
 			return fmt.Errorf("command name is required")
 		}
-		if !validCommands[cmd.Name] {
-			return fmt.Errorf("invalid command %q (valid: poll, handle, health, init)", cmd.Name)
+		if !validCommandName(cmd.Name) {
+			return fmt.Errorf("invalid command %q (must start with a letter and contain only letters, digits, '_' or '-')", cmd.Name)
 		}
 		if !cmd.Type.valid() {
 			return fmt.Errorf("invalid command type %q for %q (valid: read, write)", cmd.Type, cmd.Name)
@@ -240,12 +262,27 @@ func validateManifest(m *Manifest) error {
 	return nil
 }
 
-// validateTrust enforces security constraints (SPEC §5.5).
-func validateTrust(entrypointPath, pluginPath, pluginsDir string) error {
-	return validateTrustInRoots(entrypointPath, pluginPath, []string{pluginsDir})
+func validCommandName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case i == 0 && unicode.IsLetter(r):
+		case i > 0 && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
-func validateTrustInRoots(entrypointPath, pluginPath string, pluginRoots []string) error {
+// validateTrust enforces security constraints (SPEC §5.5).
+func validateTrust(entrypointPath, pluginPath, pluginsDir string, allowSymlinks bool, logger func(level, msg string, args ...any)) error {
+	return validateTrustInRoots(entrypointPath, pluginPath, []string{pluginsDir}, allowSymlinks, logger)
+}
+
+func validateTrustInRoots(entrypointPath, pluginPath string, pluginRoots []string, allowSymlinks bool, logger func(level, msg string, args ...any)) error {
 	if len(pluginRoots) == 0 {
 		return fmt.Errorf("no plugin roots configured")
 	}
@@ -259,6 +296,13 @@ func validateTrustInRoots(entrypointPath, pluginPath string, pluginRoots []strin
 	resolvedPluginPath, err := filepath.EvalSymlinks(pluginPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve plugin path symlink: %w", err)
+	}
+
+	if err := warnOrErrorOnSymlink(logger, "plugin_entrypoint", entrypointPath, resolvedEntrypoint, allowSymlinks); err != nil {
+		return err
+	}
+	if err := warnOrErrorOnSymlink(logger, "plugin_dir", pluginPath, resolvedPluginPath, allowSymlinks); err != nil {
+		return err
 	}
 
 	// Check entrypoint is under one of the configured plugin roots
@@ -304,4 +348,16 @@ func validateTrustInRoots(entrypointPath, pluginPath string, pluginRoots []strin
 	}
 
 	return nil
+}
+
+func warnOrErrorOnSymlink(logger func(level, msg string, args ...any), kind, path, resolved string, allowSymlinks bool) error {
+	if filepath.Clean(resolved) == filepath.Clean(path) {
+		return nil
+	}
+
+	if allowSymlinks {
+		logger("warn", "symlink detected", "kind", kind, "path", path, "resolved", resolved)
+		return nil
+	}
+	return fmt.Errorf("symlink detected for %s (%s -> %s); set service.allow_symlinks=true to allow", kind, path, resolved)
 }

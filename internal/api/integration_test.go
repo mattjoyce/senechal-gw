@@ -4,70 +4,120 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/api"
+	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/dispatch"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
-	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
+	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
+	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
-type mockRouter struct{}
-
-func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo { return nil }
-func (m *mockRouter) GetPipelineByName(name string) *router.PipelineInfo       { return nil }
-func (m *mockRouter) GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
-	return nil, nil
-}
-func (m *mockRouter) Next(ctx context.Context, req router.Request) ([]router.Dispatch, error) {
-	return nil, nil
+type queueBackedWaiter struct {
+	q *queue.Queue
 }
 
-type mockWaiter struct{}
-
-func (m *mockWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
-	return nil, nil
+func (w *queueBackedWaiter) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
+	return w.q.GetJobTree(ctx, rootJobID)
 }
 
-// TestAPIIntegration tests the full API flow with real queue
+func createAPIIntegrationPlugin(t *testing.T, pluginsDir, name, script string) {
+	t.Helper()
+	pluginDir := filepath.Join(pluginsDir, name)
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pluginDir): %v", err)
+	}
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: ` + name + `
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: handle
+    type: write
+  - name: poll
+    type: write
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(run.sh): %v", err)
+	}
+}
+
+func allocateLocalAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("allocate local addr: %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close temp listener: %v", err)
+	}
+	return addr
+}
+
+// TestAPIIntegration tests the API flow with real queue, router, waiter, and context store.
 func TestAPIIntegration(t *testing.T) {
-	// Setup in-memory database
 	ctx := context.Background()
 	db, err := storage.OpenSQLite(ctx, ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	// Create queue
 	q := queue.New(db)
+	ctxStore := state.NewContextStore(db)
 
-	// Create mock plugin registry
 	registry := plugin.NewRegistry()
-	registry.Add(&plugin.Plugin{
+	if err := registry.Add(&plugin.Plugin{
 		Name: "echo",
 		Commands: plugin.Commands{
 			{Name: "poll", Type: plugin.CommandTypeWrite},
 			{Name: "handle", Type: plugin.CommandTypeWrite},
 		},
-	})
-
-	// Create API server
-	testPort := "localhost:18080"
-	config := api.Config{
-		Listen: testPort,
-		APIKey: "test-key-123",
+	}); err != nil {
+		t.Fatalf("registry.Add: %v", err)
 	}
-	hub := events.NewHub(10)
-	server := api.New(config, q, registry, &mockRouter{}, &mockWaiter{}, nil, hub, slog.Default())
 
-	// Start server in background
+	r := router.New(&dsl.Set{
+		Pipelines: map[string]*dsl.Pipeline{
+			"test-pipeline": {
+				Name:          "test-pipeline",
+				Trigger:       "test.trigger",
+				ExecutionMode: "asynchronous",
+				Nodes: map[string]dsl.Node{
+					"entry": {ID: "entry", Kind: dsl.NodeKindUses, Uses: "echo"},
+				},
+				EntryNodeIDs:    []string{"entry"},
+				TerminalNodeIDs: []string{"entry"},
+			},
+		},
+	}, slog.Default())
+
+	listenAddr := allocateLocalAddr(t)
+	server := api.New(api.Config{
+		Listen: listenAddr,
+		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
+	}, q, registry, r, &queueBackedWaiter{q: q}, ctxStore, events.NewHub(10), slog.Default())
+
 	serverCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -78,95 +128,262 @@ func TestAPIIntegration(t *testing.T) {
 		}
 	}()
 
-	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
-
 	select {
 	case err := <-serverReady:
 		t.Fatalf("server failed to start: %v", err)
 	default:
-		// Server started successfully
 	}
 
-	// Test 1: Trigger a job
-	triggerBody := []byte(`{"payload": {"test": "data"}}`)
+	client := &http.Client{Timeout: 5 * time.Second}
+	baseURL := fmt.Sprintf("http://%s", listenAddr)
+
+	t.Run("direct plugin trigger enqueues real job", func(t *testing.T) {
+		triggerBody := []byte(`{"payload": {"test": "data"}}`)
+		req, _ := http.NewRequest(http.MethodPost, baseURL+"/plugin/echo/poll", bytes.NewReader(triggerBody))
+		req.Header.Set("Authorization", "Bearer test-key-123")
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("failed to trigger job: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("expected status 202, got %d", resp.StatusCode)
+		}
+
+		var triggerResp api.TriggerResponse
+		if err := json.NewDecoder(resp.Body).Decode(&triggerResp); err != nil {
+			t.Fatalf("failed to decode trigger response: %v", err)
+		}
+		if triggerResp.JobID == "" {
+			t.Fatal("expected non-empty job_id")
+		}
+
+		req, _ = http.NewRequest(http.MethodGet, baseURL+"/job/"+triggerResp.JobID, nil)
+		req.Header.Set("Authorization", "Bearer test-key-123")
+		resp, err = client.Do(req)
+		if err != nil {
+			t.Fatalf("failed to get job: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		var jobResp api.JobStatusResponse
+		if err := json.NewDecoder(resp.Body).Decode(&jobResp); err != nil {
+			t.Fatalf("failed to decode job response: %v", err)
+		}
+		if jobResp.JobID != triggerResp.JobID || jobResp.Plugin != "echo" || jobResp.Command != "poll" {
+			t.Fatalf("unexpected job response: %+v", jobResp)
+		}
+	})
+
+	t.Run("pipeline trigger uses real router and context store", func(t *testing.T) {
+		triggerBody := []byte(`{"payload": {"test": "pipeline"}}`)
+		req, _ := http.NewRequest(http.MethodPost, baseURL+"/pipeline/test-pipeline", bytes.NewReader(triggerBody))
+		req.Header.Set("Authorization", "Bearer test-key-123")
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("failed to trigger pipeline: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("expected status 202, got %d", resp.StatusCode)
+		}
+
+		var triggerResp api.TriggerResponse
+		if err := json.NewDecoder(resp.Body).Decode(&triggerResp); err != nil {
+			t.Fatalf("failed to decode trigger response: %v", err)
+		}
+
+		job, err := q.GetJobByID(ctx, triggerResp.JobID)
+		if err != nil {
+			t.Fatalf("GetJobByID: %v", err)
+		}
+		if job.Plugin != "echo" || job.Command != "handle" {
+			t.Fatalf("unexpected pipeline job: %+v", job)
+		}
+
+		rows, err := db.Query("SELECT event_context_id FROM job_queue WHERE id = ?", triggerResp.JobID)
+		if err != nil {
+			t.Fatalf("query event_context_id: %v", err)
+		}
+		var contextID string
+		if !rows.Next() {
+			_ = rows.Close()
+			t.Fatal("expected queued pipeline job row")
+		}
+		if err := rows.Scan(&contextID); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan event_context_id: %v", err)
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatalf("close rows: %v", err)
+		}
+		if contextID == "" {
+			t.Fatal("expected non-empty event_context_id")
+		}
+
+		eventCtx, err := ctxStore.Get(ctx, contextID)
+		if err != nil {
+			t.Fatalf("context store get: %v", err)
+		}
+		if eventCtx.PipelineName != "test-pipeline" || eventCtx.StepID != "entry" {
+			t.Fatalf("unexpected event context: %+v", eventCtx)
+		}
+	})
+
+	t.Run("unauthorized request is rejected", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, baseURL+"/plugin/echo/poll", nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("failed to make unauthorized request: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected status 401, got %d", resp.StatusCode)
+		}
+	})
+
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestSynchronousPipelineSkippedEntryResponseVsDB(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	workspacesDir := filepath.Join(tmpDir, "workspaces")
+
+	db, err := storage.OpenSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	wsManager, err := workspace.NewFSManager(workspacesDir)
+	if err != nil {
+		t.Fatalf("NewFSManager: %v", err)
+	}
+
+	createAPIIntegrationPlugin(t, pluginsDir, "step-a", `#!/bin/bash
+read input
+echo '{"status":"ok","result":"A"}'
+`)
+	createAPIIntegrationPlugin(t, pluginsDir, "step-b", `#!/bin/bash
+read input
+echo '{"status":"ok","result":"B"}'
+`)
+
+	registry, err := plugin.Discover(pluginsDir, func(level, msg string, args ...any) {})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	pipelineYAML := `pipelines:
+  - name: if-sync
+    on: demo.start
+    execution_mode: synchronous
+    timeout: 5s
+    steps:
+      - id: first
+        uses: step-a
+        if:
+          path: payload.run_first
+          op: eq
+          value: true
+      - id: second
+        uses: step-b
+`
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipelines): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Plugins["step-a"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+	cfg.Plugins["step-b"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+	hub := events.NewHub(128)
+	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+
+	dispatchCtx, dispatchCancel := context.WithCancel(ctx)
+	defer dispatchCancel()
+	go func() {
+		_ = disp.Start(dispatchCtx)
+	}()
+
+	testPort := "localhost:18081"
+	server := api.New(api.Config{
+		Listen: testPort,
+		Tokens: []auth.TokenConfig{{Token: "test-key-123", Scopes: []string{"*"}}},
+	}, q, registry, routerEngine, disp, contextStore, hub, slog.Default())
+
+	serverCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		_ = server.Start(serverCtx)
+	}()
+	time.Sleep(200 * time.Millisecond)
+
 	baseURL := "http://" + testPort
-	req, _ := http.NewRequest(http.MethodPost, baseURL+"/trigger/echo/poll", bytes.NewReader(triggerBody))
+	body := []byte(`{"payload":{"run_first":false}}`)
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/pipeline/if-sync", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
 	req.Header.Set("Authorization", "Bearer test-key-123")
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("failed to trigger job: %v", err)
+		t.Fatalf("client.Do: %v", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusAccepted {
-		t.Errorf("expected status 202, got %d", resp.StatusCode)
-	}
-
-	var triggerResp api.TriggerResponse
-	if err := json.NewDecoder(resp.Body).Decode(&triggerResp); err != nil {
-		t.Fatalf("failed to decode trigger response: %v", err)
-	}
-
-	if triggerResp.JobID == "" {
-		t.Error("expected non-empty job_id")
-	}
-	if triggerResp.Status != "queued" {
-		t.Errorf("expected status queued, got %s", triggerResp.Status)
-	}
-
-	jobID := triggerResp.JobID
-
-	// Test 2: Get job status
-	req, _ = http.NewRequest(http.MethodGet, baseURL+"/job/"+jobID, nil)
-	req.Header.Set("Authorization", "Bearer test-key-123")
-
-	resp, err = client.Do(req)
-	if err != nil {
-		t.Fatalf("failed to get job: %v", err)
-	}
-	defer resp.Body.Close()
-
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var jobResp api.JobStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&jobResp); err != nil {
-		t.Fatalf("failed to decode job response: %v", err)
+	var syncResp api.SyncResponse
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		t.Fatalf("Decode(sync response): %v", err)
+	}
+	if len(syncResp.Tree) < 2 {
+		t.Fatalf("response tree len = %d, want >= 2 once settled-tree waiting is applied", len(syncResp.Tree))
+	}
+	if syncResp.Tree[0].Status != string(queue.StatusSkipped) {
+		t.Fatalf("response root status = %q, want %q", syncResp.Tree[0].Status, queue.StatusSkipped)
 	}
 
-	if jobResp.JobID != jobID {
-		t.Errorf("expected job_id %s, got %s", jobID, jobResp.JobID)
+	var immediateChildCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM job_queue WHERE parent_job_id = ?`, syncResp.JobID).Scan(&immediateChildCount); err != nil {
+		t.Fatalf("child count immediate: %v", err)
 	}
-	if jobResp.Status != "queued" {
-		t.Errorf("expected status queued, got %s", jobResp.Status)
-	}
-	if jobResp.Plugin != "echo" {
-		t.Errorf("expected plugin echo, got %s", jobResp.Plugin)
-	}
-	if jobResp.Command != "poll" {
-		t.Errorf("expected command poll, got %s", jobResp.Command)
+	if immediateChildCount == 0 {
+		t.Fatalf("immediate child count = 0, want >0")
 	}
 
-	// Test 3: Unauthorized request
-	req, _ = http.NewRequest(http.MethodPost, baseURL+"/trigger/echo/poll", nil)
-	// No Authorization header
-
-	resp, err = client.Do(req)
+	results, err := q.GetJobTree(ctx, syncResp.JobID)
 	if err != nil {
-		t.Fatalf("failed to make unauthorized request: %v", err)
+		t.Fatalf("GetJobTree: %v", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", resp.StatusCode)
+	if len(results) < 2 {
+		t.Fatalf("eventual job tree len = %d, want >= 2", len(results))
 	}
 
-	// Shutdown server
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+	_ = serverCtx
 }

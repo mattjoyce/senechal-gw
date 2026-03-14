@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mattjoyce/ductile/schemas/plugin-manifest.schema.json",
+  "title": "Ductile Plugin Manifest",
+  "description": "Schema for plugins/*/manifest.yaml files.",
+  "type": "object",
+  "properties": {
+    "manifest_spec": {
+      "type": "string",
+      "const": "ductile.plugin",
+      "description": "Manifest schema identifier."
+    },
+    "manifest_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Manifest schema version."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin name."
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin version string."
+    },
+    "protocol": {
+      "type": "integer",
+      "const": 2,
+      "description": "Supported wire protocol version."
+    },
+    "entrypoint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Executable entrypoint path relative to plugin directory."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable plugin summary."
+    },
+    "concurrency_safe": {
+      "type": "boolean",
+      "description": "Optional concurrency hint. If false, runtime may default plugin execution to serial unless explicitly overridden in config."
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Command"
+      },
+      "description": "Commands supported by this plugin."
+    },
+    "config_keys": {
+      "$ref": "#/$defs/ConfigKeys"
+    }
+  },
+  "required": [
+    "manifest_spec",
+    "manifest_version",
+    "name",
+    "version",
+    "protocol",
+    "entrypoint",
+    "commands"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "Command": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": ["read", "write"]
+        },
+        "description": {
+          "type": "string"
+        },
+        "input_schema": {
+          "description": "JSON Schema object or compact property:type map.",
+          "type": ["object", "boolean"]
+        },
+        "output_schema": {
+          "description": "JSON Schema object or compact property:type map.",
+          "type": ["object", "boolean"]
+        },
+        "idempotent": {
+          "type": "boolean"
+        },
+        "retry_safe": {
+          "type": "boolean"
+        }
+      },
+      "required": ["name", "type"],
+      "additionalProperties": false
+    },
+    "ConfigKeys": {
+      "type": "object",
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "optional": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

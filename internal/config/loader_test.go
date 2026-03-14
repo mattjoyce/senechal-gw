@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -23,24 +24,26 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
-      jitter: 30s
+    schedules:
+      - id: default
+        every: 5m
+        jitter: 30s
 `,
 			wantErr: false,
 			checkFn: func(t *testing.T, cfg *Config) {
 				if cfg.Service.TickInterval != 60*time.Second {
 					t.Error("tick_interval not parsed")
 				}
-				if cfg.State.Path != "./test.db" {
-					t.Error("state.path not parsed")
+				if !filepath.IsAbs(cfg.State.Path) {
+					t.Errorf("state.path should be absolute, got %s", cfg.State.Path)
 				}
-				if cfg.PluginsDir != "./plugins" {
-					t.Error("plugins_dir not parsed")
+				if filepath.Base(cfg.State.Path) != "test.db" {
+					t.Errorf("state.path not resolved to test.db: %s", cfg.State.Path)
 				}
 				echo, ok := cfg.Plugins["echo"]
 				if !ok {
@@ -49,23 +52,32 @@ plugins:
 				if !echo.Enabled {
 					t.Error("echo not enabled")
 				}
-				if echo.Schedule.Every != "5m" {
-					t.Error("schedule.every not parsed")
+				if len(echo.Schedules) != 1 {
+					t.Fatalf("expected 1 schedule, got %d", len(echo.Schedules))
+				}
+				if echo.Schedules[0].Every != "5m" {
+					t.Error("schedules[0].every not parsed")
 				}
 				// Check defaults applied
+				expectedWorkers := max(1, runtime.NumCPU()-1)
+				if cfg.Service.MaxWorkers != expectedWorkers {
+					t.Errorf("default service.max_workers not applied: got %d, want %d", cfg.Service.MaxWorkers, expectedWorkers)
+				}
 				if echo.Retry == nil || echo.Retry.MaxAttempts != 4 {
 					t.Error("default retry config not applied")
+				}
+				if echo.Parallelism != expectedWorkers {
+					t.Errorf("default plugin parallelism not applied: got %d, want %d", echo.Parallelism, expectedWorkers)
 				}
 			},
 		},
 		{
-			name: "plugin_roots parsed and preferred over plugins_dir",
+			name: "plugin_roots parsed",
 			yaml: `
 service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
 plugin_roots:
   - ./external-plugins
   - /opt/ductile-plugins
@@ -83,6 +95,66 @@ plugins:
 					t.Fatalf("unexpected effective roots: %v", roots)
 				}
 			},
+		},
+		{
+			name: "service max_workers and plugin parallelism parsed",
+			yaml: `
+service:
+  tick_interval: 60s
+  max_workers: 4
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+    parallelism: 3
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				if cfg.Service.MaxWorkers != 4 {
+					t.Fatalf("service.max_workers = %d, want 4", cfg.Service.MaxWorkers)
+				}
+				echo := cfg.Plugins["echo"]
+				if echo.Parallelism != 3 {
+					t.Fatalf("echo.parallelism = %d, want 3", echo.Parallelism)
+				}
+			},
+		},
+		{
+			name: "plugin parallelism over service max_workers fails validation",
+			yaml: `
+service:
+  tick_interval: 60s
+  max_workers: 2
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+    parallelism: 3
+`,
+			wantErr: true,
+		},
+		{
+			name: "plugin parallelism below 1 fails validation",
+			yaml: `
+service:
+  tick_interval: 60s
+  max_workers: 2
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+    parallelism: -1
+`,
+			wantErr: true,
 		},
 		{
 			name: "invalid plugin_roots entries fail validation",
@@ -107,12 +179,13 @@ service:
   tick_interval: 30s
 state:
   path: ${DB_PATH}
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
-    schedule:
-      every: hourly
+    schedules:
+      - every: hourly
     config:
       api_key: ${API_KEY}
       endpoint: ${API_ENDPOINT}
@@ -143,14 +216,15 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
-    schedule:
-      every: daily
+    schedules:
+      - every: daily
     config:
-      secret: ${MISSING_VAR}
+      secret_ref: ${MISSING_VAR}
 `,
 			env:     map[string]string{}, // MISSING_VAR not set
 			wantErr: true,
@@ -163,7 +237,8 @@ service:
   log_level: invalid
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `,
 			wantErr: true,
 		},
@@ -174,7 +249,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
@@ -185,23 +261,292 @@ plugins:
 				if !test.Enabled {
 					t.Error("plugin should be enabled")
 				}
-				if test.Schedule != nil {
-					t.Error("plugin schedule should be nil when omitted")
+				if len(test.Schedules) != 0 {
+					t.Error("plugin schedules should be empty when omitted")
 				}
 			},
 		},
 		{
-			name: "schedule block requires every",
+			name: "schedule entry requires every or cron",
 			yaml: `
 service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
-    schedule: {}
+    schedules:
+      - {}
+`,
+			wantErr: true,
+		},
+		{
+			name: "cron schedule is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - cron: "*/15 * * * *"
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid cron expression",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - cron: "61 * * * *"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule cannot set both every and cron",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        cron: "*/15 * * * *"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule constraints are valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        only_between: "08:00-22:00"
+        timezone: "Australia/Sydney"
+        not_on: [saturday, 0]
+`,
+			wantErr: false,
+		},
+		{
+			name: "schedule invalid timezone",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        timezone: "Mars/Phobos"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule invalid only_between format",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        only_between: "8am-10pm"
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule invalid not_on token",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        not_on: [funday]
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule catch_up run_once is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        catch_up: run_once
+`,
+			wantErr: false,
+		},
+		{
+			name: "schedule catch_up invalid value",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        catch_up: replay
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule catch_up run_all not allowed with cron",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - cron: "*/15 * * * *"
+        catch_up: run_all
+`,
+			wantErr: true,
+		},
+		{
+			name: "schedule if_running cancel is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        if_running: cancel
+`,
+			wantErr: false,
+		},
+		{
+			name: "schedule if_running invalid value",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        if_running: replace
+`,
+			wantErr: true,
+		},
+		{
+			name: "one-shot at schedule is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - at: "2026-03-15T14:00:00Z"
+`,
+			wantErr: false,
+		},
+		{
+			name: "one-shot after schedule is valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - after: 2h
+`,
+			wantErr: false,
+		},
+		{
+			name: "one-shot at invalid timestamp",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - at: "tomorrow"
 `,
 			wantErr: true,
 		},
@@ -212,14 +557,105 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: invalid
+`,
+			wantErr: true,
+		},
+		{
+			name: "legacy schedule is unsupported",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
     schedule:
-      every: invalid
+      every: 5m
 `,
 			wantErr: true,
+		},
+		{
+			name: "schedules entries default id",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 1h
+        command: token_refresh
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				schedules := cfg.Plugins["test"].NormalizedSchedules()
+				if len(schedules) != 1 {
+					t.Fatalf("expected 1 schedule, got %d", len(schedules))
+				}
+				if schedules[0].ID != "default" {
+					t.Fatalf("expected default schedule id, got %q", schedules[0].ID)
+				}
+			},
+		},
+		{
+			name: "scheduled handle is invalid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - every: 5m
+        command: handle
+`,
+			wantErr: true,
+		},
+		{
+			name: "multiple schedules are valid",
+			yaml: `
+service:
+  tick_interval: 30s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  test:
+    enabled: true
+    schedules:
+      - id: refresh
+        every: 1h
+        command: token_refresh
+      - id: poll
+        every: 15m
+        command: poll
+`,
+			wantErr: false,
+			checkFn: func(t *testing.T, cfg *Config) {
+				test := cfg.Plugins["test"]
+				if len(test.Schedules) != 2 {
+					t.Fatalf("expected 2 schedules, got %d", len(test.Schedules))
+				}
+			},
 		},
 		{
 			name: "custom schedule interval",
@@ -228,12 +664,13 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: true
-    schedule:
-      every: 7m
+    schedules:
+      - every: 7m
 `,
 			wantErr: false,
 		},
@@ -244,7 +681,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   test:
     enabled: false
@@ -264,7 +702,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -285,7 +724,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -306,7 +746,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -327,7 +768,8 @@ service:
   tick_interval: 30s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 api:
   enabled: true
   listen: 127.0.0.1:8080
@@ -350,8 +792,11 @@ plugins:
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
 			for k, v := range tt.env {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
+				if err := os.Setenv(k, v); err != nil {
+					t.Fatalf("set env %s: %v", k, err)
+				}
+				k := k
+				t.Cleanup(func() { _ = os.Unsetenv(k) })
 			}
 
 			// Create temp config file
@@ -417,8 +862,11 @@ func TestInterpolateEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set up environment
 			for k, v := range tt.env {
-				os.Setenv(k, v)
-				defer os.Unsetenv(k)
+				if err := os.Setenv(k, v); err != nil {
+					t.Fatalf("set env %s: %v", k, err)
+				}
+				k := k
+				t.Cleanup(func() { _ = os.Unsetenv(k) })
 			}
 
 			got := interpolateEnv(tt.input)
@@ -482,14 +930,15 @@ func TestValidate(t *testing.T) {
 				Service: ServiceConfig{
 					TickInterval: 60 * time.Second,
 					LogLevel:     "info",
+					MaxWorkers:   1,
 				},
-				State:      StateConfig{Path: "./test.db"},
-				PluginsDir: "./plugins",
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
 				Plugins: map[string]PluginConf{
 					"test": {
 						Enabled: true,
-						Schedule: &ScheduleConfig{
-							Every: "hourly",
+						Schedules: []ScheduleConfig{
+							{Every: "hourly"},
 						},
 					},
 				},
@@ -499,9 +948,41 @@ func TestValidate(t *testing.T) {
 		{
 			name: "negative tick interval",
 			cfg: &Config{
-				Service:    ServiceConfig{TickInterval: -1},
-				State:      StateConfig{Path: "./test.db"},
-				PluginsDir: "./plugins",
+				Service:     ServiceConfig{TickInterval: -1},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid max workers",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 60 * time.Second,
+					LogLevel:     "info",
+					MaxWorkers:   0,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "plugin parallelism exceeds max workers",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval: 60 * time.Second,
+					LogLevel:     "info",
+					MaxWorkers:   2,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+				Plugins: map[string]PluginConf{
+					"test": {
+						Enabled:     true,
+						Parallelism: 3,
+					},
+				},
 			},
 			wantErr: true,
 		},
@@ -511,23 +992,24 @@ func TestValidate(t *testing.T) {
 				Service: ServiceConfig{
 					TickInterval: 60 * time.Second,
 					LogLevel:     "trace",
+					MaxWorkers:   1,
 				},
-				State:      StateConfig{Path: "./test.db"},
-				PluginsDir: "./plugins",
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing state path",
 			cfg: &Config{
-				Service:    ServiceConfig{TickInterval: 60 * time.Second, LogLevel: "info"},
-				State:      StateConfig{},
-				PluginsDir: "./plugins",
+				Service:     ServiceConfig{TickInterval: 60 * time.Second, LogLevel: "info"},
+				State:       StateConfig{},
+				PluginRoots: []string{"./plugins"},
 			},
 			wantErr: true,
 		},
 		{
-			name: "missing plugins dir",
+			name: "missing plugin_roots",
 			cfg: &Config{
 				Service: ServiceConfig{TickInterval: 60 * time.Second, LogLevel: "info"},
 				State:   StateConfig{Path: "./test.db"},
@@ -561,7 +1043,8 @@ service:
   log_level: info
 state:
   path: /var/lib/ductile/state.db
-plugins_dir: /usr/local/lib/ductile/plugins
+plugin_roots:
+  - /usr/local/lib/ductile/plugins
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
 		t.Fatal(err)
@@ -572,9 +1055,9 @@ plugins_dir: /usr/local/lib/ductile/plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
-      jitter: 30s
+    schedules:
+      - every: 5m
+        jitter: 30s
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "plugins.yaml"), []byte(pluginsYAML), 0644); err != nil {
 		t.Fatal(err)
@@ -599,6 +1082,96 @@ plugins:
 	}
 }
 
+func TestLoadIncludeDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	includeDir := filepath.Join(tmpDir, "includes")
+	if err := os.MkdirAll(includeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+include:
+  - includes
+
+service:
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pluginsA := `
+plugins:
+  alpha:
+    enabled: true
+`
+	pluginsB := `
+plugins:
+  beta:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(includeDir, "a.yaml"), []byte(pluginsA), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(includeDir, "b.yaml"), []byte(pluginsB), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(filepath.Join(tmpDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if _, ok := cfg.Plugins["alpha"]; !ok {
+		t.Error("alpha plugin not loaded from include directory")
+	}
+	if _, ok := cfg.Plugins["beta"]; !ok {
+		t.Error("beta plugin not loaded from include directory")
+	}
+}
+
+func TestLoadEnvironmentVarsInclude(t *testing.T) {
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+	if err := os.WriteFile(envPath, []byte("DUCTILE_TEST_NAME=envtest\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv("DUCTILE_TEST_NAME"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Unsetenv("DUCTILE_TEST_NAME") })
+
+	configYAML := `
+environment_vars:
+  include:
+    - .env
+
+service:
+  name: ${DUCTILE_TEST_NAME}
+  tick_interval: 60s
+  log_level: info
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(filepath.Join(tmpDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.Service.Name != "envtest" {
+		t.Fatalf("Service.Name = %q, want %q", cfg.Service.Name, "envtest")
+	}
+}
+
 // TestLoadMissingIncludeFile tests hard fail when included file is missing.
 func TestLoadMissingIncludeFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -612,7 +1185,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -644,8 +1218,8 @@ func TestLoadAbsoluteIncludePath(t *testing.T) {
 plugins:
   test:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	pluginsPath := filepath.Join(tmpDir, "plugins.yaml")
 	if err := os.WriteFile(pluginsPath, []byte(pluginsYAML), 0644); err != nil {
@@ -661,7 +1235,8 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `, pluginsPath)
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -710,7 +1285,8 @@ state:
 	configYAML := `
 include:
   - a.yaml
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -747,7 +1323,11 @@ func TestHashVerification(t *testing.T) {
 
 	// Create tokens.yaml (scope file)
 	tokensYAML := `
-api_key: original-secret
+tokens:
+  - name: test
+    key: original-secret
+    scopes_file: scopes/test.json
+    scopes_hash: blake3:deadbeef
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0600); err != nil {
 		t.Fatal(err)
@@ -762,12 +1342,13 @@ service:
   tick_interval: 60s
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -786,7 +1367,11 @@ plugins:
 
 	// Modify tokens.yaml (tamper with it)
 	tamperedYAML := `
-api_key: tampered-secret
+tokens:
+  - name: test
+    key: tampered-secret
+    scopes_file: scopes/test.json
+    scopes_hash: blake3:deadbeef
 `
 	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tamperedYAML), 0600); err != nil {
 		t.Fatal(err)
@@ -837,7 +1422,7 @@ include:
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(secretsDir, "tokens.yaml"), []byte("api_key: secret\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(secretsDir, "tokens.yaml"), []byte("tokens:\n  - name: test\n    key: secret\n    scopes_file: scopes/test.json\n    scopes_hash: blake3:deadbeef\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(hooksDir, "webhooks.yaml"), []byte("listen: :8080\n"), 0600); err != nil {
@@ -890,6 +1475,166 @@ service:
 	}
 }
 
+func TestLoadFailsWhenWebhookSecretRefTokenIsMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	configYAML := `
+include:
+  - tokens.yaml
+  - webhooks.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+webhooks:
+  listen: "127.0.0.1:8091"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	webhooksYAML := `
+webhooks:
+  endpoints:
+    - path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(tmpDir)
+	if err == nil {
+		t.Fatal("Load() succeeded, want missing webhook token error")
+	}
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+		t.Fatalf("Load() error = %v, want missing webhook token message", err)
+	}
+}
+
+func TestLoadAcceptsIncludedStandaloneWebhooksFileNestedShape(t *testing.T) {
+	tmpDir := t.TempDir()
+	configYAML := `
+include:
+  - tokens.yaml
+  - webhooks.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+webhooks:
+  listen: "127.0.0.1:8091"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens:\n  - name: github_webhook_secret\n    key: test-secret\n    scopes_file: scopes/webhook.json\n    scopes_hash: blake3:dummy\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	webhooksYAML := `
+webhooks:
+  endpoints:
+    - path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "webhook.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpDir)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.Webhooks == nil || len(cfg.Webhooks.Endpoints) != 1 {
+		t.Fatalf("cfg.Webhooks.Endpoints = %v, want 1 endpoint", cfg.Webhooks)
+	}
+	if len(cfg.Tokens) != 1 || cfg.Tokens[0].Name != "github_webhook_secret" {
+		t.Fatalf("cfg.Tokens = %v, want github_webhook_secret", cfg.Tokens)
+	}
+}
+
+func TestLoadFailsWhenWebhookSecretRefMissingFromIncludedTokensFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	configYAML := `
+include:
+  - tokens.yaml
+  - webhooks.yaml
+
+service:
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+webhooks:
+  listen: "127.0.0.1:8091"
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte("tokens: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	webhooksYAML := `
+webhooks:
+  endpoints:
+    - path: /webhook/github
+      plugin: echo
+      secret_ref: github_webhook_secret
+      signature_header: X-Hub-Signature-256
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(tmpDir)
+	if err == nil {
+		t.Fatal("Load() succeeded, want missing webhook token error")
+	}
+	if !contains(err.Error(), `secret_ref "github_webhook_secret" not found in tokens.yaml`) {
+		t.Fatalf("Load() error = %v, want missing webhook token message", err)
+	}
+}
+
 // TestDeepMerge tests deep merging of included configs.
 func TestDeepMerge(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -922,12 +1667,13 @@ include:
 
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
@@ -963,12 +1709,13 @@ service:
   log_level: info
 state:
   path: ./test.db
-plugins_dir: ./plugins
+plugin_roots:
+  - ./plugins
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
+    schedules:
+      - every: 5m
 `
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(legacyYAML), 0644); err != nil {

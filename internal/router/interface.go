@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
 // PipelineInfo describes a loaded pipeline's execution properties.
@@ -53,4 +54,6 @@ type Engine interface {
 	GetPipelineByName(name string) *PipelineInfo
 	// GetEntryDispatches returns the initial jobs to enqueue for a named pipeline.
 	GetEntryDispatches(pipelineName string, event protocol.Event) ([]Dispatch, error)
+	// GetNode returns the pipeline node for the given pipeline and step IDs.
+	GetNode(pipelineName string, stepID string) (dsl.Node, bool)
 }

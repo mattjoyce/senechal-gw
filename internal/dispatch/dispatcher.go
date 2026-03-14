@@ -23,6 +23,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
@@ -36,6 +37,13 @@ const (
 
 	nonRetryableExitCode = 78
 )
+
+// workerResult is sent by a worker goroutine when it finishes executing a job.
+type workerResult struct {
+	jobID     string
+	plugin    string
+	dedupeKey string // empty if job had no dedupe key
+}
 
 // Dispatcher dequeues jobs and executes them by spawning plugin subprocesses.
 type Dispatcher struct {
@@ -80,62 +88,144 @@ func New(
 	}
 }
 
-// Start runs the main dispatch loop. It dequeues jobs serially and executes them one at a time.
+// Start runs the main dispatch loop with bounded concurrency. It tracks active
+// workers globally and per-plugin, filling available slots each tick or when a
+// worker completes. When cfg.Service.MaxWorkers == 1 (the default) this behaves
+// identically to the original serial dispatcher.
+//
 // This is a blocking call that runs until ctx is cancelled.
 func (d *Dispatcher) Start(ctx context.Context) error {
-	d.logger.Info("dispatch loop started")
+	maxWorkers := d.cfg.Service.MaxWorkers
+	if maxWorkers <= 0 {
+		maxWorkers = 1
+	}
+
+	d.logger.Info("dispatch loop started", "max_workers", maxWorkers)
 	defer d.logger.Info("dispatch loop stopped")
 
-	ticker := time.NewTicker(1 * time.Second) // Poll queue every second
+	// Concurrency tracking — only accessed by the coordinator goroutine (no lock needed).
+	activeTotal := 0
+	activeByPlugin := make(map[string]int)
+	activeKeys := make(map[string]struct{})
+
+	workerDone := make(chan workerResult, maxWorkers)
+
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	// fillWorkers tries to dequeue eligible jobs until all worker slots are full
+	// or no eligible work remains.
+	fillWorkers := func() {
+		for activeTotal < maxWorkers {
+			// Build skip list: plugins at their parallelism cap
+			var skipPlugins []string
+			for pluginName, count := range activeByPlugin {
+				limit := d.pluginParallelism(pluginName)
+				if count >= limit {
+					skipPlugins = append(skipPlugins, pluginName)
+				}
+			}
+
+			// Build active concurrency keys list
+			var activeKeySlice []string
+			for k := range activeKeys {
+				activeKeySlice = append(activeKeySlice, k)
+			}
+
+			job, err := d.queue.DequeueEligible(ctx, skipPlugins, activeKeySlice)
+			if err != nil {
+				d.logger.Error("failed to dequeue eligible job", "error", err)
+				return
+			}
+			if job == nil {
+				return // No eligible work
+			}
+
+			// Track this worker
+			activeTotal++
+			activeByPlugin[job.Plugin]++
+			dedupeKey := ""
+			if job.DedupeKey != nil {
+				dedupeKey = *job.DedupeKey
+				activeKeys[dedupeKey] = struct{}{}
+			}
+
+			d.logger.Debug("dispatching job",
+				"job_id", job.ID,
+				"plugin", job.Plugin,
+				"active_total", activeTotal,
+				"active_plugin", activeByPlugin[job.Plugin],
+			)
+
+			// Launch worker goroutine
+			go func(j *queue.Job, dk string) {
+				d.executeJob(ctx, j)
+				workerDone <- workerResult{
+					jobID:     j.ID,
+					plugin:    j.Plugin,
+					dedupeKey: dk,
+				}
+			}(job, dedupeKey)
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			// Drain the queue: process all pending jobs as fast as possible.
-			for {
-				processed, err := d.processNextJob(ctx)
-				if err != nil {
-					d.logger.Error("failed to process job", "error", err)
-					// Continue processing - don't crash the loop on individual job errors
-				}
-				if !processed {
-					break
-				}
-
-				// Check for cancellation between jobs to avoid starvation.
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
+			// Drain active workers before returning
+			d.logger.Info("dispatch loop shutting down, draining workers", "active", activeTotal)
+			for activeTotal > 0 {
+				res := <-workerDone
+				activeTotal--
+				activeByPlugin[res.plugin]--
+				if res.dedupeKey != "" {
+					delete(activeKeys, res.dedupeKey)
 				}
 			}
+			return ctx.Err()
+
+		case res := <-workerDone:
+			activeTotal--
+			activeByPlugin[res.plugin]--
+			if activeByPlugin[res.plugin] <= 0 {
+				delete(activeByPlugin, res.plugin)
+			}
+			if res.dedupeKey != "" {
+				delete(activeKeys, res.dedupeKey)
+			}
+			// A slot freed up — try to fill
+			fillWorkers()
+
+		case <-ticker.C:
+			fillWorkers()
 		}
 	}
+}
+
+// pluginParallelism returns the effective parallelism limit for a plugin.
+//
+// If a plugin manifest declares concurrency_safe: false, it runs serial by
+// default (limit=1). Operators can still explicitly override via config by
+// setting plugins.<name>.parallelism > 1.
+func (d *Dispatcher) pluginParallelism(pluginName string) int {
+	limit := 1
+	if pc, ok := d.cfg.Plugins[pluginName]; ok && pc.Parallelism > 0 {
+		limit = pc.Parallelism
+	}
+
+	if plug, ok := d.registry.Get(pluginName); ok && !plug.ConcurrencySafe {
+		if limit <= 1 {
+			return 1
+		}
+		// Explicit operator override via config (>1) is honored.
+	}
+
+	return limit
 }
 
 // ExecuteJob runs a single job by spawning the plugin subprocess.
 func (d *Dispatcher) ExecuteJob(ctx context.Context, job *queue.Job) {
 	d.executeJob(ctx, job)
-}
-
-// processNextJob dequeues the next job and executes it.
-// Returns true if a job was processed, false if the queue was empty.
-func (d *Dispatcher) processNextJob(ctx context.Context) (bool, error) {
-	job, err := d.queue.Dequeue(ctx)
-	if err != nil {
-		return false, fmt.Errorf("dequeue: %w", err)
-	}
-	if job == nil {
-		// Queue is empty, nothing to do
-		return false, nil
-	}
-
-	// Execute the job
-	d.executeJob(ctx, job)
-	return true, nil
 }
 
 // executeJob runs a single job by spawning the plugin subprocess.
@@ -149,6 +239,36 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		"attempt":       job.Attempt,
 		"parent_job_id": deref(job.ParentJobID),
 	})
+
+	preflight, err := d.preflightJob(ctx, job)
+	if err != nil {
+		errMsg := fmt.Sprintf("job preflight failed: %v", err)
+		jobLogger.Error(errMsg)
+		d.events.Publish("job.preflight", map[string]any{
+			"job_id":   job.ID,
+			"plugin":   job.Plugin,
+			"command":  job.Command,
+			"decision": "fail",
+			"reason":   errMsg,
+		})
+		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	d.events.Publish("job.preflight", map[string]any{
+		"job_id":        job.ID,
+		"plugin":        job.Plugin,
+		"command":       job.Command,
+		"decision":      string(preflight.decision),
+		"reason":        preflight.reason,
+		"workspace_dir": preflight.workspaceDir,
+	})
+	if preflight.decision == preflightDecisionSkip {
+		d.skipJob(ctx, jobLogger, job, preflight.requestContext, preflight.reason)
+		return
+	}
+
+	requestContext := preflight.requestContext
+	workspaceDir := preflight.workspaceDir
 
 	// Get plugin from registry
 	plug, ok := d.registry.Get(job.Plugin)
@@ -195,22 +315,6 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	timeout := d.getTimeout(pluginCfg.Timeouts, job.Command)
 	deadline := time.Now().Add(timeout)
 
-	workspaceDir, err := d.ensureWorkspaceForJob(ctx, job)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to prepare workspace: %v", err)
-		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
-		return
-	}
-
-	requestContext, err := d.loadRequestContext(ctx, job)
-	if err != nil {
-		errMsg := fmt.Sprintf("failed to load event context: %v", err)
-		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
-		return
-	}
-
 	// Build protocol request
 	req := &protocol.Request{
 		Protocol:     2,
@@ -221,6 +325,15 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		Context:      requestContext,
 		WorkspaceDir: workspaceDir,
 		DeadlineAt:   deadline,
+	}
+
+	// Include payload if present
+	if len(job.Payload) > 0 {
+		if err := json.Unmarshal(job.Payload, &req.Payload); err != nil {
+			// If it's a 'handle' command, it might be a protocol.Event wrapper
+			// We try to unmarshal into Payload first, if it's just a JSON object.
+			jobLogger.Debug("payload is not a simple JSON object, attempting event unmarshal for handle")
+		}
 	}
 
 	// For handle command, parse and include event payload
@@ -237,7 +350,18 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		// Automatically merge accumulated context into the event payload
 		// so plugins only have to look in one place. Immediate event data wins.
 		if event.Payload == nil {
-			event.Payload = make(map[string]any)
+			if event.Type == "" {
+				// Raw payload (e.g. webhook body) — not a protocol.Event wrapper.
+				// Promote the raw JSON into event.Payload so switch/pipeline plugins
+				// can address fields via payload.* without special-casing.
+				var raw map[string]any
+				if err := json.Unmarshal(job.Payload, &raw); err == nil {
+					event.Payload = raw
+				}
+			}
+			if event.Payload == nil {
+				event.Payload = make(map[string]any)
+			}
 		}
 		for k, v := range requestContext {
 			if _, exists := event.Payload[k]; !exists {
@@ -322,6 +446,16 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Process events (routing + orchestration)
 	if len(resp.Events) > 0 {
+		if strings.TrimSpace(resp.Result) != "" {
+			for i := range resp.Events {
+				if resp.Events[i].Payload == nil {
+					resp.Events[i].Payload = make(map[string]any)
+				}
+				if _, exists := resp.Events[i].Payload["result"]; !exists {
+					resp.Events[i].Payload["result"] = resp.Result
+				}
+			}
+		}
 		if err := d.routeEvents(ctx, job, resp.Events, jobLogger); err != nil {
 			errMsg := fmt.Sprintf("failed to route events: %v", err)
 			jobLogger.Error(errMsg)
@@ -379,9 +513,16 @@ func (d *Dispatcher) spawnPlugin(
 	// Write request to stdin in a goroutine
 	writeErr := make(chan error, 1)
 	go func() {
-		defer stdin.Close()
 		if err := protocol.EncodeRequest(stdin, req); err != nil {
+			if closeErr := stdin.Close(); closeErr != nil {
+				writeErr <- fmt.Errorf("encode request: %w (close stdin: %v)", err, closeErr)
+				return
+			}
 			writeErr <- fmt.Errorf("encode request: %w", err)
+			return
+		}
+		if err := stdin.Close(); err != nil {
+			writeErr <- fmt.Errorf("close stdin: %w", err)
 			return
 		}
 		writeErr <- nil
@@ -541,6 +682,7 @@ func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int
 	jitter := time.Duration(0)
 	maxJitter := base / 4
 	if maxJitter > 0 {
+		// #nosec G404 -- jitter is non-cryptographic scheduling noise.
 		jitter = time.Duration(rand.Int63n(int64(maxJitter) + 1))
 	}
 
@@ -591,20 +733,27 @@ func (d *Dispatcher) ensureWorkspaceForJob(ctx context.Context, job *queue.Job) 
 }
 
 func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (map[string]any, error) {
+	out := make(map[string]any)
+	out["ductile_plugin"] = job.Plugin
+
 	if d.contexts == nil || job.EventContextID == nil {
-		return nil, nil
+		return out, nil
 	}
 
 	eventCtx, err := d.contexts.Get(ctx, *job.EventContextID)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]any)
-	if len(eventCtx.AccumulatedJSON) == 0 {
-		return out, nil
+	if len(eventCtx.AccumulatedJSON) > 0 {
+		if err := json.Unmarshal(eventCtx.AccumulatedJSON, &out); err != nil {
+			return nil, err
+		}
 	}
-	if err := json.Unmarshal(eventCtx.AccumulatedJSON, &out); err != nil {
-		return nil, err
+	if eventCtx.PipelineName != "" {
+		out["ductile_pipeline"] = eventCtx.PipelineName
+	}
+	if eventCtx.StepID != "" {
+		out["ductile_step_id"] = eventCtx.StepID
 	}
 	return out, nil
 }
@@ -660,14 +809,30 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 			// Auto-propagate designated context fields from input event to output event
 			// (if not already present in output). This eliminates manual propagation loops
 			// in plugins. Context fields: pattern, prompt, model, output_dir, output_path, filename.
-			if next.Event.Payload != nil && len(events) > 0 && events[i].Payload != nil {
+			if next.Event.Payload != nil && ev.Payload != nil {
 				contextFields := []string{"pattern", "prompt", "model", "output_dir", "output_path", "filename"}
 				for _, field := range contextFields {
 					if _, exists := next.Event.Payload[field]; !exists {
-						if val, ok := events[i].Payload[field]; ok {
+						if val, ok := ev.Payload[field]; ok {
 							next.Event.Payload[field] = val
 						}
 					}
+				}
+			}
+			if next.Event.Payload == nil {
+				next.Event.Payload = make(map[string]any)
+			}
+			if _, exists := next.Event.Payload["ductile_upstream_plugin"]; !exists {
+				next.Event.Payload["ductile_upstream_plugin"] = job.Plugin
+			}
+			if sourcePipeline != "" {
+				if _, exists := next.Event.Payload["ductile_upstream_pipeline"]; !exists {
+					next.Event.Payload["ductile_upstream_pipeline"] = sourcePipeline
+				}
+			}
+			if sourceStepID != "" {
+				if _, exists := next.Event.Payload["ductile_upstream_step_id"]; !exists {
+					next.Event.Payload["ductile_upstream_step_id"] = sourceStepID
 				}
 			}
 
@@ -699,6 +864,9 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 				ParentJobID:    strPtrOrNil(next.ParentJobID),
 				EventContextID: contextID,
 				SourceEventID:  strPtrOrNil(sourceEventID),
+			}
+			if dedupeKey := strings.TrimSpace(next.Event.DedupeKey); dedupeKey != "" {
+				enqueueReq.DedupeKey = &dedupeKey
 			}
 			childJobID, err := d.queue.Enqueue(ctx, enqueueReq)
 			if err != nil {
@@ -734,6 +902,168 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		}
 	}
 
+	return nil
+}
+
+type preflightDecision string
+
+const (
+	preflightDecisionRun  preflightDecision = "run"
+	preflightDecisionSkip preflightDecision = "skip"
+)
+
+type jobPreflight struct {
+	decision       preflightDecision
+	reason         string
+	requestContext map[string]any
+	workspaceDir   string
+}
+
+type conditionEvaluation struct {
+	shouldSkip bool
+	reason     string
+}
+
+func (d *Dispatcher) preflightJob(ctx context.Context, job *queue.Job) (jobPreflight, error) {
+	requestContext, err := d.loadRequestContext(ctx, job)
+	if err != nil {
+		return jobPreflight{}, fmt.Errorf("load event context: %w", err)
+	}
+
+	// Prepare the workspace before evaluating first-class control-flow.
+	//
+	// A skipped step can still have downstream successors, and those children may
+	// inherit/clone the parent's workspace even though no plugin process ran for
+	// the skipped node. Treating workspace creation as pre-execution assurance
+	// keeps the data-plane semantics consistent for both run and skip outcomes.
+	workspaceDir, err := d.ensureWorkspaceForJob(ctx, job)
+	if err != nil {
+		return jobPreflight{}, fmt.Errorf("prepare workspace: %w", err)
+	}
+
+	if d.router != nil {
+		evaluation, err := d.evaluateStepCondition(ctx, job, requestContext)
+		if err != nil {
+			return jobPreflight{}, fmt.Errorf("evaluate step condition: %w", err)
+		}
+		if evaluation.shouldSkip {
+			return jobPreflight{
+				decision:       preflightDecisionSkip,
+				reason:         evaluation.reason,
+				requestContext: requestContext,
+				workspaceDir:   workspaceDir,
+			}, nil
+		}
+	}
+
+	return jobPreflight{
+		decision:       preflightDecisionRun,
+		requestContext: requestContext,
+		workspaceDir:   workspaceDir,
+	}, nil
+}
+
+func (d *Dispatcher) evaluateStepCondition(_ context.Context, job *queue.Job, requestContext map[string]any) (conditionEvaluation, error) {
+	if d.router == nil {
+		return conditionEvaluation{}, nil
+	}
+
+	pipelineName, _ := requestContext["ductile_pipeline"].(string)
+	stepID, _ := requestContext["ductile_step_id"].(string)
+	if pipelineName == "" || stepID == "" {
+		return conditionEvaluation{}, nil
+	}
+
+	node, ok := d.router.GetNode(pipelineName, stepID)
+	if !ok || node.Condition == nil {
+		return conditionEvaluation{}, nil
+	}
+
+	scope := conditions.Scope{
+		Payload: eventPayloadForCondition(job.Payload),
+		Context: requestContext,
+		Config:  pluginConfigMap(d.cfg, job.Plugin),
+	}
+	matched, err := conditions.Eval(node.Condition, scope)
+	if err != nil {
+		return conditionEvaluation{}, err
+	}
+	if matched {
+		return conditionEvaluation{}, nil
+	}
+	return conditionEvaluation{shouldSkip: true, reason: "if condition evaluated false"}, nil
+}
+
+func pluginConfigMap(cfg *config.Config, pluginName string) map[string]any {
+	if cfg == nil {
+		return map[string]any{}
+	}
+	pluginCfg, ok := cfg.Plugins[pluginName]
+	if !ok || pluginCfg.Config == nil {
+		return map[string]any{}
+	}
+	return pluginCfg.Config
+}
+
+func eventPayloadForCondition(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+
+	var event protocol.Event
+	if err := json.Unmarshal(raw, &event); err == nil && (event.Type != "" || event.Payload != nil) {
+		if event.Payload != nil {
+			return event.Payload
+		}
+		return map[string]any{}
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err == nil {
+		return payload
+	}
+	return map[string]any{}
+}
+
+func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queue.Job, requestContext map[string]any, reason string) {
+	logger.Info("job skipped", "reason", reason)
+	d.events.Publish("job.skipped", map[string]any{
+		"job_id":  job.ID,
+		"plugin":  job.Plugin,
+		"command": job.Command,
+		"reason":  reason,
+	})
+
+	result, err := json.Marshal(map[string]any{
+		"status": "skipped",
+		"reason": reason,
+	})
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to marshal skipped job result: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	// Route successors before marking the skipped job terminal.
+	//
+	// A skipped first-class `if` step can still expand the execution tree. For
+	// synchronous callers, notifying completion before successor enqueue can make
+	// the tree appear finished too early. Preflight now ensures the skipped job
+	// already has a workspace, so downstream clone/inheritance semantics remain
+	// valid even though no plugin process ran.
+	if err := d.routeSkippedStepSuccessors(ctx, logger, job, reason); err != nil {
+		errMsg := fmt.Sprintf("failed to route successors after skip: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusSkipped, result, &reason, nil)
+}
+
+func (d *Dispatcher) routeSkippedStepSuccessors(ctx context.Context, logger *slog.Logger, job *queue.Job, reason string) error {
+	if err := d.routeEvents(ctx, job, []protocol.Event{{Type: "ductile.step.skipped", Payload: map[string]any{"reason": reason}}}, logger); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -848,13 +1178,18 @@ func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeo
 		d.mu.Unlock()
 	}()
 
-	// Initial check in case it's already done
-	complete, err := d.checkJobTreeComplete(ctx, rootJobID)
+	// Initial check in case it's already done.
+	//
+	// We require a settled tree, not just a single "no running jobs" snapshot.
+	// Structural control-flow such as a skipped `if` step can make the current job
+	// terminal before all downstream child rows are visible to a concurrent waiter.
+	// A second confirmation read avoids returning a truncated synchronous tree.
+	results, complete, err := d.settledJobTree(ctx, rootJobID)
 	if err != nil {
 		return nil, fmt.Errorf("initial tree check: %w", err)
 	}
 	if complete {
-		return d.queue.GetJobTree(ctx, rootJobID)
+		return results, nil
 	}
 
 	// Set up timeout
@@ -868,16 +1203,59 @@ func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeo
 		case <-timer.C:
 			return nil, fmt.Errorf("timeout waiting for job tree completion")
 		case <-ch:
-			// Something in the tree finished, check if the whole tree is done
-			complete, err := d.checkJobTreeComplete(ctx, rootJobID)
+			// Something in the tree finished. Recheck until the visible tree is settled.
+			results, complete, err := d.settledJobTree(ctx, rootJobID)
 			if err != nil {
 				return nil, fmt.Errorf("tree completion check: %w", err)
 			}
 			if complete {
-				return d.queue.GetJobTree(ctx, rootJobID)
+				return results, nil
 			}
 		}
 	}
+}
+
+func (d *Dispatcher) settledJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, bool, error) {
+	results, err := d.queue.GetJobTree(ctx, rootJobID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(results) == 0 {
+		return nil, false, fmt.Errorf("job %s not found", rootJobID)
+	}
+	if !jobTreeComplete(results) {
+		return results, false, nil
+	}
+
+	// Re-read once more before declaring success.
+	// This tiny confirmation step protects synchronous callers from seeing a
+	// truncated tree during structural transitions (for example, a skipped root
+	// step whose successors have already been enqueued but were not visible on the
+	// previous snapshot).
+	confirmed, err := d.queue.GetJobTree(ctx, rootJobID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(confirmed) == 0 {
+		return nil, false, fmt.Errorf("job %s not found", rootJobID)
+	}
+	if !jobTreeComplete(confirmed) {
+		return confirmed, false, nil
+	}
+	if len(confirmed) != len(results) {
+		return confirmed, false, nil
+	}
+	return confirmed, true, nil
+}
+
+func jobTreeComplete(results []*queue.JobResult) bool {
+	for _, res := range results {
+		switch res.Status {
+		case queue.StatusQueued, queue.StatusRunning:
+			return false
+		}
+	}
+	return true
 }
 
 // notifyCompletion signals any waiters that a job has finished.
@@ -895,29 +1273,6 @@ func (d *Dispatcher) notifyCompletion(jobID string) {
 			// Channel already has a pending notification
 		}
 	}
-}
-
-// checkJobTreeComplete returns true if the root job and all its descendants are in terminal states.
-func (d *Dispatcher) checkJobTreeComplete(ctx context.Context, rootJobID string) (bool, error) {
-	// Query database for tree status
-	// We include timed_out, dead, cancelled (if added later) as terminal.
-	results, err := d.queue.GetJobTree(ctx, rootJobID)
-	if err != nil {
-		return false, err
-	}
-
-	if len(results) == 0 {
-		return false, fmt.Errorf("job %s not found", rootJobID)
-	}
-
-	for _, res := range results {
-		switch res.Status {
-		case queue.StatusQueued, queue.StatusRunning:
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
 
 // truncateStderr truncates stderr to maxStderrBytes.

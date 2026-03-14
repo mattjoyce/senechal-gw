@@ -31,6 +31,8 @@ type Command struct {
 	Description  string      `yaml:"description,omitempty"`
 	InputSchema  any         `yaml:"input_schema,omitempty"`
 	OutputSchema any         `yaml:"output_schema,omitempty"`
+	Idempotent   *bool       `yaml:"idempotent,omitempty"`
+	RetrySafe    *bool       `yaml:"retry_safe,omitempty"`
 }
 
 // GetFullInputSchema returns the expanded JSON Schema for the input.
@@ -77,19 +79,8 @@ func expandSchema(schema any) any {
 
 // Commands is a list of supported commands.
 //
-// Backward-compatible formats:
-//   - legacy string array: commands: [poll, health]
-//   - object array: commands: [{name: poll, type: write}, {name: health, type: read}]
+// Commands must be expressed as objects: commands: [{name: poll, type: write}]
 type Commands []Command
-
-func defaultCommandType(name string) CommandType {
-	// Conservative default for legacy manifests: only "health" is treated as read.
-	// Everything else is considered write until explicitly annotated.
-	if name == "health" {
-		return CommandTypeRead
-	}
-	return CommandTypeWrite
-}
 
 func (c *Commands) UnmarshalYAML(n *yaml.Node) error {
 	if n == nil {
@@ -102,26 +93,24 @@ func (c *Commands) UnmarshalYAML(n *yaml.Node) error {
 
 	out := make([]Command, 0, len(n.Content))
 	for _, item := range n.Content {
-		switch item.Kind {
-		case yaml.ScalarNode:
-			name := strings.TrimSpace(item.Value)
-			out = append(out, Command{
-				Name: name,
-				Type: defaultCommandType(name),
-			})
-		case yaml.MappingNode:
-			var tmp Command
-			if err := item.Decode(&tmp); err != nil {
-				return fmt.Errorf("invalid command object: %w", err)
-			}
-			tmp.Name = strings.TrimSpace(tmp.Name)
-			if tmp.Type == "" {
-				tmp.Type = defaultCommandType(tmp.Name)
-			}
-			out = append(out, tmp)
-		default:
-			return fmt.Errorf("invalid command entry (must be string or object)")
+		if item.Kind != yaml.MappingNode {
+			return fmt.Errorf("invalid command entry (must be object with name/type)")
 		}
+		var tmp Command
+		if err := item.Decode(&tmp); err != nil {
+			return fmt.Errorf("invalid command object: %w", err)
+		}
+		tmp.Name = strings.TrimSpace(tmp.Name)
+		if tmp.Name == "" {
+			return fmt.Errorf("command name is required")
+		}
+		if tmp.Type == "" {
+			return fmt.Errorf("command %q is missing required type", tmp.Name)
+		}
+		if !tmp.Type.valid() {
+			return fmt.Errorf("command %q has invalid type %q", tmp.Name, tmp.Type)
+		}
+		out = append(out, tmp)
 	}
 
 	*c = out
@@ -137,6 +126,7 @@ type Manifest struct {
 	Protocol        int         `yaml:"protocol"`
 	Entrypoint      string      `yaml:"entrypoint"`
 	Description     string      `yaml:"description,omitempty"`
+	ConcurrencySafe *bool       `yaml:"concurrency_safe,omitempty"`
 	Commands        Commands    `yaml:"commands"`
 	ConfigKeys      *ConfigKeys `yaml:"config_keys,omitempty"`
 }
@@ -157,6 +147,7 @@ type Plugin struct {
 	Protocol        int      // Protocol version.
 	Version         string   // Plugin version.
 	Description     string   // Human-readable description.
+	ConcurrencySafe bool     // Manifest concurrency safety hint (default true when unspecified).
 	Commands        Commands // Supported commands (poll, handle, health, init).
 	ConfigKeys      *ConfigKeys
 }

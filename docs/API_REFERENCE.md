@@ -13,19 +13,21 @@ All API requests (except `/healthz`, `/plugins`, `/skills`, `/openapi.json`, `/.
 Authorization: Bearer <your_token>
 ```
 
-Ductile supports two authentication modes:
-1. **Legacy API Key**: A single `api_key` configured in `api.auth`.
-2. **Scoped Tokens**: A list of `tokens` with specific scopes (e.g., `read:*`, `plugin:rw`).
+Ductile uses scoped tokens configured in `api.auth.tokens`, with explicit scopes (e.g., `plugin:rw`, `jobs:ro`, `events:ro`).
 
 ---
 
 ## Endpoints
 
-### 1. Manual Plugin Execution
+### 1. Direct Plugin Execution
 
-Trigger a plugin command immediately. This enqueues a job in the work queue.
+Execute one plugin command directly. This **bypasses pipeline routing** and enqueues exactly one job.
 
-**Endpoint**: `POST /trigger/{plugin}/{command}`
+**Endpoint**: `POST /plugin/{plugin}/{command}`
+
+**Required scopes**:
+- `plugin:ro` for manifest `read` commands
+- `plugin:rw` (or `*`) for manifest `write` commands
 
 **Request Body**:
 ```json
@@ -38,12 +40,10 @@ Trigger a plugin command immediately. This enqueues a job in the work queue.
 ```
 
 **Fields**:
-- `payload` (Object, required): The JSON object that will be passed to the plugin. If the command is `handle`, this payload is automatically wrapped in an `api.trigger` event envelope.
+- `payload` (Object, optional): JSON object passed to the command.
+- For `handle`, the server wraps payload into an `api.trigger` event envelope before enqueue.
 
-**Query Parameters**:
-- `async` (Boolean, optional): If `true`, forces the request to return immediately even if a synchronous pipeline is matched.
-
-**Response (Default / Async - 202 Accepted)**:
+**Response (202 Accepted)**:
 ```json
 {
   "job_id": "uuid-v4",
@@ -53,8 +53,53 @@ Trigger a plugin command immediately. This enqueues a job in the work queue.
 }
 ```
 
-**Response (Synchronous Pipeline - 200 OK)**:
-If the trigger matches a pipeline configured with `execution_mode: synchronous`, the API will block and return the full execution tree.
+**Example (curl)**:
+```bash
+curl -X POST http://localhost:8080/plugin/echo/poll \
+  -H "Authorization: Bearer test_token" \
+  -H "Content-Type: application/json" \
+  -d '{"payload":{"message":"Hello API"}}'
+```
+
+---
+
+### 2. Explicit Pipeline Execution
+
+Trigger a named pipeline directly.
+
+**Endpoint**: `POST /pipeline/{pipeline}`
+
+**Required scopes**:
+- `plugin:rw` (or `*`)
+
+**Request Body**:
+```json
+{
+  "payload": {
+    "url": "https://example.com/article"
+  }
+}
+```
+
+**Query Parameters**:
+- `async` (Boolean, optional): If `true`, force asynchronous response.
+
+**Behavior**:
+- Pipeline entry dispatches are resolved first.
+- `execution_mode: synchronous` waits for completion unless `?async=true`.
+- Synchronous mode with multiple entry dispatches returns `400`; use `?async=true` for fan-out entry pipelines.
+
+**Response (Async default - 202 Accepted)**:
+```json
+{
+  "job_id": "uuid-v4",
+  "status": "queued",
+  "plugin": "pipeline",
+  "command": "pipeline_name"
+}
+```
+
+**Response (Synchronous success - 200 OK)**:
 ```json
 {
   "job_id": "uuid-v4",
@@ -68,40 +113,32 @@ If the trigger matches a pipeline configured with `execution_mode: synchronous`,
       "command": "command_name",
       "status": "succeeded",
       "result": { "status": "ok" }
-    },
-    {
-      "job_id": "child-uuid",
-      "plugin": "notifier",
-      "command": "handle",
-      "status": "succeeded",
-      "result": { "status": "ok" }
     }
   ]
 }
 ```
 
 **Response (Timeout - 202 Accepted)**:
-If a synchronous pipeline exceeds its `timeout` (or the system `max_sync_timeout`), it returns partial status.
 ```json
 {
   "job_id": "uuid-v4",
   "status": "running",
   "timeout_exceeded": true,
-  "message": "Pipeline still running after timeout. Check /job/uuid-v4"
+  "message": "Pipeline still running after timeout."
 }
 ```
 
 **Example (curl)**:
 ```bash
-curl -X POST http://localhost:8080/trigger/echo/poll 
-  -H "Authorization: Bearer test_token" 
-  -H "Content-Type: application/json" 
-  -d '{"payload": {"message": "Hello API"}}'
+curl -X POST http://localhost:8080/pipeline/url-to-fabric \
+  -H "Authorization: Bearer test_token" \
+  -H "Content-Type: application/json" \
+  -d '{"payload":{"url":"https://example.com"}}'
 ```
 
 ---
 
-### 2. Job Status and Results
+### 3. Job Status and Results
 
 Retrieve the current status and execution results of a job.
 
@@ -120,6 +157,7 @@ Retrieve the current status and execution results of a job.
   "completed_at": "2026-02-13T10:00:02Z",
   "result": {
     "status": "ok",
+    "result": "Echoed: Hello API",
     "events": [],
     "state_updates": {},
     "logs": [
@@ -139,7 +177,7 @@ Retrieve the current status and execution results of a job.
 
 ---
 
-### 3. Jobs List
+### 5. Jobs List
 
 List jobs with optional filtering. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
 
@@ -176,7 +214,51 @@ Results are sorted by `created_at` descending (most recent first).
 
 ---
 
-### 4. System Health
+### 6. Job Logs
+
+Query stored job log records for audit and troubleshooting. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
+
+**Endpoint**: `GET /job-logs`
+
+**Query Parameters**:
+- `job_id` (String, optional): Filter by job id.
+- `plugin` (String, optional): Exact plugin name filter.
+- `command` (String, optional): Exact command name filter.
+- `status` (String, optional): Job status filter (same values as `/jobs`).
+- `submitted_by` (String, optional): Exact submitter filter.
+- `from` (RFC3339, optional): Completed-at lower bound.
+- `to` (RFC3339, optional): Completed-at upper bound.
+- `query` (String, optional): Full-text search over `last_error`, `stderr`, and `result`.
+- `limit` (Integer, optional): Max rows returned (default 50, max 200).
+- `include_result` (Boolean, optional): Include full `result` payloads.
+
+**Response (200 OK)**:
+```json
+{
+  "logs": [
+    {
+      "job_id": "uuid-v4",
+      "log_id": "uuid-v4-1",
+      "plugin": "withings",
+      "command": "poll",
+      "status": "failed",
+      "attempt": 1,
+      "submitted_by": "api",
+      "created_at": "2026-02-21T10:00:00Z",
+      "completed_at": "2026-02-21T10:00:02Z",
+      "last_error": "token expired",
+      "stderr": "stack trace..."
+    }
+  ],
+  "total": 42
+}
+```
+
+Results are sorted by `completed_at` descending (most recent first).
+
+---
+
+### 7. System Health
 
 Unauthenticated endpoint for health checks. Typically used by monitoring tools or load balancers.
 
@@ -188,16 +270,20 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
   "status": "ok",
   "uptime_seconds": 3600,
   "queue_depth": 0,
-  "plugins_loaded": 5
+  "plugins_loaded": 5,
+  "config_path": "/etc/ductile",
+  "binary_path": "/usr/local/bin/ductile",
+  "version": "1.0.0-rc.1"
 }
 ```
 
 ---
 
-### 5. OpenAPI Discovery
+### 7. OpenAPI Discovery
 
 Unauthenticated endpoints for agent-driven capability discovery. Two-tier design:
 - **`/plugins`** — lightweight catalog for initial discovery (semantic signaling, minimal tokens)
+- **`/skills`** — unified skill index (atomic plugin skills + orchestrated pipeline skills)
 - **`/openapi.json`** — global OpenAPI 3.1 spec for all plugins
 - **`/plugin/{name}/openapi.json`** — scoped OpenAPI 3.1 spec for one chosen plugin
 - **`/.well-known/ai-plugin.json`** — OpenAI-style discovery manifest that points at `/openapi.json`
@@ -277,12 +363,12 @@ Returns `404` if the plugin is not found.
 
 ---
 
-### 6. Plugin Discovery
+### 8. Plugin Discovery
 
 List available plugins and retrieve their metadata/schemas. The list endpoints are unauthenticated to support lightweight agent discovery.
 
 #### List Plugins
-**Endpoint**: `GET /plugins` (alias: `GET /skills`) — **No auth required**
+**Endpoint**: `GET /plugins` — **No auth required**
 
 **Response (200 OK)**:
 ```json
@@ -300,6 +386,8 @@ List available plugins and retrieve their metadata/schemas. The list endpoints a
 
 #### Get Plugin Details
 **Endpoint**: `GET /plugin/{name}`
+
+Requires `plugin:ro`, `plugin:rw`, or `*` scope.
 
 **Response (200 OK)**:
 ```json
@@ -323,6 +411,43 @@ List available plugins and retrieve their metadata/schemas. The list endpoints a
   ]
 }
 ```
+
+---
+
+### 9. Skills Index
+
+Unified, operator-facing capability index across both atomic plugin commands and named pipelines.
+
+#### List Skills
+**Endpoint**: `GET /skills` — **No auth required**
+
+**Response (200 OK)**:
+```json
+{
+  "skills": [
+    {
+      "name": "plugin.echo.poll",
+      "kind": "plugin",
+      "description": "Emits echo.poll events",
+      "endpoint": "/plugin/echo/poll",
+      "tier": "WRITE",
+      "plugin": "echo",
+      "command": "poll"
+    },
+    {
+      "name": "pipeline.discord-fabric",
+      "kind": "pipeline",
+      "endpoint": "/pipeline/discord-fabric",
+      "pipeline": "discord-fabric",
+      "trigger": "discord.message",
+      "execution_mode": "synchronous",
+      "timeout_secs": 30
+    }
+  ]
+}
+```
+
+Pipeline entries default to `execution_mode: "asynchronous"` when unset in config.
 
 ---
 

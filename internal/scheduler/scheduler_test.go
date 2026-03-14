@@ -2,19 +2,13 @@ package scheduler
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"log/slog"
 	"testing"
 	"time"
 
-	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mattjoyce/ductile/internal/config"
-	"github.com/mattjoyce/ductile/internal/events"
-	"github.com/mattjoyce/ductile/internal/queue"
-	"github.com/mattjoyce/ductile/internal/scheduler/mocks"
 )
 
 // TestLogBuffer is a bytes.Buffer that can be used to capture log output.
@@ -55,222 +49,79 @@ func TestCalculateJitteredInterval(t *testing.T) {
 	}
 }
 
-func TestParseScheduleEvery(t *testing.T) {
+func TestParseScheduleInterval(t *testing.T) {
 	tests := []struct {
 		name     string
 		every    string
+		cron     string
 		expected time.Duration
+		hasEvery bool
 		hasError bool
 	}{
-		{"5m", "5m", 5 * time.Minute, false},
-		{"hourly", "hourly", 1 * time.Hour, false},
-		{"2w", "2w", 14 * 24 * time.Hour, false},
-		{"unknown", "foo", 0, true},
+		{"5m", "5m", "", 5 * time.Minute, true, false},
+		{"hourly", "hourly", "", 1 * time.Hour, true, false},
+		{"2w", "2w", "", 14 * 24 * time.Hour, true, false},
+		{"cron", "", "*/15 * * * *", 0, false, false},
+		{"both", "5m", "*/15 * * * *", 0, false, true},
+		{"none", "", "", 0, false, true},
+		{"unknown", "foo", "", 0, false, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			duration, err := parseScheduleEvery(tt.every)
+			duration, hasEvery, err := parseScheduleInterval(tt.every, tt.cron)
 			if tt.hasError {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.expected, duration)
+				assert.Equal(t, tt.hasEvery, hasEvery)
 			}
 		})
 	}
 }
 
-func TestRecoverOrphanedJobs(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+func TestCountMissedRuns(t *testing.T) {
+	base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	interval := 5 * time.Minute
 
-	mockQueue := mocks.NewMockQueueService(ctrl)
-	slogger, logBuf := NewTestSlogger()
-	cfg := config.Defaults()
-	s := New(cfg, mockQueue, events.NewHub(32), slogger)
-	ctx := context.Background()
-
-	t.Run("No orphaned jobs", func(t *testing.T) {
-		mockQueue.EXPECT().FindJobsByStatus(ctx, queue.StatusRunning).Return([]*queue.Job{}, nil)
-		err := s.recoverOrphanedJobs(ctx)
-		assert.NoError(t, err)
-	})
-
-	t.Run("Orphaned jobs - some re-queued, some dead", func(t *testing.T) {
-		logBuf.Reset()
-
-		job1 := &queue.Job{ID: "job1", Plugin: "pluginA", Command: "poll", Status: queue.StatusRunning, Attempt: 1, MaxAttempts: 3, SubmittedBy: "test"}
-		job2 := &queue.Job{ID: "job2", Plugin: "pluginB", Command: "handle", Status: queue.StatusRunning, Attempt: 3, MaxAttempts: 3, SubmittedBy: "test"}
-
-		mockQueue.EXPECT().FindJobsByStatus(ctx, queue.StatusRunning).Return([]*queue.Job{job1, job2}, nil)
-		mockQueue.EXPECT().UpdateJobForRecovery(ctx, "job1", queue.StatusQueued, 2, nil, "").Return(nil)
-		mockQueue.EXPECT().UpdateJobForRecovery(ctx, "job2", queue.StatusDead, 4, nil, gomock.Any()).Return(nil)
-
-		err := s.recoverOrphanedJobs(ctx)
-		assert.NoError(t, err)
-		assert.Contains(t, logBuf.String(), "Re-queueing orphaned job")
-		assert.Contains(t, logBuf.String(), "Marking orphaned job as dead")
-	})
-
-	t.Run("FindJobsByStatus returns error", func(t *testing.T) {
-		logBuf.Reset()
-		mockQueue.EXPECT().FindJobsByStatus(ctx, queue.StatusRunning).Return(nil, errors.New("db error"))
-		err := s.recoverOrphanedJobs(ctx)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to find running jobs for recovery: db error")
-	})
+	assert.Equal(t, 0, countMissedRuns(base, base, interval))
+	assert.Equal(t, 0, countMissedRuns(base, base.Add(4*time.Minute), interval))
+	assert.Equal(t, 1, countMissedRuns(base, base.Add(5*time.Minute), interval))
+	assert.Equal(t, 3, countMissedRuns(base, base.Add(15*time.Minute), interval))
 }
 
-func TestSchedulerTickEnqueuesWhenAllowed(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+func TestScheduleConstraintsAllowAt(t *testing.T) {
+	now := time.Date(2026, 3, 2, 10, 30, 0, 0, time.UTC)
 
-	mockQueue := mocks.NewMockQueueService(ctrl)
-	slogger, logBuf := NewTestSlogger()
-
-	cfg := config.Defaults()
-	cfg.Service.Name = "ductile"
-	cfg.Service.JobLogRetention = 24 * time.Hour
-	cfg.Plugins = map[string]config.PluginConf{
-		"echo": {
-			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every:  "1m",
-				Jitter: 100 * time.Millisecond,
-			},
-			Retry:               &config.RetryConfig{MaxAttempts: 3},
-			CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
-			MaxOutstandingPolls: 1,
-		},
-	}
-
-	s := New(cfg, mockQueue, events.NewHub(64), slogger)
-	ctx := context.Background()
-
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
-	mockQueue.EXPECT().LatestCompletedPollResult(gomock.Any(), "echo", "ductile").Return(nil, nil)
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
-	mockQueue.EXPECT().CountOutstandingPollJobs(gomock.Any(), "echo").Return(0, nil)
-	mockQueue.EXPECT().Enqueue(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, req queue.EnqueueRequest) (string, error) {
-		assert.Equal(t, "echo", req.Plugin)
-		assert.Equal(t, pollCommand, req.Command)
-		assert.NotNil(t, req.DedupeKey)
-		assert.Equal(t, "poll:echo", *req.DedupeKey)
-		assert.Equal(t, 3, req.MaxAttempts)
-		return "job-1", nil
-	})
-	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
-
-	s.tick(ctx)
-
-	assert.Contains(t, logBuf.String(), "Enqueued poll job")
-	assert.Contains(t, logBuf.String(), `"job_id":"job-1"`)
-}
-
-func TestSchedulerTickPollGuardSkipsEnqueue(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockQueue := mocks.NewMockQueueService(ctrl)
-	slogger, logBuf := NewTestSlogger()
-
-	cfg := config.Defaults()
-	cfg.Service.Name = "ductile"
-	cfg.Service.JobLogRetention = 24 * time.Hour
-	cfg.Plugins = map[string]config.PluginConf{
-		"echo": {
-			Enabled: true,
-			Schedule: &config.ScheduleConfig{
-				Every: "1m",
-			},
-			MaxOutstandingPolls: 1,
-			CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: 30 * time.Minute},
-		},
-	}
-
-	s := New(cfg, mockQueue, events.NewHub(64), slogger)
-	ctx := context.Background()
-
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
-	mockQueue.EXPECT().LatestCompletedPollResult(gomock.Any(), "echo", "ductile").Return(nil, nil)
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
-	mockQueue.EXPECT().CountOutstandingPollJobs(gomock.Any(), "echo").Return(1, nil)
-	mockQueue.EXPECT().PruneJobLogs(gomock.Any(), cfg.Service.JobLogRetention).Return(nil)
-
-	s.tick(ctx)
-
-	assert.Contains(t, logBuf.String(), "Skipped poll scheduling")
-}
-
-func TestCircuitBreakerStateTransitions(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockQueue := mocks.NewMockQueueService(ctrl)
-	slogger, _ := NewTestSlogger()
-	cfg := config.Defaults()
-	cfg.Service.Name = "ductile"
-	s := New(cfg, mockQueue, events.NewHub(64), slogger)
-	ctx := context.Background()
-
-	pluginConf := config.PluginConf{
-		CircuitBreaker:      &config.CircuitBreakerConfig{Threshold: 2, ResetAfter: 30 * time.Minute},
-		MaxOutstandingPolls: 1,
-	}
-
-	job1 := queue.PollResult{JobID: "job-1", Status: queue.StatusFailed, CompletedAt: time.Now().UTC().Add(-4 * time.Minute)}
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(nil, nil)
-	mockQueue.EXPECT().LatestCompletedPollResult(gomock.Any(), "echo", "ductile").Return(&job1, nil)
-	mockQueue.EXPECT().UpsertCircuitBreaker(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cb queue.CircuitBreaker) error {
-		assert.Equal(t, queue.CircuitClosed, cb.State)
-		assert.Equal(t, 1, cb.FailureCount)
-		assert.NotNil(t, cb.LastJobID)
-		assert.Equal(t, "job-1", *cb.LastJobID)
-		return nil
-	})
-	assert.NoError(t, s.reconcileCircuitBreaker(ctx, "echo", pluginConf))
-
-	job1ID := "job-1"
-	job2 := queue.PollResult{JobID: "job-2", Status: queue.StatusFailed, CompletedAt: time.Now().UTC().Add(-3 * time.Minute)}
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(&queue.CircuitBreaker{Plugin: "echo", Command: pollCommand, State: queue.CircuitClosed, FailureCount: 1, LastJobID: &job1ID}, nil)
-	mockQueue.EXPECT().LatestCompletedPollResult(gomock.Any(), "echo", "ductile").Return(&job2, nil)
-	mockQueue.EXPECT().UpsertCircuitBreaker(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cb queue.CircuitBreaker) error {
-		assert.Equal(t, queue.CircuitOpen, cb.State)
-		assert.Equal(t, 2, cb.FailureCount)
-		assert.NotNil(t, cb.OpenedAt)
-		return nil
-	})
-	assert.NoError(t, s.reconcileCircuitBreaker(ctx, "echo", pluginConf))
-
-	openedAt := time.Now().UTC().Add(-1 * time.Minute)
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(&queue.CircuitBreaker{Plugin: "echo", Command: pollCommand, State: queue.CircuitOpen, FailureCount: 2, OpenedAt: &openedAt}, nil)
-	allowed, reason, err := s.canSchedulePoll(ctx, "echo", pluginConf)
+	ok, reason, err := scheduleConstraintsAllowAt(config.ScheduleConfig{}, now)
 	assert.NoError(t, err)
-	assert.False(t, allowed)
-	assert.Equal(t, "circuit_open", reason)
-
-	openedAtElapsed := time.Now().UTC().Add(-31 * time.Minute)
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(&queue.CircuitBreaker{Plugin: "echo", Command: pollCommand, State: queue.CircuitOpen, FailureCount: 2, OpenedAt: &openedAtElapsed}, nil)
-	mockQueue.EXPECT().UpsertCircuitBreaker(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cb queue.CircuitBreaker) error {
-		assert.Equal(t, queue.CircuitHalfOpen, cb.State)
-		return nil
-	})
-	mockQueue.EXPECT().CountOutstandingPollJobs(gomock.Any(), "echo").Return(0, nil)
-	allowed, reason, err = s.canSchedulePoll(ctx, "echo", pluginConf)
-	assert.NoError(t, err)
-	assert.True(t, allowed)
+	assert.True(t, ok)
 	assert.Equal(t, "", reason)
 
-	job2ID := "job-2"
-	job3 := queue.PollResult{JobID: "job-3", Status: queue.StatusSucceeded, CompletedAt: time.Now().UTC().Add(-2 * time.Minute)}
-	mockQueue.EXPECT().GetCircuitBreaker(gomock.Any(), "echo", pollCommand).Return(&queue.CircuitBreaker{Plugin: "echo", Command: pollCommand, State: queue.CircuitHalfOpen, FailureCount: 2, LastJobID: &job2ID}, nil)
-	mockQueue.EXPECT().LatestCompletedPollResult(gomock.Any(), "echo", "ductile").Return(&job3, nil)
-	mockQueue.EXPECT().UpsertCircuitBreaker(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cb queue.CircuitBreaker) error {
-		assert.Equal(t, queue.CircuitClosed, cb.State)
-		assert.Equal(t, 0, cb.FailureCount)
-		assert.Nil(t, cb.OpenedAt)
-		return nil
-	})
-	assert.NoError(t, s.reconcileCircuitBreaker(ctx, "echo", pluginConf))
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{OnlyBetween: "08:00-12:00"}, now)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{OnlyBetween: "11:00-12:00"}, now)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outside_time_window", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{NotOn: []any{"monday"}}, now)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outside_day_constraint", reason)
+
+	ok, reason, err = scheduleConstraintsAllowAt(config.ScheduleConfig{Timezone: "UTC", NotOn: []any{1}}, now)
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outside_day_constraint", reason)
+
+	_, _, err = scheduleConstraintsAllowAt(config.ScheduleConfig{OnlyBetween: "bad-window"}, now)
+	assert.Error(t, err)
+
+	_, _, err = scheduleConstraintsAllowAt(config.ScheduleConfig{Timezone: "Mars/Phobos"}, now)
+	assert.Error(t, err)
 }

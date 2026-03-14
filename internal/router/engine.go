@@ -23,9 +23,9 @@ type Router struct {
 
 var _ Engine = (*Router)(nil)
 
-// LoadFromConfigDir loads pipelines from <configDir>/pipelines and builds a Router.
-func LoadFromConfigDir(configDir string, registry *plugin.Registry, logger *slog.Logger) (Engine, error) {
-	set, err := dsl.LoadAndCompileDir(configDir)
+// LoadFromConfigFiles loads pipelines from the provided config files and builds a Router.
+func LoadFromConfigFiles(paths []string, registry *plugin.Registry, logger *slog.Logger) (Engine, error) {
+	set, err := dsl.LoadAndCompileFiles(paths)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +305,19 @@ func firstEntryStepID(entryNodeIDs []string) string {
 		return ""
 	}
 	return entryNodeIDs[0]
+}
+
+// GetNode returns the compiled node for the given pipeline and step IDs.
+func (r *Router) GetNode(pipelineName string, stepID string) (dsl.Node, bool) {
+	if strings.TrimSpace(pipelineName) == "" || strings.TrimSpace(stepID) == "" {
+		return dsl.Node{}, false
+	}
+	pipeline, ok := r.set.Pipelines[pipelineName]
+	if !ok {
+		return dsl.Node{}, false
+	}
+	node, ok := pipeline.Nodes[stepID]
+	return node, ok
 }
 
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {

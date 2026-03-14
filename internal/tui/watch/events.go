@@ -9,7 +9,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/events"
 )
 
-func renderEventStream(eventLog []events.Event, theme Theme, width int) string {
+func renderEventStream(eventLog []events.Event, theme Theme, width int, maxEvents int) string {
 	innerWidth := width - 4
 
 	if len(eventLog) == 0 {
@@ -20,9 +20,13 @@ func renderEventStream(eventLog []events.Event, theme Theme, width int) string {
 		return theme.Border.Width(innerWidth).Render(content)
 	}
 
+	if maxEvents < 1 {
+		maxEvents = 1
+	}
+
 	var lines []string
 	for i, e := range eventLog {
-		if i >= 10 {
+		if i >= maxEvents {
 			break
 		}
 		lines = append(lines, formatEvent(e, theme))

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -81,8 +80,8 @@ func TestVerifyIntegrityOperationalMismatchWarns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tamper with a plugin file (operational)
-	writeTestFile(t, filepath.Join(tmpDir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: false\n")
+	// Tamper with a routes file (operational)
+	writeTestFile(t, filepath.Join(tmpDir, "routes.yaml"), "routes:\n  - name: tampered\n")
 
 	result, err := VerifyIntegrity(tmpDir, files)
 	if err != nil {
@@ -120,8 +119,7 @@ func TestVerifyIntegrityNoManifestWithHighSecurity(t *testing.T) {
 func TestVerifyIntegrityNoManifestNoHighSecurity(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeTestFile(t, filepath.Join(tmpDir, "config.yaml"), "service:\n  name: test\n")
-	os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0755)
-	writeTestFile(t, filepath.Join(tmpDir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: true\n")
+	writeTestFile(t, filepath.Join(tmpDir, "routes.yaml"), "routes:\n  - name: sample\n")
 
 	files, err := DiscoverConfigFiles(tmpDir)
 	if err != nil {
@@ -143,8 +141,7 @@ func TestVerifyIntegrityNoManifestNoHighSecurity(t *testing.T) {
 
 func setupIntegrityDir(t *testing.T, dir string) {
 	t.Helper()
-	writeTestFile(t, filepath.Join(dir, "config.yaml"), "service:\n  name: test\n  tick_interval: 60s\nstate:\n  path: ./test.db\nplugins_dir: ./plugins\n")
+	writeTestFile(t, filepath.Join(dir, "config.yaml"), "service:\n  name: test\n  tick_interval: 60s\nstate:\n  path: ./test.db\n")
 	writeTestFile(t, filepath.Join(dir, "tokens.yaml"), "tokens:\n  - name: admin\n    key: secret123\n")
-	os.MkdirAll(filepath.Join(dir, "plugins"), 0755)
-	writeTestFile(t, filepath.Join(dir, "plugins", "echo.yaml"), "plugins:\n  echo:\n    enabled: true\n    schedule:\n      every: 5m\n")
+	writeTestFile(t, filepath.Join(dir, "routes.yaml"), "routes:\n  - name: sample\n")
 }

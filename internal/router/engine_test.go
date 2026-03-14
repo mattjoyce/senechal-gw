@@ -44,6 +44,26 @@ func TestRouterNextRootTrigger(t *testing.T) {
 	}
 }
 
+func TestRouterGetNode(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:  "chain",
+		On:    "event.start",
+		Steps: []dsl.StepSpec{{ID: "step_b", Uses: "plugin-b"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	node, ok := r.GetNode("chain", "step_b")
+	if !ok {
+		t.Fatalf("expected node lookup success")
+	}
+	if node.ID != "step_b" {
+		t.Fatalf("node.ID = %q, want %q", node.ID, "step_b")
+	}
+}
+
 func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
 		{

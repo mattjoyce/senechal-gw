@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -14,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,7 +39,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"github.com/mattjoyce/ductile/internal/tui"
 	"github.com/mattjoyce/ductile/internal/tui/watch"
 	"github.com/mattjoyce/ductile/internal/webhook"
 	"github.com/mattjoyce/ductile/internal/workspace"
@@ -41,10 +46,16 @@ import (
 )
 
 var (
-	version   = "0.1.0-dev"
+	version   = "1.0.0-rc.1"
 	gitCommit = "unknown"
 	buildDate = "unknown"
 )
+
+//go:embed templates/skills-core-mode.md
+var skillsCoreMode string
+
+//go:embed templates/skills-cli-commands.md
+var skillsCLICommands string
 
 func main() {
 	os.Exit(runCLI(os.Args[1:]))
@@ -73,25 +84,9 @@ func runCLI(cliArgs []string) int {
 		return runJobNoun(args)
 	case "plugin":
 		return runPluginNoun(args)
-	case "trigger":
-		printTriggerHelp()
-		return 0
-	case "skill":
+	case "skills":
 		return runSystemSkills(args)
 
-	// --- ROOT ALIASES (Backward Compatibility) ---
-	case "start":
-		return runStart(args)
-	case "reset":
-		if hasHelpFlag(args) {
-			printSystemResetHelp()
-			return 0
-		}
-		return runSystemReset(args)
-	case "inspect":
-		return runInspect(args)
-	case "doctor": // Alias for backward compat with Claude's branch
-		return runConfigCheck(args)
 	case "version":
 		return runVersion(args)
 	case "help", "--help", "-h":
@@ -99,6 +94,7 @@ func runCLI(cliArgs []string) int {
 		return 0
 
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
 		printUsage()
 		return 1
@@ -204,8 +200,43 @@ func readBuildSetting(key string) string {
 	return ""
 }
 
+func validateScheduledCommands(cfg *config.Config, registry *plugin.Registry) error {
+	if cfg == nil || registry == nil {
+		return nil
+	}
+
+	for pluginName, pluginConf := range cfg.Plugins {
+		if !pluginConf.Enabled {
+			continue
+		}
+
+		plug, ok := registry.Get(pluginName)
+		if !ok {
+			return fmt.Errorf("plugin %q is configured but not discoverable", pluginName)
+		}
+
+		for _, schedule := range pluginConf.NormalizedSchedules() {
+			command := strings.TrimSpace(schedule.Command)
+			if command == "" {
+				command = "poll"
+			}
+
+			scheduleID := strings.TrimSpace(schedule.ID)
+			if scheduleID == "" {
+				scheduleID = "default"
+			}
+
+			if !plug.SupportsCommand(command) {
+				return fmt.Errorf("plugin %q schedule %q references unsupported command %q", pluginName, scheduleID, command)
+			}
+		}
+	}
+
+	return nil
+}
+
 func printUsage() {
-	fmt.Print(`ductile - Lightweight YAML-configured integration gateway
+	fmt.Print(`ductile - Lightweight, open-source integration engine for the agentic era.
 
 Usage:
   ductile <noun> <action> [flags]
@@ -214,14 +245,15 @@ Core Resources (Nouns):
   system    Gateway lifecycle and health
   config    System configuration and integrity
   job       Execution instances and lineage
-  plugin    Capability discovery and management
+  plugin    Capability discovery and management (Connectors)
 
 System Commands:
-  system start      Start the gateway service in foreground
+  system start      Start the integration gateway in foreground
   system status     Show global gateway health
-  system reset      Reset a plugin poll circuit breaker
+  system reset      Reset a plugin/connector circuit breaker
+  system reload     Reload configuration in a running gateway
   system watch      Real-time diagnostic monitoring TUI
-  system skills     Export capability registry as LLM-readable Markdown
+  system skills     Export capability registry (Skills) as LLM-readable Markdown
 
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
@@ -240,14 +272,11 @@ Job Commands:
   job inspect <id>  Show lineage, baggage, and workspace artifacts
 
 Plugin Commands:
-  plugin list       Show discovered plugins (planned)
+  plugin list       Show discovered plugins/connectors
   plugin run <name> Manual execution (planned)
 
-Manual Triggering:
-  trigger           Show instructions for triggering plugins via API
-
-Capability Export:
-  skill             Export live capability registry as LLM-readable Markdown
+Capability Discovery (Skills):
+  skills            Export live capability registry as LLM-readable Markdown
 
 General:
   --version         Show version information
@@ -255,36 +284,6 @@ General:
   help              Show this help message
 
 Use 'ductile <noun> help' for resource-specific flags.
-`)
-}
-
-func printTriggerHelp() {
-	fmt.Print(`Manual Plugin Triggering (via API)
-
-Plugins are triggered via the REST API. This allows for programmatic control 
-from LLMs, scripts, and external services.
-
-Endpoint:
-  POST /trigger/{plugin}/{command}
-
-Headers:
-  Authorization: Bearer <token>
-  Content-Type: application/json
-
-Body:
-  {
-    "payload": {
-      "key": "value"
-    }
-  }
-
-Example (curl):
-  curl -X POST http://localhost:8080/trigger/echo/poll \
-    -H "Authorization: Bearer my-token" \
-    -H "Content-Type: application/json" \
-    -d '{"payload": {"message": "Hello"}}'
-
-For more details, see docs/API_REFERENCE.md.
 `)
 }
 
@@ -316,18 +315,18 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemStatus(actionArgs)
-	case "monitor":
-		if hasHelpFlag(actionArgs) {
-			printSystemMonitorHelp()
-			return 0
-		}
-		return runMonitor(actionArgs)
 	case "reset":
 		if hasHelpFlag(actionArgs) {
 			printSystemResetHelp()
 			return 0
 		}
 		return runSystemReset(actionArgs)
+	case "reload":
+		if hasHelpFlag(actionArgs) {
+			printSystemReloadHelp()
+			return 0
+		}
+		return runSystemReload(actionArgs)
 	case "skills":
 		return runSystemSkills(actionArgs)
 	case "watch":
@@ -340,6 +339,7 @@ func runSystemNoun(args []string) int {
 		printSystemNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown system action: %s\n", action)
 		return 1
 	}
@@ -360,7 +360,7 @@ func runConfigNoun(args []string) int {
 	actionArgs := args[1:]
 
 	switch action {
-	case "lock", "hash-update": // Alias for backward compat
+	case "lock":
 		if hasHelpFlag(actionArgs) {
 			printConfigLockHelp()
 			return 0
@@ -410,6 +410,7 @@ func runConfigNoun(args []string) int {
 		printConfigNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config action: %s\n", action)
 		return 1
 	}
@@ -428,18 +429,21 @@ func runConfigSet(args []string) int {
 	fs.BoolVar(&apply, "apply", false, "Apply changes")
 
 	var kvPair string
-	var remainingArgs []string
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && strings.Contains(arg, "=") && kvPair == "" {
-			kvPair = arg
-		} else {
-			remainingArgs = append(remainingArgs, arg)
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
 		}
-	}
-
-	if err := fs.Parse(remainingArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
+		if fs.NArg() > 0 {
+			arg0 := fs.Arg(0)
+			if kvPair == "" && strings.Contains(arg0, "=") {
+				kvPair = arg0
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
 	if kvPair == "" {
@@ -508,24 +512,39 @@ func runConfigSet(args []string) int {
 // ... (skipping to action implementations)
 
 func runConfigShow(args []string) int {
+	var configPath, configDir string
+	var jsonOut bool
+
 	fs := flag.NewFlagSet("show", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	configDir := fs.String("config-dir", "", "Path to configuration directory")
-	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
-		return 1
+	fs.StringVar(&configPath, "config", "", "Path to configuration file or directory")
+	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
+	fs.BoolVar(&jsonOut, "json", false, "Output in structured JSON format")
+
+	var entity string
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
+		}
+		if fs.NArg() > 0 {
+			if entity == "" {
+				entity = fs.Arg(0)
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
-	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
+	cfg, err := loadConfigForToolWithDir(configPath, configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
 	}
 
 	var result any = cfg
-	if fs.NArg() > 0 {
-		entity := fs.Arg(0)
+	if entity != "" {
 		res, err := cfg.GetPath(entity)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -534,7 +553,7 @@ func runConfigShow(args []string) int {
 		result = res
 	}
 
-	if *jsonOut {
+	if jsonOut {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		fmt.Println(string(data))
 	} else {
@@ -545,22 +564,37 @@ func runConfigShow(args []string) int {
 }
 
 func runConfigGet(args []string) int {
+	var configPath, configDir string
+	var jsonOut bool
+
 	fs := flag.NewFlagSet("get", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	configDir := fs.String("config-dir", "", "Path to configuration directory")
-	jsonOut := fs.Bool("json", false, "Output in structured JSON format")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
-		return 1
+	fs.StringVar(&configPath, "config", "", "Path to configuration file or directory")
+	fs.StringVar(&configDir, "config-dir", "", "Path to configuration directory")
+	fs.BoolVar(&jsonOut, "json", false, "Output in structured JSON format")
+
+	var path string
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
+		}
+		if fs.NArg() > 0 {
+			if path == "" {
+				path = fs.Arg(0)
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
-	if fs.NArg() != 1 {
+	if path == "" {
 		fmt.Fprintf(os.Stderr, "Usage: ductile config get <path> [--json]\n")
 		return 1
 	}
-	path := fs.Arg(0)
 
-	cfg, err := loadConfigForToolWithDir(*configPath, *configDir)
+	cfg, err := loadConfigForToolWithDir(configPath, configDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load error: %v\n", err)
 		return 1
@@ -572,7 +606,7 @@ func runConfigGet(args []string) int {
 		return 1
 	}
 
-	if *jsonOut {
+	if jsonOut {
 		data, _ := json.MarshalIndent(val, "", "  ")
 		fmt.Println(string(data))
 	} else {
@@ -612,6 +646,7 @@ func applyConfigSetFallback(configTarget, path, value string) error {
 		configFile = filepath.Join(configTarget, "config.yaml")
 	}
 
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	original, err := os.ReadFile(configFile)
 	if err != nil {
 		return err
@@ -631,14 +666,16 @@ func applyConfigSetFallback(configTarget, path, value string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomicWithBackup(configFile, updated, 0o644); err != nil {
+	if err := writeFileAtomicWithBackup(configFile, updated, 0o600); err != nil {
 		return err
 	}
 
 	if _, err := config.Load(configTarget); err != nil {
 		backupPath := configFile + ".bak"
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		if backup, readErr := os.ReadFile(backupPath); readErr == nil {
-			_ = os.WriteFile(configFile, backup, 0o644)
+			// #nosec G703 -- config paths are operator-controlled local inputs.
+			_ = os.WriteFile(configFile, backup, 0o600)
 		}
 		return fmt.Errorf("validation failed: %w", err)
 	}
@@ -666,10 +703,17 @@ func runJobNoun(args []string) int {
 			return 0
 		}
 		return runInspect(actionArgs)
+	case "logs":
+		if hasHelpFlag(actionArgs) {
+			printJobLogsHelp()
+			return 0
+		}
+		return runJobLogs(actionArgs)
 	case "help":
 		printJobNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown job action: %s\n", action)
 		return 1
 	}
@@ -695,19 +739,18 @@ func runPluginNoun(args []string) int {
 			printPluginListHelp()
 			return 0
 		}
-		fmt.Println("plugin list is not yet implemented")
-		return 0
+		return runPluginList(actionArgs)
 	case "run":
 		if hasHelpFlag(actionArgs) {
 			printPluginRunHelp()
 			return 0
 		}
-		fmt.Println("plugin run is not yet implemented")
-		return 0
+		return runPluginRun(actionArgs)
 	case "help":
 		printPluginNounHelp(os.Stdout)
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown plugin action: %s\n", action)
 		return 1
 	}
@@ -727,23 +770,23 @@ func hasHelpFlag(args []string) bool {
 }
 
 func printSystemNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile system <action>")
-	fmt.Fprintln(w, "Actions: start, status, monitor, reset, watch")
+	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch")
 }
 
 func printConfigNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
-	fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
+	_, _ = fmt.Fprintln(w, "Usage: ductile config <action> [flags]")
+	_, _ = fmt.Fprintln(w, "Actions: lock, check, show, get, set, token, scope, plugin, route, webhook, init, backup, restore")
 }
 
 func printJobNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile job <action>")
-	fmt.Fprintln(w, "Actions: inspect")
+	_, _ = fmt.Fprintln(w, "Usage: ductile job <action>")
+	_, _ = fmt.Fprintln(w, "Actions: inspect, logs")
 }
 
 func printPluginNounHelp(w *os.File) {
-	fmt.Fprintln(w, "Usage: ductile plugin <action>")
-	fmt.Fprintln(w, "Actions: list, run")
+	_, _ = fmt.Fprintln(w, "Usage: ductile plugin <action>")
+	_, _ = fmt.Fprintln(w, "Actions: list, run")
 }
 
 func printSystemStartHelp() {
@@ -760,37 +803,14 @@ func printSystemStatusHelp() {
 	fmt.Println("  1  One or more checks failed")
 }
 
-func printSystemMonitorHelp() {
-	fmt.Println("Usage: ductile system monitor [--api-url URL] [--api-key KEY]")
-	fmt.Println("Launch the real-time TUI dashboard.")
-}
-
 func printSystemResetHelp() {
 	fmt.Println("Usage: ductile system reset <plugin> [--config PATH]")
 	fmt.Println("Reset scheduler poll circuit breaker state for a plugin.")
 }
 
-func runMonitor(args []string) int {
-	fs := flag.NewFlagSet("monitor", flag.ExitOnError)
-	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
-	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
-	}
-
-	if *apiKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: API key required. Use --api-key or DUCTILE_API_KEY env var.")
-		return 1
-	}
-
-	m := tui.NewMonitor(*apiURL, *apiKey)
-	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-		return 1
-	}
-	return 0
+func printSystemReloadHelp() {
+	fmt.Println("Usage: ductile system reload [--config PATH] [--api-url URL] [--api-key TOKEN] [--json]")
+	fmt.Println("Reload configuration in a running gateway (SIGHUP or API).")
 }
 
 func runSystemReset(actionArgs []string) int {
@@ -835,7 +855,7 @@ func runSystemReset(actionArgs []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		return 1
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	q := queue.New(db)
 	if err := q.ResetCircuitBreaker(context.Background(), pluginName, "poll"); err != nil {
@@ -847,12 +867,58 @@ func runSystemReset(actionArgs []string) int {
 	return 0
 }
 
-func runSystemSkills(args []string) int {
-	fs := flag.NewFlagSet("skills", flag.ContinueOnError)
+func runSystemReload(actionArgs []string) int {
+	fs := flag.NewFlagSet("reload", flag.ContinueOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")
-	if err := fs.Parse(args); err != nil {
+	apiURL := fs.String("api-url", "", "API base URL (optional)")
+	apiKey := fs.String("api-key", "", "API key (optional)")
+	jsonOut := fs.Bool("json", false, "Output JSON response")
+	if err := fs.Parse(actionArgs); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
+	}
+
+	if *apiURL != "" {
+		key := strings.TrimSpace(*apiKey)
+		if key == "" {
+			key = strings.TrimSpace(os.Getenv("DUCTILE_API_KEY"))
+		}
+		if key == "" {
+			fmt.Fprintln(os.Stderr, "API key required for reload (set --api-key or DUCTILE_API_KEY)")
+			return 1
+		}
+		endpoint := strings.TrimRight(*apiURL, "/") + "/system/reload"
+		req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to build request: %v\n", err)
+			return 1
+		}
+		req.Header.Set("Authorization", "Bearer "+key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Reload request failed: %v\n", err)
+			return 1
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(os.Stderr, "Reload failed (%d): %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+			return 1
+		}
+		if *jsonOut {
+			fmt.Println(string(body))
+			return 0
+		}
+		var result api.ReloadResponse
+		if err := json.Unmarshal(body, &result); err == nil && result.Status != "" {
+			fmt.Printf("Reloaded at %s\n", result.ReloadedAt)
+			if result.Message != "" {
+				fmt.Printf("%s\n", result.Message)
+			}
+			return 0
+		}
+		fmt.Println(string(body))
+		return 0
 	}
 
 	if *configPath == "" {
@@ -869,38 +935,76 @@ func runSystemSkills(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		return 1
 	}
-
-	registry, err := discoverRegistry(cfg, *configPath)
+	pidPath := getPIDLockPath(cfg)
+	pid, err := readPIDFromFile(pidPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to read PID: %v\n", err)
+		return 1
+	}
+	if err := syscall.Kill(pid, syscall.SIGHUP); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to signal PID %d: %v\n", pid, err)
+		return 1
+	}
+	if *jsonOut {
+		resp := api.ReloadResponse{Status: "ok", Message: fmt.Sprintf("SIGHUP sent to %d", pid)}
+		raw, _ := json.MarshalIndent(resp, "", "  ")
+		fmt.Println(string(raw))
+		return 0
+	}
+	fmt.Printf("Reload signal sent to PID %d\n", pid)
+	return 0
+}
+
+func runSystemSkills(args []string) int {
+	fs := flag.NewFlagSet("skills", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
 
+	explicitConfig := *configPath != ""
+
+	// Try to auto-discover config if not specified; failure is non-fatal.
+	if *configPath == "" {
+		if discovered, err := config.DiscoverConfigDir(); err == nil {
+			*configPath = discovered
+		}
+	}
+
+	// Attempt to load config and registry.
+	var registry *plugin.Registry
+	var loadedConfig *config.Config
+	hasConfig := false
+	if *configPath != "" {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			if explicitConfig {
+				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+				return 1
+			}
+			// Auto-discovered config failed to load — fall through to core mode.
+		} else {
+			if r, err := discoverRegistry(cfg, *configPath); err == nil {
+				registry = r
+				loadedConfig = cfg
+				hasConfig = true
+			}
+		}
+	}
+
+	if !hasConfig {
+		fmt.Print(skillsCoreMode)
+		return 0
+	}
+
+	// Full manifest output.
 	fmt.Println("# Ductile Gateway: LLM Operator Skill Manifest")
 	fmt.Println()
-	fmt.Println("This manifest describes the capabilities of the current Ductile instance.")
+	fmt.Print(skillsCLICommands)
 	fmt.Println()
 
-	fmt.Println("## 1. Core CLI Skills")
-	fmt.Println("Use these via direct CLI execution. Prefer `--json` for structured data.")
-	fmt.Println()
-	fmt.Println("### config")
-	fmt.Println("- `config check`: Validate syntax, policy, and integrity.")
-	fmt.Println("- `config lock`: Authorize current state (re-generate hashes).")
-	fmt.Println("- `config show [entity]`: View resolved configuration.")
-	fmt.Println("- `config get <path>`: Read specific config values.")
-	fmt.Println("- `config set <path>=<val>`: Update config (use `--dry-run` first).")
-	fmt.Println()
-	fmt.Println("### system")
-	fmt.Println("- `system status`: Check gateway health and PID lock.")
-	fmt.Println("- `system reset <plugin>`: Reset a tripped circuit breaker.")
-	fmt.Println("- `system watch`: Real-time diagnostic TUI.")
-	fmt.Println()
-	fmt.Println("### job")
-	fmt.Println("- `job inspect <job_id>`: Retrieve logs and lineage for a job.")
-	fmt.Println()
-
-	// Plugins
+	// --- Plugin Skills ---
 	plugins := registry.All()
 	var pNames []string
 	for name := range plugins {
@@ -908,53 +1012,133 @@ func runSystemSkills(args []string) int {
 	}
 	sort.Strings(pNames)
 
-	fmt.Println("## 2. Atomic Plugin Skills")
-	fmt.Println("Invoke these directly via `POST /plugin/{plugin}/{command}`.")
-	fmt.Println("Bypasses automated pipeline routing.")
+	fmt.Println("## Plugins")
+	fmt.Println()
+	fmt.Println("Format: `<plugin>.<command> m=<HTTP> p=<path> tier=<READ|WRITE> mut=<0|1> idem=<0|1> retry=<0|1> [in=<schema>] [out=<schema>] [d=<desc>]`")
 	fmt.Println()
 
 	for _, name := range pNames {
 		p := plugins[name]
 		fmt.Printf("### %s\n", p.Name)
 		if p.Description != "" {
-			fmt.Printf("**Description:** %s\n\n", p.Description)
+			fmt.Println()
+			fmt.Println(p.Description)
 		}
-		fmt.Println("**Actions:**")
+		fmt.Println()
 		for _, cmd := range p.Commands {
-			tier := "WRITE"
-			if cmd.Type == plugin.CommandTypeRead {
-				tier = "READ"
+			mutatesState := cmd.Type == plugin.CommandTypeWrite
+			idempotent := !mutatesState
+			if cmd.Idempotent != nil {
+				idempotent = *cmd.Idempotent
 			}
-			fmt.Printf("- `%s`: [%s] %s\n", cmd.Name, tier, cmd.Description)
+			retrySafe := !mutatesState
+			if cmd.RetrySafe != nil {
+				retrySafe = *cmd.RetrySafe
+			}
+			tier := "READ"
+			if mutatesState {
+				tier = "WRITE"
+			}
+			fmt.Printf("- %s.%s m=POST p=/plugin/%s/%s tier=%s mut=%d idem=%d retry=%d",
+				p.Name, cmd.Name, p.Name, cmd.Name, tier, boolToInt(mutatesState), boolToInt(idempotent), boolToInt(retrySafe))
+			if s := renderSchema(cmd.InputSchema); s != "" {
+				fmt.Printf(" in=%q", s)
+			}
+			if s := renderSchema(cmd.OutputSchema); s != "" {
+				fmt.Printf(" out=%q", s)
+			}
+			if cmd.Description != "" {
+				fmt.Printf(" d=%q", cmd.Description)
+			}
+			fmt.Println()
 		}
 		fmt.Println()
 	}
 
-	// Pipelines
-	routerEngine, err := router.LoadFromConfigDir(*configPath, registry, log.WithComponent("skills-export"))
-	if err == nil {
-		if r, ok := routerEngine.(*router.Router); ok {
-			pipelines := r.PipelineSummary()
-			if len(pipelines) > 0 {
-				fmt.Println("## 3. Orchestrated Pipeline Skills")
-				fmt.Println("High-level workflows triggered by direct API calls.")
-				fmt.Println("Invoke these via `POST /pipeline/{name}`.")
-				fmt.Println()
-				for _, p := range pipelines {
-					mode := "ASYNC"
-					if p.ExecutionMode == "synchronous" {
-						mode = "SYNC (Blocks for result)"
-					}
-					fmt.Printf("### %s\n", p.Name)
-					fmt.Printf("- **Endpoint:** `/pipeline/%s`\n", p.Name)
-					fmt.Printf("- **Trigger Event:** `%s`\n", p.Trigger)
-					fmt.Printf("- **Mode:** %s\n", mode)
+	// --- Pipeline Skills ---
+	if loadedConfig != nil {
+		pipelineFiles := make([]string, 0, len(loadedConfig.SourceFiles))
+		for f := range loadedConfig.SourceFiles {
+			pipelineFiles = append(pipelineFiles, f)
+		}
+		sort.Strings(pipelineFiles)
+
+		routerEngine, err := router.LoadFromConfigFiles(pipelineFiles, registry, log.WithComponent("skills-export"))
+		if err == nil {
+			if r, ok := routerEngine.(*router.Router); ok {
+				pipelines := r.PipelineSummary()
+				if len(pipelines) > 0 {
+					sort.Slice(pipelines, func(i, j int) bool {
+						return pipelines[i].Name < pipelines[j].Name
+					})
+					fmt.Println("## Pipelines")
 					fmt.Println()
+					fmt.Println("Format: `<pipeline> m=<HTTP> p=<path> trigger=<trigger> mode=<sync|async> [timeout=<duration>]`")
+					fmt.Println()
+					for _, p := range pipelines {
+						mode := "async"
+						if p.ExecutionMode == "synchronous" {
+							mode = "sync"
+						}
+						fmt.Printf("- %s m=POST p=/pipeline/%s trigger=%q mode=%s", p.Name, p.Name, p.Trigger, mode)
+						if p.Timeout > 0 {
+							fmt.Printf(" timeout=%s", p.Timeout)
+						}
+						fmt.Println()
+					}
 				}
 			}
 		}
 	}
 
+	fmt.Println("---")
+	fmt.Println()
+	fmt.Println("**Next steps:** Use `job inspect <id>` to trace any execution. Use `system status` to verify health.")
+
+	return 0
+}
+
+// renderSchema formats a plugin command's raw schema for manifest display.
+// Compact map {prop: "type"} → "{key: type, ...}" (sorted keys).
+// Full JSON schema (has "type" key) → compact JSON.
+// nil → "" (omit field).
+func renderSchema(schema any) string {
+	if schema == nil {
+		return ""
+	}
+	m, ok := schema.(map[string]any)
+	if !ok {
+		b, err := json.Marshal(schema)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+	// Full JSON schema: has a "type" key at the top level.
+	if _, hasType := m["type"]; hasType {
+		b, err := json.Marshal(schema)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+	// Compact map {prop: "type"} — render sorted.
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s: %v", k, m[k]))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
 	return 0
 }
 
@@ -962,6 +1146,8 @@ func runWatch(args []string) int {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
 	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
 	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	configDir := fs.String("config-dir", "", "Path to configuration directory")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
@@ -972,7 +1158,32 @@ func runWatch(args []string) int {
 		return 1
 	}
 
-	m := watch.New(*apiURL, *apiKey)
+	resolvedConfigPath := strings.TrimSpace(*configPath)
+	if strings.TrimSpace(*configDir) != "" {
+		resolvedConfigPath = strings.TrimSpace(*configDir)
+	}
+
+	var cfg *config.Config
+	if resolvedConfigPath == "" {
+		if discovered, err := config.DiscoverConfigDir(); err == nil {
+			resolvedConfigPath = discovered
+		}
+	}
+
+	if resolvedConfigPath != "" {
+		loaded, err := config.Load(resolvedConfigPath)
+		if err != nil {
+			if *configPath != "" || *configDir != "" {
+				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "Warning: unable to load config from %s: %v\n", resolvedConfigPath, err)
+		} else {
+			cfg = loaded
+		}
+	}
+
+	m := watch.New(*apiURL, *apiKey, cfg)
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
@@ -988,8 +1199,10 @@ func printSystemWatchHelp() {
 	fmt.Println("Shows gateway health, active pipelines, and event stream.")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  --api-url URL    Gateway API URL (default: http://localhost:8080)")
-	fmt.Println("  --api-key KEY    API Bearer Token (or DUCTILE_API_KEY env var)")
+	fmt.Println("  --api-url URL      Gateway API URL (default: http://localhost:8080)")
+	fmt.Println("  --api-key KEY      API Bearer Token (or DUCTILE_API_KEY env var)")
+	fmt.Println("  --config PATH      Path to configuration file or directory")
+	fmt.Println("  --config-dir PATH  Path to configuration directory")
 	fmt.Println()
 	fmt.Println("Keybindings:")
 	fmt.Println("  q, Ctrl+C        Quit")
@@ -1026,101 +1239,485 @@ func printJobInspectHelp() {
 	fmt.Println("Inspect job lineage, baggage, and workspace artifacts.")
 }
 
+func printJobLogsHelp() {
+	fmt.Println("Usage: ductile job logs [--config PATH] [--json] [--plugin NAME] [--command CMD] [--status STATUS] [--submitted-by NAME] [--from TIME] [--to TIME] [--query TEXT] [--limit N] [--include-result]")
+	fmt.Println("Query stored job logs for audit and troubleshooting.")
+	fmt.Println("Time values must be RFC3339 (e.g. 2025-01-02T15:04:05Z).")
+}
+
 func printPluginListHelp() {
-	fmt.Println("Usage: ductile plugin list")
-	fmt.Println("Show discovered plugins (planned).")
+	fmt.Println("Usage: ductile plugin list [--api-url URL] [--json]")
+	fmt.Println("Show discovered plugins via the API /plugins endpoint.")
 }
 
 func printPluginRunHelp() {
-	fmt.Println("Usage: ductile plugin run <name>")
-	fmt.Println("Execute a plugin manually (planned).")
+	fmt.Println("Usage: ductile plugin run <name> [--command CMD] [--payload JSON] [--payload-file PATH] [--api-url URL] [--api-key KEY] [--json]")
+	fmt.Println("Execute a plugin command via the API /plugin/{name}/{command} endpoint.")
 }
 
 // --- ACTION IMPLEMENTATIONS ---
 
-func runStart(args []string) int {
-	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", "", "Path to configuration file or directory")
+type pluginListResponse struct {
+	Plugins []struct {
+		Name        string   `json:"name"`
+		Version     string   `json:"version"`
+		Description string   `json:"description"`
+		Commands    []string `json:"commands"`
+	} `json:"plugins"`
+}
+
+type triggerRequest struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+type triggerResponse struct {
+	JobID   string `json:"job_id"`
+	Status  string `json:"status"`
+	Plugin  string `json:"plugin"`
+	Command string `json:"command"`
+}
+
+func buildAPIURL(base, path string) string {
+	return strings.TrimRight(base, "/") + path
+}
+
+func runPluginList(args []string) int {
+	fs := flag.NewFlagSet("plugin list", flag.ContinueOnError)
+	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
+	jsonOut := fs.Bool("json", false, "Output JSON")
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+	if fs.NArg() > 0 {
+		printPluginListHelp()
 		return 1
 	}
 
-	if *configPath == "" {
-		discovered, err := config.DiscoverConfigDir()
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(buildAPIURL(*apiURL, "/plugins"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "API request failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read response: %v\n", err)
+		return 1
+	}
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "API error (%d): %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return 1
+	}
+
+	if *jsonOut {
+		fmt.Println(string(body))
+		return 0
+	}
+
+	var list pluginListResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse response: %v\n", err)
+		return 1
+	}
+
+	nameWidth := len("NAME")
+	for _, p := range list.Plugins {
+		if len(p.Name) > nameWidth {
+			nameWidth = len(p.Name)
+		}
+	}
+
+	fmt.Printf("%-*s  %-8s  %s\n", nameWidth, "NAME", "VERSION", "COMMANDS")
+	for _, p := range list.Plugins {
+		commands := strings.Join(p.Commands, ",")
+		fmt.Printf("%-*s  %-8s  %s\n", nameWidth, p.Name, p.Version, commands)
+		if strings.TrimSpace(p.Description) != "" {
+			fmt.Printf("%*s  %s\n", nameWidth, "", p.Description)
+		}
+	}
+	return 0
+}
+
+func runPluginRun(args []string) int {
+	fs := flag.NewFlagSet("plugin run", flag.ContinueOnError)
+	command := fs.String("command", "poll", "Plugin command to run")
+	payloadRaw := fs.String("payload", "", "JSON payload to send")
+	payloadFile := fs.String("payload-file", "", "Path to JSON payload file")
+	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
+	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
+	jsonOut := fs.Bool("json", false, "Output JSON response")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+	if fs.NArg() != 1 {
+		printPluginRunHelp()
+		return 1
+	}
+	if *apiKey == "" {
+		fmt.Fprintln(os.Stderr, "Error: API key required. Use --api-key or DUCTILE_API_KEY env var.")
+		return 1
+	}
+	if *payloadRaw != "" && *payloadFile != "" {
+		fmt.Fprintln(os.Stderr, "Error: use only one of --payload or --payload-file")
+		return 1
+	}
+
+	pluginName := fs.Arg(0)
+	cmd := strings.TrimSpace(*command)
+	if cmd == "" {
+		fmt.Fprintln(os.Stderr, "Error: --command is required")
+		return 1
+	}
+
+	var payload json.RawMessage
+	if *payloadFile != "" {
+		data, err := os.ReadFile(*payloadFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to read payload file: %v\n", err)
 			return 1
 		}
-		*configPath = discovered
-		fmt.Fprintf(os.Stderr, "Using discovered config: %s\n", *configPath)
+		payload = json.RawMessage(bytes.TrimSpace(data))
+	} else if *payloadRaw != "" {
+		payload = json.RawMessage(strings.TrimSpace(*payloadRaw))
 	}
 
-	cfg, err := config.Load(*configPath)
+	var body io.Reader
+	if len(payload) > 0 {
+		if !json.Valid(payload) {
+			fmt.Fprintln(os.Stderr, "Error: payload must be valid JSON")
+			return 1
+		}
+		var payloadObj any
+		if err := json.Unmarshal(payload, &payloadObj); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: invalid JSON payload: %v\n", err)
+			return 1
+		}
+		if payloadObj != nil {
+			if _, ok := payloadObj.(map[string]any); !ok {
+				fmt.Fprintln(os.Stderr, "Error: payload must be a JSON object")
+				return 1
+			}
+		}
+		reqBody, err := json.Marshal(triggerRequest{Payload: payload})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to build request: %v\n", err)
+			return 1
+		}
+		body = bytes.NewBuffer(reqBody)
+	}
+
+	endpoint := fmt.Sprintf("/plugin/%s/%s", pluginName, cmd)
+	req, err := http.NewRequest("POST", buildAPIURL(*apiURL, endpoint), body)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
+		return 1
+	}
+	req.Header.Set("Authorization", "Bearer "+*apiKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "API request failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read response: %v\n", err)
+		return 1
+	}
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "API error (%d): %s\n", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		return 1
 	}
 
+	if *jsonOut {
+		fmt.Println(string(respBody))
+		return 0
+	}
+
+	var result triggerResponse
+	if err := json.Unmarshal(respBody, &result); err != nil || result.JobID == "" {
+		fmt.Println(string(respBody))
+		return 0
+	}
+	fmt.Printf("Queued job %s (%s %s)\n", result.JobID, result.Plugin, result.Command)
+	return 0
+}
+
+type runtimeState struct {
+	cfg          *config.Config
+	configPath   string
+	logger       *slog.Logger
+	registry     *plugin.Registry
+	router       router.Engine
+	scheduler    *scheduler.Scheduler
+	dispatcher   *dispatch.Dispatcher
+	apiServer    *api.Server
+	webhook      *webhook.Server
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	errCh        chan error
+	db           *sql.DB
+	configSource string
+}
+
+type reloadManager struct {
+	mu           sync.Mutex
+	configPath   string
+	configSource string
+	runtime      *runtimeState
+	errCh        chan error
+	reloadFunc   func(context.Context) (api.ReloadResponse, error)
+}
+
+func (rt *runtimeState) Stop() {
+	if rt == nil {
+		return
+	}
+	if rt.scheduler != nil {
+		rt.scheduler.Stop()
+	}
+	if rt.cancel != nil {
+		rt.cancel()
+	}
+	rt.wg.Wait()
+	if rt.db != nil {
+		_ = rt.db.Close()
+	}
+}
+
+func (rm *reloadManager) Stop() {
+	rm.mu.Lock()
+	rt := rm.runtime
+	rm.runtime = nil
+	rm.mu.Unlock()
+	if rt == nil {
+		return
+	}
+	rt.Stop()
+}
+
+func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error) {
+	rm.mu.Lock()
+	oldRuntime := rm.runtime
+	rm.mu.Unlock()
+	if oldRuntime == nil {
+		return api.ReloadResponse{Status: "error", Message: "runtime not available"}, fmt.Errorf("runtime not available")
+	}
+	oldCfg := oldRuntime.cfg
+
+	newCfg, err := config.Load(rm.configPath)
+	if err != nil {
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+	if err := verifyReloadIntegrity(rm.configPath); err != nil {
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+	if err := validateReloadableFields(oldCfg, newCfg); err != nil {
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+
+	oldRuntime.logger.Info("reloading config")
+	oldRuntime.Stop()
+
+	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
+	if err != nil {
+		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
+		restored, restoreErr := buildRuntime(oldCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
+		if restoreErr == nil {
+			rm.mu.Lock()
+			rm.runtime = restored
+			rm.mu.Unlock()
+		}
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
+
+	rm.mu.Lock()
+	rm.runtime = runtime
+	rm.mu.Unlock()
+
+	return api.ReloadResponse{
+		Status:     "ok",
+		ReloadedAt: time.Now().UTC().Format(time.RFC3339),
+		Message:    "configuration reloaded",
+	}, nil
+}
+
+func validateReloadableFields(oldCfg, newCfg *config.Config) error {
+	if oldCfg.State.Path != newCfg.State.Path {
+		return fmt.Errorf("config reload rejected: changes to state.path require a full restart")
+	}
+	if oldCfg.API.Listen != newCfg.API.Listen {
+		return fmt.Errorf("config reload rejected: changes to api.listen require a full restart")
+	}
+	oldWebhookListen := ""
+	newWebhookListen := ""
+	if oldCfg.Webhooks != nil {
+		oldWebhookListen = oldCfg.Webhooks.Listen
+	}
+	if newCfg.Webhooks != nil {
+		newWebhookListen = newCfg.Webhooks.Listen
+	}
+	if oldWebhookListen != newWebhookListen {
+		return fmt.Errorf("config reload rejected: changes to webhooks.listen require a full restart")
+	}
+	return nil
+}
+
+func resolveConfigDir(configPath string) string {
+	configDir := configPath
+	if stat, err := os.Stat(configPath); err == nil && !stat.IsDir() {
+		configDir = filepath.Dir(configPath)
+	}
+	return configDir
+}
+
+func verifyReloadIntegrity(configPath string) error {
+	configDir := resolveConfigDir(configPath)
+	files, err := config.DiscoverConfigFiles(configDir)
+	if err != nil {
+		return fmt.Errorf("config reload rejected: unlocked changes detected")
+	}
+	result, err := config.VerifyIntegrity(configDir, files)
+	if err != nil || !result.Passed {
+		return fmt.Errorf("config reload rejected: unlocked changes detected")
+	}
+	return nil
+}
+
+func buildRuntime(cfg *config.Config, configPath string, configSource string, reloadFunc func(context.Context) (api.ReloadResponse, error), errCh chan error) (*runtimeState, error) {
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
+
+	configPaths, err := config.CollectConfigPaths(configPath, cfg)
+	if err != nil {
+		logger.Error("config symlink scan failed", "error", err)
+		return nil, err
+	}
+	symlinkWarnings, err := config.DetectSymlinks(configPaths)
+	if err != nil {
+		logger.Error("config symlink scan failed", "error", err)
+		return nil, err
+	}
+	for _, warning := range symlinkWarnings {
+		logger.Warn("symlink detected", "path", warning.Path, "resolved", warning.Resolved)
+	}
+	if len(symlinkWarnings) > 0 && !cfg.Service.AllowSymlinks {
+		return nil, fmt.Errorf("symlinks detected in config paths but not allowed")
+	}
+
+	pluginRoots, err := resolvePluginRoots(cfg, configPath)
+	if err != nil {
+		logger.Error("plugin root resolution failed", "error", err)
+		return nil, err
+	}
+	registry, err := plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
+		switch level {
+		case "debug":
+			logger.Debug(msg, args...)
+		case "info":
+			logger.Info(msg, args...)
+		case "warn":
+			logger.Warn(msg, args...)
+		case "error":
+			logger.Error(msg, args...)
+		}
+	}, plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks})
+	if err != nil {
+		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
+		return nil, err
+	}
+	aliases, err := plugin.ApplyAliases(registry, cfg.Plugins)
+	if err != nil {
+		logger.Error("plugin aliasing failed", "error", err)
+		return nil, err
+	}
+	for _, alias := range aliases {
+		logger.Info("plugin alias registered", "plugin", alias.Name, "uses", alias.Uses)
+	}
+
+	// Preflight: report which config files were loaded
+	{
+		logger.Info("config loaded", "path", configPath, "source", configSource)
+
+		configDir := resolveConfigDir(configPath)
+
+		var sourceFiles []string
+		for f := range cfg.SourceFiles {
+			sourceFiles = append(sourceFiles, f)
+		}
+		sort.Strings(sourceFiles)
+		for _, f := range sourceFiles {
+			rel, err := filepath.Rel(configDir, f)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				rel = f
+			}
+			logger.Info("config file", "file", rel)
+		}
+
+		pluginsConfigured := len(cfg.Plugins)
+		pluginsEnabled := 0
+		for _, p := range cfg.Plugins {
+			if p.Enabled {
+				pluginsEnabled++
+			}
+		}
+		logger.Info("config summary",
+			"plugins_discovered", len(registry.All()),
+			"plugins_configured", pluginsConfigured,
+			"plugins_enabled", pluginsEnabled,
+			"api_listen", cfg.API.Listen,
+		)
+	}
 
 	// Strict mode enforcement
 	if cfg.Service.StrictMode {
 		logger.Info("strict mode enabled, performing pre-flight checks")
 
-		// 1. Check integrity (checksums)
-		files, err := config.DiscoverConfigFiles(*configPath)
+		configDir := resolveConfigDir(configPath)
+		files, err := config.DiscoverConfigFiles(configDir)
 		if err == nil {
-			result, err := config.VerifyIntegrity(*configPath, files)
+			result, err := config.VerifyIntegrity(configDir, files)
 			if err != nil || !result.Passed {
 				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
-				return 1
+				return nil, fmt.Errorf("integrity check failed")
 			}
 		}
 
-		// 2. Perform "doctor" validation
-		// We need registry for full validation, discover it temporarily
-		tempRegistry, err := discoverRegistry(cfg, *configPath)
-		if err != nil {
-			logger.Error("plugin discovery failed (strict mode)", "error", err)
-			return 1
-		}
-		doc := doctor.New(cfg, tempRegistry)
+		doc := doctor.New(cfg, registry)
 		report := doc.Validate()
 		if !report.Valid {
 			logger.Error("configuration validation failed (strict mode)")
 			for _, e := range report.Errors {
 				logger.Error("config error", "detail", e)
 			}
-			return 1
+			return nil, fmt.Errorf("configuration validation failed")
 		}
 
-		// 3. Ensure tokens are present if API is enabled
 		if cfg.API.Enabled && len(cfg.API.Auth.Tokens) == 0 {
 			logger.Error("no API tokens configured (strict mode requires at least one token when API is enabled)")
-			return 1
+			return nil, fmt.Errorf("no API tokens configured")
 		}
 	}
 
-	logger.Info("ductile starting", "version", version, "config", *configPath)
-
-	pidLockPath := getPIDLockPath(cfg)
-	pidLock, err := lock.AcquirePIDLock(pidLockPath)
-	if err != nil {
-		logger.Error("failed to acquire PID lock (another instance may be running)", "path", pidLockPath, "error", err)
-		return 1
-	}
-	defer pidLock.Release()
-	logger.Info("acquired PID lock", "path", pidLockPath)
+	logger.Info("ductile starting", "version", version, "config", configPath)
 
 	ctx := context.Background()
 	db, err := storage.OpenSQLite(ctx, cfg.State.Path)
 	if err != nil {
 		logger.Error("failed to open database", "path", cfg.State.Path, "error", err)
-		return 1
+		return nil, err
 	}
-	defer db.Close()
 	logger.Info("database opened", "path", cfg.State.Path)
 
 	q := queue.New(
@@ -1132,46 +1729,34 @@ func runStart(args []string) int {
 	contextStore := state.NewContextStore(db)
 	hub := events.NewHub(256)
 
-	pluginRoots, err := resolvePluginRoots(cfg, *configPath)
-	if err != nil {
-		logger.Error("plugin root resolution failed", "error", err)
-		return 1
-	}
-
-	registry, err := plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {
-		switch level {
-		case "debug":
-			logger.Debug(msg, args...)
-		case "info":
-			logger.Info(msg, args...)
-		case "warn":
-			logger.Warn(msg, args...)
-		case "error":
-			logger.Error(msg, args...)
-		}
-	})
-	if err != nil {
-		logger.Error("plugin discovery failed", "plugin_roots", pluginRoots, "error", err)
-		return 1
-	}
 	logger.Info("plugin discovery complete", "count", len(registry.All()))
+	if err := validateScheduledCommands(cfg, registry); err != nil {
+		logger.Error("invalid scheduled command configuration", "error", err)
+		return nil, err
+	}
 
-	configDir := *configPath
+	configDir := configPath
 	if stat, err := os.Stat(configDir); err != nil || !stat.IsDir() {
-		configDir = filepath.Dir(*configPath)
+		configDir = filepath.Dir(configPath)
 	}
 
 	wsBaseDir := filepath.Join(filepath.Dir(cfg.State.Path), "workspaces")
 	wsManager, err := workspace.NewFSManager(wsBaseDir)
 	if err != nil {
 		logger.Error("failed to initialize workspace manager", "base_dir", wsBaseDir, "error", err)
-		return 1
+		return nil, err
 	}
 
-	routerEngine, err := router.LoadFromConfigDir(configDir, registry, logger)
+	pipelineFiles := make([]string, 0, len(cfg.SourceFiles))
+	for f := range cfg.SourceFiles {
+		pipelineFiles = append(pipelineFiles, f)
+	}
+	sort.Strings(pipelineFiles)
+
+	routerEngine, err := router.LoadFromConfigFiles(pipelineFiles, registry, logger)
 	if err != nil {
 		logger.Error("failed to load router pipelines", "config_dir", configDir, "error", err)
-		return 1
+		return nil, err
 	}
 	if r, ok := routerEngine.(*router.Router); ok {
 		pipelines := r.PipelineSummary()
@@ -1181,26 +1766,39 @@ func runStart(args []string) int {
 		}
 	}
 
-	sched := scheduler.New(cfg, q, hub, logger)
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	rt := &runtimeState{
+		cfg:          cfg,
+		configPath:   configPath,
+		logger:       logger,
+		registry:     registry,
+		router:       routerEngine,
+		errCh:        errCh,
+		db:           db,
+		configSource: configSource,
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	rt.ctx, rt.cancel = context.WithCancel(context.Background())
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	errCh := make(chan error, 3)
-
-	go func() {
-		if err := sched.Start(ctx); err != nil && err != context.Canceled {
-			errCh <- fmt.Errorf("scheduler: %w", err)
+	sched := scheduler.New(cfg, q, hub, logger, scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
+		plug, ok := registry.Get(pluginName)
+		if !ok {
+			return false
 		}
-	}()
+		return plug.SupportsCommand(commandName)
+	}))
+	rt.scheduler = sched
+	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	rt.dispatcher = disp
 
+	if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
+		return nil, fmt.Errorf("scheduler: %w", err)
+	}
+
+	rt.wg.Add(1)
 	go func() {
-		if err := disp.Start(ctx); err != nil && err != context.Canceled {
-			errCh <- fmt.Errorf("dispatcher: %w", err)
+		defer rt.wg.Done()
+		if err := disp.Start(rt.ctx); err != nil && err != context.Canceled {
+			rt.errCh <- fmt.Errorf("dispatcher: %w", err)
 		}
 	}()
 
@@ -1212,52 +1810,140 @@ func runStart(args []string) int {
 				Scopes: t.Scopes,
 			})
 		}
+		binaryPath := ""
+		if execPath, err := os.Executable(); err == nil {
+			binaryPath = execPath
+		}
+
 		apiConfig := api.Config{
 			Listen:            cfg.API.Listen,
-			APIKey:            cfg.API.Auth.APIKey,
 			Tokens:            tokens,
 			MaxConcurrentSync: cfg.API.MaxConcurrentSync,
 			MaxSyncTimeout:    cfg.API.MaxSyncTimeout,
+			ConfigPath:        configPath,
+			BinaryPath:        binaryPath,
+			Version:           version,
+			RuntimeConfig:     cfg,
+			ReloadFunc:        reloadFunc,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
+		rt.apiServer = apiServer
+		rt.wg.Add(1)
 		go func() {
-			if err := apiServer.Start(ctx); err != nil && err != context.Canceled {
-				errCh <- fmt.Errorf("api: %w", err)
+			defer rt.wg.Done()
+			if err := apiServer.Start(rt.ctx); err != nil && err != context.Canceled {
+				rt.errCh <- fmt.Errorf("api: %w", err)
 			}
 		}()
 		logger.Info("API server enabled", "listen", cfg.API.Listen)
 	}
 
 	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
-		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, make(map[string]string))
+		tokensMap := make(map[string]string, len(cfg.Tokens))
+		for _, t := range cfg.Tokens {
+			tokensMap[t.Name] = t.Key
+		}
+		webhookConfig, err := webhook.FromGlobalConfig(cfg.Webhooks, tokensMap)
 		if err != nil {
 			logger.Error("failed to configure webhooks", "error", err)
-			return 1
+			return nil, err
 		}
 
 		webhookServer := webhook.New(webhookConfig, q, log.WithComponent("webhook"))
+		rt.webhook = webhookServer
+		rt.wg.Add(1)
 		go func() {
-			if err := webhookServer.Start(ctx); err != nil && err != context.Canceled {
-				errCh <- fmt.Errorf("webhook: %w", err)
+			defer rt.wg.Done()
+			if err := webhookServer.Start(rt.ctx); err != nil && err != context.Canceled {
+				rt.errCh <- fmt.Errorf("webhook: %w", err)
 			}
 		}()
 		logger.Info("webhook server enabled", "listen", webhookConfig.Listen, "endpoints", len(webhookConfig.Endpoints))
 	}
 
-	logger.Info("ductile running (press Ctrl+C to stop)")
+	return rt, nil
+}
 
-	select {
-	case sig := <-sigCh:
-		logger.Info("received shutdown signal", "signal", sig)
-		cancel()
-	case err := <-errCh:
-		logger.Error("component failed", "error", err)
-		cancel()
+func runStart(args []string) int {
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
 		return 1
 	}
 
-	logger.Info("ductile stopped")
-	return 0
+	configSource := "explicit"
+	if *configPath == "" {
+		if os.Getenv("DUCTILE_CONFIG_DIR") != "" {
+			configSource = "env:DUCTILE_CONFIG_DIR"
+		} else {
+			configSource = "auto-discovered"
+		}
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "no config found: %v\nHint: create ~/.config/ductile/config.yaml or use --config\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	pidLockPath := getPIDLockPath(cfg)
+	pidLock, err := lock.AcquirePIDLock(pidLockPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to acquire PID lock (another instance may be running): %v\n", err)
+		return 1
+	}
+	defer func() { _ = pidLock.Release() }()
+
+	manager := &reloadManager{
+		configPath:   *configPath,
+		configSource: configSource,
+		errCh:        make(chan error, 4),
+	}
+	manager.reloadFunc = manager.Reload
+
+	runtime, err := buildRuntime(cfg, *configPath, configSource, manager.reloadFunc, manager.errCh)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start runtime: %v\n", err)
+		return 1
+	}
+	manager.runtime = runtime
+
+	logger := runtime.logger
+	logger.Info("acquired PID lock", "path", pidLockPath)
+	logger.Info("ductile running (press Ctrl+C to stop)")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	for {
+		select {
+		case sig := <-sigCh:
+			if sig == syscall.SIGHUP {
+				if _, err := manager.Reload(context.Background()); err != nil {
+					logger.Error("config reload failed", "error", err)
+				} else {
+					logger.Info("config reloaded successfully")
+				}
+				continue
+			}
+			logger.Info("received shutdown signal", "signal", sig)
+			manager.Stop()
+			logger.Info("ductile stopped")
+			return 0
+		case err := <-manager.errCh:
+			logger.Error("component failed", "error", err)
+			manager.Stop()
+			logger.Info("ductile stopped")
+			return 1
+		}
+	}
 }
 
 type systemStatusCheck struct {
@@ -1311,26 +1997,28 @@ func collectSystemStatus(configPath string) systemStatusReport {
 	if resolvedConfigPath == "" {
 		discovered, err := config.DiscoverConfigDir()
 		if err != nil {
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "config_discovery",
-				OK:     false,
-				Detail: err.Error(),
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "config_load",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "state_db",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
-			report.Checks = append(report.Checks, systemStatusCheck{
-				Name:   "pid_lock",
-				OK:     false,
-				Detail: "skipped: config discovery failed",
-			})
+			report.Checks = append(report.Checks,
+				systemStatusCheck{
+					Name:   "config_discovery",
+					OK:     false,
+					Detail: err.Error(),
+				},
+				systemStatusCheck{
+					Name:   "config_load",
+					OK:     false,
+					Detail: "skipped: config discovery failed",
+				},
+				systemStatusCheck{
+					Name:   "state_db",
+					OK:     false,
+					Detail: "skipped: config discovery failed",
+				},
+				systemStatusCheck{
+					Name:   "pid_lock",
+					OK:     false,
+					Detail: "skipped: config discovery failed",
+				},
+			)
 			report.Healthy = false
 			return report
 		}
@@ -1346,22 +2034,24 @@ func collectSystemStatus(configPath string) systemStatusReport {
 
 	cfg, err := config.Load(resolvedConfigPath)
 	if err != nil {
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "config_load",
-			OK:     false,
-			Path:   resolvedConfigPath,
-			Detail: err.Error(),
-		})
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "state_db",
-			OK:     false,
-			Detail: "skipped: config load failed",
-		})
-		report.Checks = append(report.Checks, systemStatusCheck{
-			Name:   "pid_lock",
-			OK:     false,
-			Detail: "skipped: config load failed",
-		})
+		report.Checks = append(report.Checks,
+			systemStatusCheck{
+				Name:   "config_load",
+				OK:     false,
+				Path:   resolvedConfigPath,
+				Detail: err.Error(),
+			},
+			systemStatusCheck{
+				Name:   "state_db",
+				OK:     false,
+				Detail: "skipped: config load failed",
+			},
+			systemStatusCheck{
+				Name:   "pid_lock",
+				OK:     false,
+				Detail: "skipped: config load failed",
+			},
+		)
 		report.Healthy = false
 		return report
 	}
@@ -1413,7 +2103,7 @@ func checkStateDBReadiness(statePath string) systemStatusCheck {
 		check.Detail = fmt.Sprintf("open failed: %v", err)
 		return check
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -1435,6 +2125,7 @@ func checkPIDLockState(lockPath string) systemStatusCheck {
 		Path: lockPath,
 	}
 
+	// #nosec G304 -- lock path is operator-controlled local input.
 	data, err := os.ReadFile(lockPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1501,30 +2192,30 @@ func renderSystemStatusHuman(report systemStatusReport) {
 }
 
 func runInspect(args []string) int {
-	// Custom flag parsing because we want to support flags AFTER the job ID
-	// like 'ductile job inspect <id> --json'
+	// Custom flag parsing because we want to support flags intermixed with the job ID
+	// like 'ductile job inspect <id> --json' or 'ductile job inspect --json <id>'
 	var configPath string
 	var jsonOut bool
 
-	// Create a new flag set but don't parse everything at once
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
 	fs.BoolVar(&jsonOut, "json", false, "Output report in JSON")
 
-	// Filter out positional jobID and then parse remaining flags
 	var jobID string
-	var remainingArgs []string
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "-") && jobID == "" {
-			jobID = arg
-		} else {
-			remainingArgs = append(remainingArgs, arg)
+	remainingArgs := args
+	for len(remainingArgs) > 0 {
+		if err := fs.Parse(remainingArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+			return 1
 		}
-	}
-
-	if err := fs.Parse(remainingArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
+		if fs.NArg() > 0 {
+			if jobID == "" {
+				jobID = fs.Arg(0)
+			}
+			remainingArgs = fs.Args()[1:]
+		} else {
+			remainingArgs = nil
+		}
 	}
 
 	if jobID == "" {
@@ -1552,7 +2243,7 @@ func runInspect(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
 		return 1
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var report string
 	if jsonOut {
@@ -1568,6 +2259,157 @@ func runInspect(args []string) int {
 
 	fmt.Print(report)
 	return 0
+}
+
+func runJobLogs(args []string) int {
+	fs := flag.NewFlagSet("job logs", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration")
+	jsonOut := fs.Bool("json", false, "Output JSON")
+	plugin := fs.String("plugin", "", "Filter by plugin")
+	command := fs.String("command", "", "Filter by command")
+	statusRaw := fs.String("status", "", "Filter by status")
+	submittedBy := fs.String("submitted-by", "", "Filter by submitted_by")
+	fromRaw := fs.String("from", "", "Filter by completed_at >= from (RFC3339)")
+	toRaw := fs.String("to", "", "Filter by completed_at <= to (RFC3339)")
+	query := fs.String("query", "", "Search last_error/stderr/result")
+	limit := fs.Int("limit", 50, "Max rows (<=200)")
+	includeResult := fs.Bool("include-result", false, "Include full result payloads")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+	if fs.NArg() > 0 {
+		printJobLogsHelp()
+		return 1
+	}
+	if *limit <= 0 || *limit > 200 {
+		fmt.Fprintln(os.Stderr, "limit must be between 1 and 200")
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	filter := queue.JobLogFilter{
+		Plugin:        strings.TrimSpace(*plugin),
+		Command:       strings.TrimSpace(*command),
+		SubmittedBy:   strings.TrimSpace(*submittedBy),
+		Query:         strings.TrimSpace(*query),
+		Limit:         *limit,
+		IncludeResult: *includeResult,
+	}
+
+	if strings.TrimSpace(*statusRaw) != "" {
+		status, ok := parseJobStatusFlag(*statusRaw)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "invalid status filter")
+			return 1
+		}
+		filter.Status = &status
+	}
+
+	if strings.TrimSpace(*fromRaw) != "" {
+		parsed, err := parseTimeFlag(*fromRaw)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "invalid from timestamp")
+			return 1
+		}
+		filter.Since = &parsed
+	}
+
+	if strings.TrimSpace(*toRaw) != "" {
+		parsed, err := parseTimeFlag(*toRaw)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "invalid to timestamp")
+			return 1
+		}
+		filter.Until = &parsed
+	}
+
+	q := queue.New(db)
+	logs, total, err := q.ListJobLogs(context.Background(), filter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to query job logs: %v\n", err)
+		return 1
+	}
+
+	if *jsonOut {
+		out := struct {
+			Total int                  `json:"total"`
+			Logs  []*queue.JobLogEntry `json:"logs"`
+		}{
+			Total: total,
+			Logs:  logs,
+		}
+		payload, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to marshal JSON: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(payload))
+		return 0
+	}
+
+	fmt.Printf("Job Logs (total=%d)\n", total)
+	for _, entry := range logs {
+		fmt.Printf("- %s %s %s:%s job=%s attempt=%d submitted_by=%s\n", entry.CompletedAt.Format(time.RFC3339), entry.Status, entry.Plugin, entry.Command, entry.JobID, entry.Attempt, entry.SubmittedBy)
+		if entry.LastError != nil {
+			fmt.Printf("  last_error: %s\n", *entry.LastError)
+		}
+		if entry.Stderr != nil {
+			fmt.Printf("  stderr: %s\n", *entry.Stderr)
+		}
+		if *includeResult && len(entry.Result) > 0 {
+			fmt.Printf("  result: %s\n", string(entry.Result))
+		}
+	}
+
+	return 0
+}
+
+func parseJobStatusFlag(raw string) (queue.Status, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "pending":
+		return queue.StatusQueued, true
+	case "ok":
+		return queue.StatusSucceeded, true
+	case "error":
+		return queue.StatusFailed, true
+	case string(queue.StatusQueued), string(queue.StatusRunning), string(queue.StatusSucceeded), string(queue.StatusFailed), string(queue.StatusTimedOut), string(queue.StatusDead):
+		return queue.Status(strings.ToLower(strings.TrimSpace(raw))), true
+	default:
+		return "", false
+	}
+}
+
+func parseTimeFlag(raw string) (time.Time, error) {
+	layouts := []string{time.RFC3339Nano, time.RFC3339}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid time")
 }
 
 func runConfigCheck(args []string) int {
@@ -1689,8 +2531,8 @@ func runConfigHashUpdate(args []string) int {
 	}
 
 	for _, dir := range targetDirs {
-		// Check if this is a CONFIG_SPEC directory
-		if config.IsConfigSpecDir(dir) {
+		configPath := filepath.Join(dir, "config.yaml")
+		if _, err := os.Stat(configPath); err == nil {
 			files, err := config.DiscoverConfigFiles(dir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to discover config files in %s: %v\n", dir, err)
@@ -1720,28 +2562,31 @@ func runConfigHashUpdate(args []string) int {
 					fmt.Printf("  WROTE .checksums: %s\n", filepath.Join(dir, ".checksums"))
 				}
 			}
-		} else {
-			// Legacy include-based mode
-			scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
-			report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-				return 1
+			continue
+		} else if err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Failed to access %s: %v\n", configPath, err)
+			return 1
+		}
+
+		scopeFiles := []string{"tokens.yaml", "webhooks.yaml"}
+		report, err := config.GenerateChecksumsWithReport(dir, scopeFiles, dryRun)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
+			return 1
+		}
+		if isVerbose {
+			fmt.Printf("Processing directory: %s\n", dir)
+			for _, file := range report.Files {
+				if file.Exists {
+					fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
+					continue
+				}
+				fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
 			}
-			if isVerbose {
-				fmt.Printf("Processing directory (v1 manifest): %s\n", dir)
-				for _, file := range report.Files {
-					if file.Exists {
-						fmt.Printf("  HASH %s: %s\n", file.Filename, file.Hash)
-						continue
-					}
-					fmt.Printf("  SKIP %s: not found (optional)\n", file.Filename)
-				}
-				if dryRun {
-					fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
-				} else {
-					fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
-				}
+			if dryRun {
+				fmt.Printf("  DRY-RUN .checksums: %s (not written)\n", report.ChecksumPath)
+			} else {
+				fmt.Printf("  WROTE .checksums: %s\n", report.ChecksumPath)
 			}
 		}
 	}
@@ -1764,4 +2609,18 @@ func getPIDLockPath(cfg *config.Config) string {
 	ext := filepath.Ext(dbBase)
 	nameWithoutExt := dbBase[:len(dbBase)-len(ext)]
 	return filepath.Join(dbDir, nameWithoutExt+".pid")
+}
+
+func readPIDFromFile(path string) (int, error) {
+	// #nosec G304 -- pid lock path is operator-controlled local input.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read pid file %s: %w", path, err)
+	}
+	raw := strings.TrimSpace(string(data))
+	pid, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid pid in %s", path)
+	}
+	return pid, nil
 }

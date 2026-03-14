@@ -1,165 +1,243 @@
-# Ductile: Pipelines & Orchestration
+# Ductile: Pipelines & Orchestration (DSL Reference)
 
-This guide explains how to design, build, and debug event-driven workflows (Pipelines) in Ductile.
-
----
-
-## 1. The Governance Hybrid Model
-
-Ductile uses a unique "Governance Hybrid" architecture to manage data as it flows through a multi-hop chain. It separates **Governance** from **Execution**.
-
-### 1.1 Control Plane (Baggage)
-*   **What it is:** Metadata about the execution (e.g., `origin_user_id`, `discord_channel_id`, `trace_id`).
-*   **How it works:** This data is stored in a SQLite ledger (`event_context`). It is automatically merged and carried forward (as "Baggage") to every job in the chain.
-*   **Protection:** Keys starting with `origin_` are immutable. Once set at the start of a chain, plugins cannot overwrite them, ensuring a reliable audit trail.
-
-### 1.2 Data Plane (Workspaces)
-*   **What it is:** Large physical artifacts (e.g., `.mp3` audio files, `.txt` transcripts, `.pdf` documents).
-*   **How it works:** Every job is assigned a `workspace_dir` on the filesystem.
-*   **Isolation:** When a pipeline branches, Ductile performs a **Zero-Copy Clone** (using hardlinks). This ensures Step B and Step C have their own isolated folders but don't consume double the disk space.
+Ductile uses a YAML-based Domain Specific Language (DSL) to define event-driven workflows. Pipelines transform atomic **Connectors** into complex, multi-hop **Orchestrations**.
 
 ---
 
-## 2. Pipeline DSL
+## 1. Top-Level Structure
 
-Pipelines are defined in YAML files located in `~/.config/ductile/pipelines/`.
-
-### 2.1 Basic Syntax
+A pipeline file (e.g., `pipelines.yaml`) contains an array of pipeline definitions.
 
 ```yaml
 pipelines:
-  - name: video-wisdom
-    on: discord.video_received   # The trigger event
-    steps:
-      - id: downloader
-        uses: yt-dlp-plugin      # Execute a plugin
-      
-      - id: extractor
-        uses: whisper-ai         # Next step in the chain
-```
-
-### 2.2 Synchronous Pipelines (`execution_mode`)
-By default, pipelines are asynchronous (fire-and-forget). For interactive use cases (e.g., Discord bots, CLI tools), you can mark a pipeline as `synchronous`.
-
-```yaml
-  - name: video-summarizer
-    on: discord.command.summarize
-    execution_mode: synchronous  # API will block until the pipeline completes
-    timeout: 3m                 # Maximum time the API will wait
-    steps:
-      - uses: youtube-dl
-      - uses: whisper-ai
-      - uses: fabric-summarizer
-```
-
-**Sync Principles:**
-*   **Guarded Bridge:** The engine remains asynchronous internally. The API simply "stays on the line" until the finish line is reached.
-*   **Timeout Handling:** If the pipeline exceeds the `timeout`, the API returns `202 Accepted` with a `job_id`, allowing the client to poll later.
-*   **Result Aggregation:** The final JSON response contains an array of results from *every* step in the execution tree.
-
-### 2.3 Reusable Middleware (`call`)
-You can call one pipeline from another to promote logic reuse.
-
-```yaml
-  - name: standard-summarization
-    on: audio.ready
-    steps:
-      - uses: whisper-ai
-      - uses: llm-summarizer
-
-  - name: discord-flow
-    on: discord.link
-    steps:
-      - uses: downloader
-      - call: standard-summarization  # Inherits baggage and workspace
-```
-
-### 2.4 Branching (`split`)
-Use `split` to trigger multiple parallel paths.
-
-```yaml
-    steps:
-      - uses: processor
-      - split:
-          - uses: discord-notifier
-          - uses: s3-archiver
+  - name: my-workflow      # Required: Unique identifier
+    on: my.event.type      # Required: Trigger event type
+    execution_mode: async  # Optional: async (default) | synchronous
+    timeout: 30s           # Optional: For synchronous execution
+    steps:                 # Required: Sequential steps
+      - uses: my-plugin
 ```
 
 ---
 
-## 3. Decision Making: Multi-Event Branching
+## 2. Pipeline Properties
 
-Ductile avoids `if/else` logic in YAML. Instead, the **Plugin** makes the decision by choosing which event type to emit.
-
-### 3.1 The Pattern
-1.  **Plugin:** Inspects the data and emits `quality_high` or `quality_low`.
-2.  **YAML:** Routes those specific event types to different steps.
-
-```yaml
-- id: checker
-  uses: quality-filter
-  # The router implicitly matches the emitted event types
-  on_events:
-    quality_high: [publisher]
-    quality_low: [reviewer]
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | String | A unique name for the pipeline. Used for logging and API triggers. |
+| `on` | String | The event type that triggers this pipeline. Must match exactly. |
+| `execution_mode`| Enum | `async` (fire-and-forget) or `synchronous` (API blocks for result). |
+| `timeout` | Duration| Max time to wait for a `synchronous` pipeline (e.g., `5s`, `2m`). |
+| `steps` | Array | The list of steps to execute in order. |
 
 ---
 
-## 4. Plugin Protocol (v2)
+## 3. Step Types
 
-Plugins receive orchestration metadata via `stdin`.
+Each step in a pipeline must perform exactly **one** of the following actions:
+
+### 3.1 `uses` (Invoke Plugin)
+Calls a specific plugin or alias. This is the most common step.
+
+```yaml
+steps:
+  - id: download-step   # Optional: Unique ID within the pipeline
+    uses: youtube-dl
+```
+
+### 3.2 `call` (Invoke Pipeline)
+Calls another pipeline by name, inheriting the current baggage and workspace. This promotes logic reuse.
+
+```yaml
+steps:
+  - call: standard-summarizer
+```
+
+### 3.3 `steps` (Nested Sequence)
+Groups multiple steps together. Useful for organization or within a `split`.
+
+```yaml
+steps:
+  - steps:
+      - uses: step-1
+      - uses: step-2
+```
+
+### 3.4 `split` (Parallel Fan-out)
+Executes multiple steps or sub-pipelines in parallel. Ductile ensures each branch has its own isolated **Workspace** (via hard-links) while sharing the same **Baggage**.
+
+```yaml
+steps:
+  - uses: processor
+  - split:
+      - uses: discord-notifier
+      - uses: s3-archiver
+```
+
+### 3.5 `if` (Conditional Step Execution)
+A step may include an optional structured `if` object. If the condition evaluates to `false`, Ductile marks the step as `skipped`, records the reason, and continues to downstream steps without spawning the plugin process.
+
+`if` must be exactly one of:
+- atomic predicate: `path`, `op`, optional `value`
+- `all: [...]`
+- `any: [...]`
+- `not: <predicate>`
+
+Atomic example:
+
+```yaml
+steps:
+  - uses: discord-notify
+    if:
+      path: payload.status
+      op: eq
+      value: error
+```
+
+Composite example:
+
+```yaml
+steps:
+  - uses: long-video-handler
+    if:
+      all:
+        - path: payload.kind
+          op: eq
+          value: video
+        - path: payload.duration_sec
+          op: gte
+          value: 30
+```
+
+Supported operators in v1:
+- `exists`
+- `eq`
+- `neq`
+- `in`
+- `gt`
+- `gte`
+- `lt`
+- `lte`
+- `contains` (case-insensitive string contains)
+- `startswith` (case-insensitive string prefix)
+- `endswith` (case-insensitive string suffix)
+- `regex` (Go regexp full-string match; use inline flags like `(?i)` for case-insensitive patterns)
+
+Path roots allowed in v1:
+- `payload.*`
+- `context.*`
+- `config.*`
+
+Semantics:
+- typing is strict
+- numeric operators require numeric operands
+- string operators require string path values and string comparison values
+- no implicit string-to-number coercion
+- missing paths resolve to absent for `exists`, otherwise compare as `null`
+- invalid conditions fail at pipeline load time
+
+---
+
+## 4. How Data Flows
+
+### 4.1 The Data Plane (Workspaces)
+- Every job gets a unique folder on disk.
+- If Step A creates `video.mp4`, Step B can read it from its own workspace.
+- When a `split` occurs, both branches get a copy of the parent's files (zero-copy clone).
+
+### 4.2 The Control Plane (Baggage)
+- Metadata (JSON) is stored in the `event_context` database table.
+- Every step automatically receives all metadata produced by upstream steps.
+- Immutable keys (starting with `origin_`) are preserved for the entire life of the pipeline.
+
+### 4.3 Results & Payloads
+- The `result` (short string) and `payload` (JSON) from Step A are passed to Step B.
+- In `synchronous` mode, the final API response aggregates the results from every step.
+
+---
+
+## 5. Decision Making
+
+Ductile supports two kinds of decision making:
+
+### 5.1 Native step gating with `if`
+Use `if` when you want to decide whether a step should run based on the current payload, accumulated context, or plugin config.
+
+### 5.2 Event-driven branching
+Ductile also supports **Event-Driven Branching**. A plugin decides the next path by choosing which event type to emit.
+
+1.  **Step 1:** Plugin `classifier` inspects data.
+2.  **Output:** Plugin emits `type: "image.detected"` or `type: "text.detected"`.
+3.  **Routing:** You define two pipelines—one `on: image.detected` and one `on: text.detected`.
+
+Use this when the plugin is making a domain decision about what happened. Use `if` when the pipeline is making a structural decision about whether a step should run.
+
+---
+
+## 6. Dispatcher Preflight
+
+Before spawning a plugin process, the dispatcher runs a **preflight phase** for every job. Preflight separates orchestration decisions from plugin execution, ensuring consistent data-plane semantics regardless of whether a step runs or is skipped.
+
+### 6.1 Preflight Steps
+
+Preflight executes three operations in order:
+
+1. **Load request context** — Fetches accumulated baggage from the `event_context` table (all upstream metadata for this job's execution tree).
+
+2. **Ensure workspace** — Creates or inherits a workspace directory for the job. If a parent job exists, the workspace is cloned from it (zero-copy hard-link clone). If no parent exists, a fresh workspace is created. This runs *before* condition evaluation so that skipped steps still have a valid workspace for downstream inheritance.
+
+3. **Evaluate `if` condition** — If the job's pipeline step has an `if` condition, evaluates it against the available scope (`payload.*`, `context.*`, `config.*`). Only runs when the job is part of a pipeline with a router.
+
+### 6.2 Preflight Outcomes
+
+| Outcome | When | Effect |
+|---------|------|--------|
+| **run** | No `if` condition, or condition evaluates `true` | Plugin process spawns normally |
+| **skip** | `if` condition evaluates `false` | No plugin spawns; job marked `skipped`; synthetic `ductile.step.skipped` event routed to downstream steps |
+| **fail** | Context load, workspace creation, or condition evaluation returns an error | Job marked `failed`; no plugin spawns; no downstream routing |
+
+### 6.3 Workspace Inheritance for Skipped Steps
+
+A skipped step's workspace is created during preflight, before the condition is evaluated. This means:
+
+- Downstream steps that inherit from a skipped parent receive a valid workspace (cloned from the skipped step's parent).
+- Workspace clone/inheritance is independent of whether the parent ran or was skipped.
+- No data-plane inconsistency: every job in the execution tree has a workspace, regardless of its terminal status.
+
+### 6.4 Skipped Step Routing
+
+When a step is skipped, the dispatcher:
+
+1. Publishes a `job.skipped` event (with `reason`) to the event hub.
+2. Routes a synthetic `ductile.step.skipped` event through the router, allowing downstream steps to execute.
+3. Marks the job as `skipped` with a synthetic result payload: `{"status": "skipped", "reason": "..."}`.
+
+Successor routing happens *before* the job is marked terminal, preventing synchronous callers from seeing the tree as complete before all children are enqueued.
+
+### 6.5 Preflight Events
+
+The dispatcher emits a `job.preflight` event after preflight completes (or fails), with the following payload:
 
 ```json
 {
-  "protocol": 2,
-  "job_id": "uuid-456",
-  "workspace_dir": "/tmp/ductile/ws/job-456/",
-  "context": {
-    "origin_user": "matt",
-    "channel_id": "123"
-  },
-  "event": {
-    "type": "video_downloaded",
-    "payload": { "filename": "lecture.mp4" }
-  }
+  "job_id": "uuid",
+  "plugin": "plugin-name",
+  "command": "command-name",
+  "decision": "run | skip | fail",
+  "reason": "",
+  "workspace_dir": "/path/to/workspace"
 }
 ```
 
-**Plugin Checklist:**
-*   Read `context` for routing baggage (like IDs).
-*   Read/Write files directly in `workspace_dir`.
-*   Only return filenames in the JSON `payload`, never file content.
+The `reason` field is empty for `run` decisions, contains the condition failure reason for `skip`, and contains the error message for `fail`. These events enable async consumers (TUI, event streams, monitoring) to distinguish orchestration decisions from plugin execution outcomes.
 
 ---
 
-## 5. Troubleshooting & Observability
+## 7. Validation
 
-### 5.1 The `inspect` Tool
-Use the `inspect` command to visualize the "Lineage" of a job. It shows exactly how the baggage accumulated and which files exist in each workspace.
-
-**CLI Principles:**
-All Ductile CLI commands support:
-*   `-v, --verbose`: To see internal routing decisions and baggage merges.
-*   `--dry-run`: To preview pipeline transitions without executing code.
-
-```bash
-ductile job inspect <job_id> -v
-```
-
-**Output Example:**
-```text
-[1] <root> :: <entry>
-    context_id : uuid-ctx-1
-    baggage    : {"origin_user": "matt"}
-    artifacts  : [video.mp4]
-
-[2] video-wisdom :: step_process
-    context_id : uuid-ctx-2
-    parent_id  : uuid-ctx-1
-    baggage    : {"origin_user": "matt", "status": "processed"}
-    artifacts  : [video.mp4, summary.txt]
-```
-
-### 5.2 Cycle Detection
-Ductile automatically detects circular dependencies (e.g., A calls B, B calls A) at load time and will refuse to start if a cycle is found.
+Ductile performs several checks when loading pipelines:
+- **Cycle Detection:** Refuses to start if a pipeline calls itself (directly or indirectly).
+- **Shadowing:** Ensures two pipelines don't use the same name.
+- **Dangling Calls:** Ensures every `call` references a valid pipeline name.
+- **Condition Validation:** Verifies `if` trees have valid shape, supported operators, allowed roots, and safe depth/count limits.
+- **Schema Validation:** Verifies the YAML structure against the official [pipelines.json](schemas/pipelines.schema.json).

@@ -27,12 +27,16 @@ You can reload the configuration without restarting the service by sending a `SI
 ### Real-Time Dashboard (TUI)
 Ductile includes a built-in terminal UI for real-time visibility:
 ```bash
-./ductile system monitor --api-key "your-admin-token"
+./ductile system watch --api-key "your-admin-token"
 ```
-The monitor shows:
--   Service health and uptime.
--   A live process tree of active and recent jobs.
--   A real-time event stream.
+
+![Ductile system watch TUI](Ductile-system-watch-screenshot.png)
+
+The watch view shows:
+-   Service health, uptime, queue depth, and plugin count.
+-   Metadata header (config path, binary path, version).
+-   Pipelines with live status and last activity.
+-   An event stream of recent activity.
 
 ### Logging
 Ductile emits structured JSON logs to `stdout`. These are ideal for consumption by Logstash, Fluentd, or simple `jq` queries.
@@ -50,7 +54,7 @@ curl -N -H "Authorization: Bearer <token>" http://localhost:8080/events
 
 ## 3. Configuration Management
 
-Ductile uses a tiered directory model for configuration. The source of truth is typically `~/.config/ductile/`.
+Ductile loads `config.yaml` from the config directory (typically `~/.config/ductile/`) and merges any files listed under `include:`.
 
 ### Administrative Commands
 Use the `config` noun for surgical administration:
@@ -59,7 +63,7 @@ Use the `config` noun for surgical administration:
 -   **Set a value safely:** `ductile config set plugins.echo.enabled=false --apply`.
 
 ### Operational Integrity (Lock & Check)
-To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or `webhooks.yaml`), Ductile uses **BLAKE3** hash verification.
+To prevent unauthorized modifications to sensitive files (like `tokens.yaml` or `webhooks.yaml`), Ductile uses **BLAKE3** hash verification. For webhook setup and signing examples, see [WEBHOOKS.md](WEBHOOKS.md).
 
 1.  **Authorize changes:** After editing config files, update the hashes:
     ```bash
@@ -93,7 +97,7 @@ Ductile provides a REST API for programmatic control. By default, it listens on 
 ### Manual Triggering
 You can manually enqueue any plugin command via the API:
 ```bash
-curl -X POST http://localhost:8080/trigger/echo/poll 
+curl -X POST http://localhost:8080/plugin/echo/poll 
   -H "Authorization: Bearer <token>" 
   -H "Content-Type: application/json" 
   -d '{"payload": {"message": "Hello from API"}}'

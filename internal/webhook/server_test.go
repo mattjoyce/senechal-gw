@@ -3,27 +3,26 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/storage"
 )
 
-// mockQueue is a mock implementation of JobQueuer for testing.
-type mockQueue struct {
-	enqueueFn func(ctx context.Context, req queue.EnqueueRequest) (string, error)
-}
-
-func (m *mockQueue) Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-	if m.enqueueFn != nil {
-		return m.enqueueFn(ctx, req)
+func setupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := storage.OpenSQLite(context.Background(), ":memory:")
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
 	}
-	return "test-job-id", nil
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
 func TestHandleWebhook_ValidSignature(t *testing.T) {
@@ -45,24 +44,10 @@ func TestHandleWebhook_ValidSignature(t *testing.T) {
 		},
 	}
 
-	mq := &mockQueue{
-		enqueueFn: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			// Verify job enqueued correctly
-			if req.Plugin != "github-handler" {
-				t.Errorf("Plugin = %v, want github-handler", req.Plugin)
-			}
-			if req.Command != "handle" {
-				t.Errorf("Command = %v, want handle", req.Command)
-			}
-			if string(req.Payload) != string(body) {
-				t.Errorf("Payload = %v, want %v", string(req.Payload), string(body))
-			}
-			return "job-123", nil
-		},
-	}
-
+	db := setupTestDB(t)
+	q := queue.New(db)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	server := New(config, mq, logger)
+	server := New(config, q, logger)
 
 	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", signature)
@@ -71,16 +56,34 @@ func TestHandleWebhook_ValidSignature(t *testing.T) {
 	server.handleWebhook(rec, req)
 
 	if rec.Code != http.StatusAccepted {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusAccepted)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
 	}
 
 	var resp TriggerResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+	if resp.JobID == "" {
+		t.Fatal("expected non-empty job id")
+	}
 
-	if resp.JobID != "job-123" {
-		t.Errorf("JobID = %v, want job-123", resp.JobID)
+	job, err := q.GetJobByID(context.Background(), resp.JobID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if job.Plugin != "github-handler" {
+		t.Fatalf("Plugin = %v, want github-handler", job.Plugin)
+	}
+	if job.Command != "handle" {
+		t.Fatalf("Command = %v, want handle", job.Command)
+	}
+
+	var payload []byte
+	if err := db.QueryRow("SELECT payload FROM job_queue WHERE id = ?", resp.JobID).Scan(&payload); err != nil {
+		t.Fatalf("query payload: %v", err)
+	}
+	if string(payload) != string(body) {
+		t.Fatalf("Payload = %v, want %v", string(payload), string(body))
 	}
 }
 
@@ -91,26 +94,19 @@ func TestHandleWebhook_InvalidSignature(t *testing.T) {
 
 	config := Config{
 		Listen: "127.0.0.1:0",
-		Endpoints: []EndpointConfig{
-			{
-				Path:            "/webhook/github",
-				Plugin:          "github-handler",
-				Command:         "handle",
-				Secret:          secret,
-				SignatureHeader: "X-Hub-Signature-256",
-			},
-		},
+		Endpoints: []EndpointConfig{{
+			Path:            "/webhook/github",
+			Plugin:          "github-handler",
+			Command:         "handle",
+			Secret:          secret,
+			SignatureHeader: "X-Hub-Signature-256",
+		}},
 	}
 
-	mq := &mockQueue{
-		enqueueFn: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			t.Fatal("Enqueue should not be called with invalid signature")
-			return "", nil
-		},
-	}
-
+	db := setupTestDB(t)
+	q := queue.New(db)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	server := New(config, mq, logger)
+	server := New(config, q, logger)
 
 	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", wrongSignature)
@@ -119,134 +115,140 @@ func TestHandleWebhook_InvalidSignature(t *testing.T) {
 	server.handleWebhook(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusForbidden)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 
 	var resp ErrorResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-
-	// Error should be generic (no details leaked)
 	if resp.Error != "forbidden" {
-		t.Errorf("Error = %v, want generic 'forbidden'", resp.Error)
+		t.Fatalf("Error = %v, want generic 'forbidden'", resp.Error)
+	}
+
+	depth, err := q.Depth(context.Background())
+	if err != nil {
+		t.Fatalf("Depth: %v", err)
+	}
+	if depth != 0 {
+		t.Fatalf("expected no enqueued jobs, got depth %d", depth)
 	}
 }
 
 func TestHandleWebhook_MissingSignature(t *testing.T) {
 	config := Config{
 		Listen: "127.0.0.1:0",
-		Endpoints: []EndpointConfig{
-			{
-				Path:            "/webhook/github",
-				Plugin:          "github-handler",
-				Secret:          "secret",
-				SignatureHeader: "X-Hub-Signature-256",
-			},
-		},
+		Endpoints: []EndpointConfig{{
+			Path:            "/webhook/github",
+			Plugin:          "github-handler",
+			Secret:          "secret",
+			SignatureHeader: "X-Hub-Signature-256",
+		}},
 	}
 
-	mq := &mockQueue{
-		enqueueFn: func(ctx context.Context, req queue.EnqueueRequest) (string, error) {
-			t.Fatal("Enqueue should not be called without signature")
-			return "", nil
-		},
-	}
-
+	db := setupTestDB(t)
+	q := queue.New(db)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	server := New(config, mq, logger)
+	server := New(config, q, logger)
 
-	req := httptest.NewRequest("POST", "/webhook/github", strings.NewReader(`{}`))
-	// No signature header set
+	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
-
 	server.handleWebhook(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusForbidden)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+
+	depth, err := q.Depth(context.Background())
+	if err != nil {
+		t.Fatalf("Depth: %v", err)
+	}
+	if depth != 0 {
+		t.Fatalf("expected no enqueued jobs, got depth %d", depth)
 	}
 }
 
 func TestHandleWebhook_BodyTooLarge(t *testing.T) {
 	secret := "test-secret"
-	body := bytes.Repeat([]byte("a"), 2*1024*1024) // 2MB
+	body := bytes.Repeat([]byte("a"), 2*1024*1024)
 	signature := formatGitHubSignature(computeExpectedSignature(body, secret))
 
 	config := Config{
 		Listen: "127.0.0.1:0",
-		Endpoints: []EndpointConfig{
-			{
-				Path:            "/webhook/github",
-				Plugin:          "github-handler",
-				Secret:          secret,
-				SignatureHeader: "X-Hub-Signature-256",
-				MaxBodySize:     1048576, // 1MB limit
-			},
-		},
+		Endpoints: []EndpointConfig{{
+			Path:            "/webhook/github",
+			Plugin:          "github-handler",
+			Secret:          secret,
+			SignatureHeader: "X-Hub-Signature-256",
+			MaxBodySize:     1048576,
+		}},
 	}
 
-	mq := &mockQueue{}
+	db := setupTestDB(t)
+	q := queue.New(db)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	server := New(config, mq, logger)
+	server := New(config, q, logger)
 
 	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", signature)
 	rec := httptest.NewRecorder()
-
 	server.handleWebhook(rec, req)
 
 	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+	depth, err := q.Depth(context.Background())
+	if err != nil {
+		t.Fatalf("Depth: %v", err)
+	}
+	if depth != 0 {
+		t.Fatalf("expected no enqueued jobs, got depth %d", depth)
 	}
 }
 
 func TestHandleWebhook_UnknownPath(t *testing.T) {
 	config := Config{
 		Listen: "127.0.0.1:0",
-		Endpoints: []EndpointConfig{
-			{
-				Path:   "/webhook/github",
-				Plugin: "github-handler",
-				Secret: "secret",
-			},
-		},
+		Endpoints: []EndpointConfig{{
+			Path:   "/webhook/github",
+			Plugin: "github-handler",
+			Secret: "secret",
+		}},
 	}
 
-	mq := &mockQueue{}
+	db := setupTestDB(t)
+	q := queue.New(db)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	server := New(config, mq, logger)
+	server := New(config, q, logger)
 
-	req := httptest.NewRequest("POST", "/webhook/unknown", strings.NewReader(`{}`))
+	req := httptest.NewRequest("POST", "/webhook/unknown", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
-
 	server.handleWebhook(rec, req)
 
 	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
 
 func TestNew_AppliesDefaults(t *testing.T) {
 	config := Config{
 		Listen: "127.0.0.1:0",
-		Endpoints: []EndpointConfig{
-			{
-				Path:   "/webhook/test",
-				Plugin: "test-plugin",
-				Secret: "secret",
-				// MaxBodySize and Command not set - should get defaults
-			},
-		},
+		Endpoints: []EndpointConfig{{
+			Path:   "/webhook/test",
+			Plugin: "test-plugin",
+			Secret: "secret",
+		}},
 	}
 
+	db := setupTestDB(t)
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	server := New(config, &mockQueue{}, logger)
+	server := New(config, queue.New(db), logger)
 
 	ep := server.endpoints["/webhook/test"]
 	if ep.MaxBodySize != DefaultMaxBodySize {
-		t.Errorf("MaxBodySize = %d, want %d", ep.MaxBodySize, DefaultMaxBodySize)
+		t.Fatalf("MaxBodySize = %d, want %d", ep.MaxBodySize, DefaultMaxBodySize)
 	}
 	if ep.Command != DefaultCommand {
-		t.Errorf("Command = %v, want %v", ep.Command, DefaultCommand)
+		t.Fatalf("Command = %v, want %v", ep.Command, DefaultCommand)
 	}
 }

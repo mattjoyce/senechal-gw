@@ -227,14 +227,6 @@ func guessTag(v string) string {
 	return "!!str"
 }
 
-func (c *Config) saveFile(path string, node *yaml.Node) error {
-	data, err := yaml.Marshal(node)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0644)
-}
-
 func (c *Config) resolveTargetFile() string {
 	for f := range c.SourceFiles {
 		if strings.HasSuffix(f, "config.yaml") {
@@ -257,22 +249,25 @@ func (c *Config) resolveRootConfigPath(fallback string) string {
 }
 
 func (c *Config) persistWithValidation(targetFile string, candidate []byte) error {
+	// #nosec G304 -- targetFile is derived from config sources (operator-controlled).
 	original, err := os.ReadFile(targetFile)
 	if err != nil {
 		return fmt.Errorf("failed to read original config file: %w", err)
 	}
 
-	mode := os.FileMode(0644)
+	mode := os.FileMode(0600)
 	if info, statErr := os.Stat(targetFile); statErr == nil {
 		mode = info.Mode().Perm()
 	}
 
+	// #nosec G703 -- targetFile is derived from config sources (operator-controlled).
 	if err := os.WriteFile(targetFile, candidate, mode); err != nil {
 		return fmt.Errorf("failed to persist config change: %w", err)
 	}
 
 	rootPath := c.resolveRootConfigPath(targetFile)
 	if _, err := Load(rootPath); err != nil {
+		// #nosec G703 -- targetFile is derived from config sources (operator-controlled).
 		restoreErr := os.WriteFile(targetFile, original, mode)
 		if restoreErr != nil {
 			return fmt.Errorf("validation failed (%v) and rollback failed (%v)", err, restoreErr)

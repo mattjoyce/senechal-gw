@@ -1,31 +1,42 @@
 package watch
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
-import "time"
-
-// Ticker rotates through frames to show the system is alive.
-// Stops rotating if no ticks arrive (indicates freeze).
-type Ticker struct {
-	frames   []string
-	index    int
+// Heartbeat shows scheduler ticks with a fading heart indicator.
+type Heartbeat struct {
 	lastTick time.Time
 }
 
-func NewTicker() Ticker {
-	return Ticker{
-		frames:   []string{"⟲", "⟳"},
-		lastTick: time.Now(),
+func NewHeartbeat() Heartbeat {
+	return Heartbeat{}
+}
+
+func (h *Heartbeat) OnTick() {
+	h.lastTick = time.Now()
+}
+
+func (h Heartbeat) Render(theme Theme, now time.Time, interval time.Duration) string {
+	if interval <= 0 {
+		interval = time.Minute
 	}
-}
+	if h.lastTick.IsZero() {
+		return theme.Dim.Render("♥")
+	}
 
-func (t *Ticker) Tick() {
-	t.index = (t.index + 1) % len(t.frames)
-	t.lastTick = time.Now()
-}
+	elapsed := now.Sub(h.lastTick)
+	step := interval / 3
 
-func (t Ticker) Current() string {
-	return t.frames[t.index]
+	switch {
+	case elapsed < step:
+		return theme.Highlight.Render("♥")
+	case elapsed < 2*step:
+		return theme.Header.Render("♥")
+	default:
+		return theme.Dim.Render("♥")
+	}
 }
 
 // Spinner shows event activity with a decaying dot pattern.

@@ -21,19 +21,14 @@ func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Conf
 	}
 
 	for i, ep := range wc.Endpoints {
-		// Resolve secret (SecretRef takes precedence over Secret)
-		secret := ep.Secret
-		if ep.SecretRef != "" {
-			resolvedSecret, ok := tokens[ep.SecretRef]
-			if !ok {
-				return Config{}, fmt.Errorf("webhook endpoint %q: secret_ref %q not found in tokens", ep.Path, ep.SecretRef)
-			}
-			secret = resolvedSecret
+		if ep.SecretRef == "" {
+			return Config{}, fmt.Errorf("webhook endpoint %q: secret_ref is required", ep.Path)
 		}
-
-		if secret == "" {
-			return Config{}, fmt.Errorf("webhook endpoint %q: no secret or secret_ref configured", ep.Path)
+		resolvedSecret, ok := tokens[ep.SecretRef]
+		if !ok {
+			return Config{}, fmt.Errorf("webhook endpoint %q: secret_ref %q not found in tokens", ep.Path, ep.SecretRef)
 		}
+		secret := resolvedSecret
 
 		// Parse max body size (e.g., "1MB", "2048576")
 		maxBodySize, err := parseMaxBodySize(ep.MaxBodySize)
@@ -46,6 +41,7 @@ func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Conf
 			Plugin:          ep.Plugin,
 			Command:         DefaultCommand, // Can be extended in config if needed
 			Secret:          secret,
+			SecretRef:       ep.SecretRef,
 			SignatureHeader: ep.SignatureHeader,
 			MaxBodySize:     maxBodySize,
 		}

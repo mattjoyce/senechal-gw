@@ -74,7 +74,7 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Core language | Go | Single binary, easy deployment, natural subprocess spawning |
 | Plugin coupling | Subprocess (JSON over stdin/stdout) | Language-agnostic, fault-isolated, drop-in plugins |
 | Scheduling | Heartbeat with fuzzy intervals | Human-friendly, avoids thundering herd |
-| Execution | Serial FIFO dispatch | Simple, predictable, no concurrency bugs |
+| Execution | Bounded Worker Pool | High-throughput, resource-safe, per-plugin concurrency caps |
 | Routing | Config-declared, fan-out, exact match | Plugins stay dumb, core controls flow |
 | Pipeline Execution | Async by default; Sync opt-in | Preserves event-driven core while enabling interactive results |
 | State | SQLite | Proven, zero-ops, single JSON blob per plugin |
@@ -143,57 +143,80 @@ queued → running → succeeded
 **At-least-once.** A job may run more than once (after crash, timeout, or retry). It will never be silently dropped.
 
 - Plugins MUST be idempotent, or use `state` to track what they've already processed.
-- The core provides an opt-in `dedupe_key` field. If a job is enqueued with a `dedupe_key` matching a job that succeeded within `dedupe_ttl`, it is not enqueued. The drop is logged at `INFO` with the `dedupe_key` and existing job ID.
-- `dedupe_ttl` is configurable (default 24h).
+- The core provides an opt-in `dedupe_key` field. If a job is enqueued with a `dedupe_key` matching a job that succeeded within the effective dedupe window, it is not enqueued. The drop is logged at `INFO` with the `dedupe_key` and existing job ID.
+- `dedupe_ttl` is configurable (default 24h) and acts as the default dedupe window. Callers may set a per-enqueue dedupe TTL override when a narrower window is needed (for example, scheduler cadence). When this override is set, enqueue also guards against in-flight duplicates (`queued`/`running`) for that `dedupe_key`.
 
 ### 3.5 Dispatch
 
-**Serial, single lane.** One job at a time, FIFO. No priority lanes. No concurrency.
+**Bounded Worker Pool.** Ductile uses a global worker pool to process jobs in parallel. This ensures high throughput while preventing resource exhaustion.
 
-Revisit condition: daily job count exceeds 500, or median queue wait time exceeds 30 seconds — with data to back it up.
+- **Global Limit:** Controlled by `service.max_workers` (defaults to `CPU-1`).
+- **Plugin Parallelism:** Each plugin can define a `parallelism` limit in its configuration. If a plugin is not marked as `concurrency_safe: true` in its manifest, it defaults to a parallelism of 1 (serial execution).
+- **Smart Dequeue:** The scheduler and dispatcher skip jobs for plugins that have reached their active parallelism cap, ensuring the worker pool remains available for other tasks.
+
+Revisit condition: sustained queue wait times exceed 60 seconds with all workers saturated.
 
 ### 3.6 Deduplication
 
 When a producer enqueues a job with a `dedupe_key`:
 
-1. Query for a `succeeded` job with the same `dedupe_key` completed within `dedupe_ttl`.
-2. If found: do not enqueue. Log at `INFO`: dedupe_key, existing job ID.
-3. If not found: enqueue normally.
+1. Determine effective dedupe TTL: per-enqueue override (if provided), otherwise service `dedupe_ttl`.
+2. If a per-enqueue override is set, query for an existing `queued` or `running` job with the same `dedupe_key`.
+3. Query for a `succeeded` job with the same `dedupe_key` completed within the effective TTL.
+4. If either check finds a match: do not enqueue. Log at `INFO`: dedupe_key, existing job ID.
+5. If no match is found: enqueue normally.
 
 ---
 
 ## 4. Scheduler
 
-A single internal tick loop. Each tick, the scheduler checks which plugins are due based on their configured interval and enqueues `poll` jobs. Plugins without a `schedule` are ignored by the scheduler and can still be triggered via webhook, router, CLI, or API.
+A single internal tick loop manages scheduled `poll` jobs. Each enabled plugin can define one or more schedule entries under `schedules:`. Plugins without schedules are ignored by the scheduler and can still be triggered via webhook, router, CLI, or API.
 
-### 4.1 Fuzzy Intervals
+For a full field-by-field reference and behavior details, see [SCHEDULER.md](SCHEDULER.md).
+
+### 4.1 Schedule Entries
+
+Each schedule entry is independent and has its own ID (default: `default`), command, and payload:
 
 ```yaml
 plugins:
   withings:
-    schedule:
-      every: 6h
-      jitter: 30m
-      preferred_window:
-        start: "06:00"
-        end: "22:00"
+    schedules:
+      - id: hourly
+        every: 1h
+        command: poll
+        payload:
+          source: heartbeat
 ```
 
-Supported intervals: `5m`, `15m`, `30m`, `hourly`, `2h`, `6h`, `daily`, `weekly`, `monthly`.
+Supported schedule types:
+- `every`: Interval schedule (`5m`, `15m`, `30m`, `hourly`, `2h`, `daily`, `weekly`, `monthly`).
+- `cron`: Standard 5-field cron (`min hour dom month dow`).
+- `at`: One-shot RFC3339 timestamp.
+- `after`: One-shot delay from service start.
 
-No crontab syntax.
+### 4.2 Time Controls
 
-### 4.2 Jitter
+Schedule execution can be constrained with time settings:
+- `jitter`: Random offset per scheduled run.
+- `only_between`: Time window string (e.g. `"08:00-22:00"`).
+- `timezone`: IANA timezone for cron/window evaluation.
+- `not_on`: List of weekdays to skip (`[saturday, sunday]` or `[0-6]`).
 
-Jitter computed **per scheduled run**, not per tick:
+`preferred_window` exists in config but is not enforced yet.
 
+Jitter is computed per scheduled run (not per tick):
 ```
 next_run = last_successful_run + interval + random(-jitter/2, +jitter/2)
 ```
 
-Fixed for that scheduled run — no re-randomization per tick (prevents schedule wander). `preferred_window` is a hard constraint: if `next_run` falls outside the window, it snaps to the start of the next valid window.
+### 4.3 Catch-up and Overlap
 
-### 4.3 Poll Guard
+Two per-schedule policies control missed ticks and concurrency:
+- `catch_up`: `skip` (default), `run_once`, `run_all`.
+- `if_running`: `skip` (default), `queue`, `cancel`.
+
+### 4.4 Poll Guard
 
 The scheduler **must not enqueue** a new `poll` job if there is already a `queued` or `running` `poll` job for that plugin. Configurable per-plugin (default 1):
 
@@ -253,22 +276,7 @@ plugins/
 
 ### 5.4 Manifest
 
-**Array format (legacy, deprecated Sprint 5):**
-```yaml
-manifest_spec: ductile.plugin
-manifest_version: 1
-name: withings
-version: 1.0.0
-protocol: 1
-entrypoint: run.py
-description: "Fetch health data from Withings API"
-commands: [poll, handle, health]  # All treated as type: write
-config_keys:
-  required: [client_id, client_secret]
-  optional: [access_token]
-```
-
-**Object format (Sprint 3+, recommended):**
+**Object format:**
 ```yaml
 manifest_spec: ductile.plugin
 manifest_version: 1
@@ -384,7 +392,7 @@ Configurable consecutive failure threshold per `(plugin, command)` pair. Applies
 
 - Default threshold: 3 consecutive failures.
 - Default reset: 30 minutes.
-- Manual reset: `ductile reset <plugin>`.
+- Manual reset: `ductile system reset <plugin>`.
 - States: `closed` -> `open` -> `half_open`.
 - When cooldown expires, scheduler allows a single half-open probe poll:
   - Success closes the circuit and resets failure count.
@@ -403,6 +411,8 @@ plugins:
 **Config is static. State is dynamic.**
 
 - `config` — from `config.yaml`, interpolated with env vars, read-only. Contains credentials, endpoints — things the operator sets.
+  - Config paths (config dir, includes, backups) are local operator-controlled inputs; Ductile does not accept untrusted remote file paths.
+  - `service.allow_symlinks` controls whether symlinks are permitted in config/plugin paths (warnings are always emitted when symlinks are detected).
 - `state` — single JSON blob per plugin in SQLite. Plugins read it, return `state_updates`, core applies shallow merge (top-level keys replaced, not deep-merged).
 
 ```sql
@@ -459,6 +469,7 @@ Single JSON object written to plugin's stdout:
 ```json
 {
   "status": "ok | error",
+  "result": "short human-readable summary",
   "error": "human-readable message (when status=error)",
   "retry": true,
   "events": [],
@@ -467,6 +478,7 @@ Single JSON object written to plugin's stdout:
 }
 ```
 
+- `result` — required when `status=ok`. Summarizes what the plugin did.
 - `retry` — defaults to `true` if omitted. Set `false` for permanent failures.
 - `events` — array of event envelopes (see 6.3).
 - `state_updates` — shallow-merged into plugin state.
@@ -583,53 +595,27 @@ api:
   enabled: true
   listen: "localhost:8080"
   auth:
-    api_key: ${API_KEY}  # Bearer token for authentication
+    tokens:
+      - token: ${ADMIN_API_TOKEN}
+        scopes: ["*"]
 ```
 
-### 9.2 POST /trigger/{plugin}/{command}
+### 9.2 Primary Trigger Endpoints
 
-Enqueues a job for the specified plugin and command. Returns immediately with a job ID (fire-and-forget, asynchronous execution).
+The API exposes two first-class trigger paths:
 
-**Request:**
-- URL params: `{plugin}` - plugin name, `{command}` - command name (e.g., "poll")
-- Header: `Authorization: Bearer <api_key>`
-- Body: Optional JSON payload (passed to plugin as `config` override or additional parameters)
+- `POST /plugin/{plugin}/{command}`: direct plugin execution (no pipeline routing), returns `202 Accepted`.
+- `POST /pipeline/{pipeline}`: explicit pipeline orchestration, returns `202 Accepted` by default and `200 OK` for synchronous pipelines.
 
-**Response (202 Accepted):**
-```json
-{
-  "job_id": "uuid-v4",
-  "status": "queued",
-  "plugin": "plugin_name",
-  "command": "command_name"
-}
-```
-
-**Synchronous Pipelines:**
-If a triggered event matches a pipeline with `execution_mode: synchronous`, the API handler blocks until the entire pipeline tree completes or the `timeout` is reached.
-- On success: Returns `200 OK` with aggregated results.
-- On timeout: Returns `202 Accepted` with the root `job_id`.
-
-**Error Responses:**
-- `401 Unauthorized` - Missing or invalid API key
-- `400 Bad Request` - Plugin not found or command not supported
-- `500 Internal Server Error` - Failed to enqueue job
-
-**Example:**
-```bash
-curl -X POST http://localhost:8080/trigger/echo/poll \
-  -H "Authorization: Bearer my-api-key-123" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
+See `docs/API_REFERENCE.md` for full examples and response schemas.
 
 ### 9.3 GET /job/{job_id}
 
 Retrieves the status and results of a previously triggered job.
 
 **Request:**
-- URL param: `{job_id}` - UUID returned from POST /trigger
-- Header: `Authorization: Bearer <api_key>`
+- URL param: `{job_id}` - UUID returned from one of the POST trigger endpoints
+- Header: `Authorization: Bearer <token>`
 
 **Response (200 OK - queued):**
 ```json
@@ -662,6 +648,7 @@ Retrieves the status and results of a previously triggered job.
   "command": "command_name",
   "result": {
     "status": "ok",
+    "result": "Plugin executed successfully",
     "state_updates": {"last_run": "2026-02-09T10:00:10Z"},
     "logs": [{"level": "info", "message": "Plugin executed successfully"}]
   },
@@ -671,12 +658,12 @@ Retrieves the status and results of a previously triggered job.
 ```
 
 **Error Responses:**
-- `401 Unauthorized` - Missing or invalid API key
+- `401 Unauthorized` - Missing or invalid token
 - `404 Not Found` - Job ID not found
 
 ### 9.4 Authentication & Authorization (Sprint 3+)
 
-**Bearer token authentication** with **manifest-driven scopes** for fine-grained authorization.
+**Bearer token authentication** with scoped permissions.
 
 **Token registry** (`tokens.yaml`):
 - Multiple tokens with individual scope definitions
@@ -684,19 +671,11 @@ Retrieves the status and results of a previously triggered job.
 - BLAKE3 hash ensures scope file integrity
 - Environment variable references for keys (never plaintext)
 
-**Scope syntax:**
-- **Manifest-driven:** `{plugin}:ro|rw` - Expands based on plugin manifest command types
-- **Granular:** `{action}:{resource}:{command}` - Direct permission specification
-- **Explicit deny:** `{plugin}:deny:{command}` - Overrides grants
-
-**Scope types:**
-- `read:*` - All GET endpoints (jobs, events, healthz, plugins, queue)
-- `trigger:{plugin}:{command}` - POST /trigger permissions
-- `admin:*` - Admin operations (reload, reset)
-- `{plugin}:ro` - Read-only plugin commands (type: read in manifest)
-- `{plugin}:rw` - All plugin commands (read + write)
-- `{plugin}:allow:{command}` - Specific command
-- `{plugin}:deny:{command}` - Explicit denial (precedence over grants)
+**Scope types (current):**
+- `plugin:ro`, `plugin:rw` - Plugin and pipeline trigger permissions
+- `jobs:ro`, `jobs:rw` - Job read/write permissions
+- `events:ro`, `events:rw` - Event stream permissions
+- `*` - Full admin access
 
 **Example tokens.yaml:**
 ```yaml
@@ -728,19 +707,14 @@ tokens:
 1. Extract bearer token from `Authorization` header
 2. Lookup token in registry
 3. Load and verify scope file (BLAKE3 hash check)
-4. Expand manifest-driven scopes using plugin registry
+4. Normalize implied read-from-write scopes
 5. Check if requested action matches any granted scope
 6. Return 403 if denied, proceed if allowed
 
-**Backward compatibility:**
-- Sprint 3-4: Support legacy `api.auth.api_key` (single key, full access)
-- Sprint 5: Remove legacy support (breaking change)
+Tokens should be stored in environment variables and interpolated (for example `${ADMIN_API_TOKEN}`).
 
-See cards #35 (Token Scopes), #36 (Manifest Metadata), #38 (CLI Config Tool), #40 (TUI Token Manager).
-
-- Key should be stored in environment variable and interpolated: `${API_KEY}`
-- All API requests must include `Authorization: Bearer <api_key>` header
-- Invalid or missing key returns `401 Unauthorized`
+- All API requests must include `Authorization: Bearer <token>` header
+- Invalid or missing token returns `401 Unauthorized`
 - No key rotation mechanism in MVP (manual config update + reload)
 
 ### 9.5 Resource Guarding (Synchronous Pipelines)
@@ -751,7 +725,7 @@ To prevent HTTP worker exhaustion, synchronous pipelines are governed by a semap
 
 ### 9.6 Use Cases
 
-- **LLM Tool Calling:** LLM agents can curl /trigger to execute actions (e.g., "check my calendar", "sync Withings data")
+- **LLM Tool Calling:** LLM agents can call `/plugin` for atomic actions and `/pipeline` for orchestrated workflows
 - **External Automation:** Scripts, cron jobs, or other services can trigger plugins programmatically
 - **Result Polling:** External systems can poll /job/{id} to wait for async plugin execution completion
 - **Manual Testing:** Developers can trigger plugins via curl without waiting for scheduler
@@ -759,6 +733,8 @@ To prevent HTTP worker exhaustion, synchronous pipelines are governed by a semap
 ---
 
 ## 10. Webhooks
+
+For operator setup and example requests, see [WEBHOOKS.md](WEBHOOKS.md).
 
 ### 10.1 Listener
 
@@ -768,7 +744,7 @@ webhooks:
   endpoints:
     - path: /hook/github
       plugin: github-handler
-      secret: ${GITHUB_WEBHOOK_SECRET}
+      secret_ref: github_webhook_secret
       signature_header: X-Hub-Signature-256
       max_body_size: 1MB
 ```
@@ -778,7 +754,7 @@ webhooks:
 HMAC-SHA256 signature verification is **mandatory** for all webhook endpoints.
 
 1. Read raw request body (up to `max_body_size`, default 1 MB).
-2. Compute `HMAC-SHA256(secret, raw_body)`.
+2. Resolve `secret_ref` from tokens.yaml and compute `HMAC-SHA256(secret, raw_body)`.
 3. Compare against the signature header (configurable name per endpoint).
 4. Reject with `403` if invalid. No error details in response.
 5. Reject with `413` if body exceeds `max_body_size`.
@@ -827,7 +803,7 @@ On startup:
 
 ### 11.3 Config Reload
 
-`ductile reload` sends `SIGHUP` to the running process (found via PID file).
+Send `SIGHUP` to the running process (found via PID file) to reload config.
 
 On SIGHUP:
 
@@ -864,11 +840,11 @@ Default 30 days. Configurable via `service.job_log_retention`.
 ### 11.6 CLI
 
 ```
-ductile start              # run the service (foreground)
+ductile system start       # run the service (foreground)
 ductile run <plugin>       # manually run a plugin once
 ductile status             # show plugin states, queue depth, last runs
-ductile reload             # reload config without restart
-ductile reset <plugin>     # reset circuit breaker for a plugin
+# send SIGHUP to reload config without restart
+ductile system reset <plugin>     # reset circuit breaker for a plugin
 ductile plugins            # list discovered plugins
 ductile logs [plugin]      # tail structured logs
 ductile queue              # show pending/active jobs
@@ -962,10 +938,14 @@ For the complete configuration specification, including file formats, merge logi
 
 ### 13.2 Key Principles
 
-- **Directory-Based Modularity:** Configuration is split into `config.yaml`, `webhooks.yaml`, `tokens.yaml`, and modular directories for `plugins/` and `pipelines/`.
-- **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/pipelines) log warnings if hashes are missing or mismatched.
-- **Monolithic Grafting:** At runtime, all discovered files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
+- **Include-Based Modularity:** Configuration is loaded from `config.yaml` plus any files or directories listed in `include:`.
+- **Multi-Root Plugin Discovery:** `plugin_roots` is the source of truth; roots are scanned in order and first match wins on duplicate plugin names.
+- **Pipeline Discovery Flow:** Pipelines are loaded from included YAML files (or include directories) that define `pipelines:` entries.
+- **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/routes) log warnings if hashes are missing or mismatched.
+- **Monolithic Grafting:** At runtime, all included files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
+- **Default Permissions:** Config directories and workspaces are created with `0700`. Config files and lock files default to `0600`; operators may relax permissions explicitly for shared environments.
+- **Secret Redaction:** CLI config inspection outputs redact token keys and webhook secrets; secrets are only shown at creation time.
 
 ## 14. Deployment
 
@@ -978,7 +958,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/ductile start --config /etc/ductile/config.yaml
+ExecStart=/usr/local/bin/ductile system start --config /etc/ductile/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 User=ductile
@@ -990,7 +970,7 @@ WantedBy=multi-user.target
 
 ### 14.2 Development
 
-Run `ductile start` directly. No systemd required.
+Run `ductile system start` directly. No systemd required.
 
 ---
 
@@ -1029,7 +1009,7 @@ ductile/
 |-------|--------|-------|--------|
 | 1. Skeleton | 0 | Go scaffold, CLI, config loader, SQLite state, plugin discovery | ✅ Complete |
 | 2. Core Loop | 1 | Work queue, heartbeat scheduler with fuzzy intervals, dispatch loop, plugin protocol, crash recovery | ✅ Complete |
-| 3. API Triggers | 2 | HTTP server with chi router, POST /trigger and GET /job endpoints, Bearer token auth, job result storage | ✅ Complete |
+| 3. API Triggers | 2 | HTTP server with chi router, POST /plugin and POST /pipeline, GET /job, Bearer token auth, job result storage | ✅ Complete |
 | 4. Routing | 3 | Config-declared event routing, downstream enqueuing, event_id traceability | ✅ Complete |
 | 5. Webhooks | 3 | HTTP listener, HMAC verification, /healthz, route inbound webhooks to plugins | ✅ Complete |
 | 6. Reliability Controls | 4 | Circuit breaker, retry with exponential backoff, deduplication enforcement | ✅ Complete |

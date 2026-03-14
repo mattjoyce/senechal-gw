@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FIXTURE="${1:-all}"
+
+if [[ -x "$ROOT_DIR/scripts/test-docker-runner" ]]; then
+  exec "$ROOT_DIR/scripts/test-docker-runner" "$FIXTURE"
+fi
+
+echo "==> test-docker: fixture-driven Docker harness not implemented yet"
+echo "==> requested fixture: $FIXTURE"
+echo "==> see docs/TESTING.md for the agreed target design"

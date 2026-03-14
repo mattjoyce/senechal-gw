@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 )
 
 func TestCompileSpecsValidNestedPipeline(t *testing.T) {
@@ -135,12 +137,53 @@ func TestCompileSpecsRejectsUnknownCallTarget(t *testing.T) {
 	}
 }
 
-func TestLoadAndCompileDirLoadsMultipleYAMLFiles(t *testing.T) {
-	configDir := t.TempDir()
-	pipelinesDir := filepath.Join(configDir, "pipelines")
-	if err := os.MkdirAll(pipelinesDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll(pipelines): %v", err)
+func TestCompileSpecsAcceptsStructuredIfCondition(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "conditional",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:   "step_a",
+			Uses: "plugin-a",
+			If: &conditions.Condition{
+				All: []conditions.Condition{
+					{Path: "payload.kind", Op: conditions.OpContains, Value: "vid"},
+					{Path: "context.origin_user", Op: conditions.OpExists},
+				},
+			},
+		}},
+	}}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
 	}
+	if set.Pipelines["conditional"].Nodes["step_a"].Condition == nil {
+		t.Fatalf("expected compiled node condition")
+	}
+}
+
+func TestCompileSpecsRejectsInvalidIfCondition(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "conditional",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:   "step_a",
+			Uses: "plugin-a",
+			If:   &conditions.Condition{Path: "state.flag", Op: conditions.OpEq, Value: true},
+		}},
+	}}
+
+	_, err := CompileSpecs(specs)
+	if err == nil {
+		t.Fatalf("expected invalid if condition error")
+	}
+	if !strings.Contains(err.Error(), "unsupported root") {
+		t.Fatalf("error = %v, want unsupported root", err)
+	}
+}
+
+func TestLoadAndCompileFilesLoadsMultipleYAMLFiles(t *testing.T) {
+	configDir := t.TempDir()
 
 	rootYAML := `pipelines:
   - name: wisdom-chain
@@ -157,19 +200,18 @@ func TestLoadAndCompileDirLoadsMultipleYAMLFiles(t *testing.T) {
         uses: transcriber
 `
 
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "01-root.yaml"), []byte(rootYAML), 0o644); err != nil {
+	rootPath := filepath.Join(configDir, "01-root.yaml")
+	processPath := filepath.Join(configDir, "02-process.yaml")
+	if err := os.WriteFile(rootPath, []byte(rootYAML), 0o644); err != nil {
 		t.Fatalf("WriteFile(01-root.yaml): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "02-process.yaml"), []byte(processYAML), 0o644); err != nil {
+	if err := os.WriteFile(processPath, []byte(processYAML), 0o644); err != nil {
 		t.Fatalf("WriteFile(02-process.yaml): %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pipelinesDir, "README.txt"), []byte("ignored"), 0o644); err != nil {
-		t.Fatalf("WriteFile(README.txt): %v", err)
-	}
 
-	set, err := LoadAndCompileDir(configDir)
+	set, err := LoadAndCompileFiles([]string{rootPath, processPath})
 	if err != nil {
-		t.Fatalf("LoadAndCompileDir() error = %v", err)
+		t.Fatalf("LoadAndCompileFiles() error = %v", err)
 	}
 	if len(set.Pipelines) != 2 {
 		t.Fatalf("pipeline count = %d, want 2", len(set.Pipelines))

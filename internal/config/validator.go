@@ -48,13 +48,7 @@ func (v *ConfigValidator) validateRoutes() error {
 			return fmt.Errorf("route[%d]: 'to' plugin %q does not exist", i, route.To)
 		}
 
-		// Check if plugins are enabled (warning only, not fatal)
-		if fromPlugin := v.config.Plugins[route.From]; !fromPlugin.Enabled {
-			// Non-fatal: just log warning (actual logging happens at runtime)
-		}
-		if toPlugin := v.config.Plugins[route.To]; !toPlugin.Enabled {
-			// Non-fatal: just log warning (actual logging happens at runtime)
-		}
+		// Enabled-state warnings are runtime concerns; cross-reference validation only checks existence.
 	}
 
 	return nil
@@ -73,18 +67,14 @@ func (v *ConfigValidator) validateWebhooks() error {
 				i, endpoint.Path, endpoint.Plugin)
 		}
 
-		// Validate secret or secret_ref is provided
-		if endpoint.Secret == "" && endpoint.SecretRef == "" {
-			return fmt.Errorf("webhook[%d] (%s): either 'secret' or 'secret_ref' is required",
+		if endpoint.SecretRef == "" {
+			return fmt.Errorf("webhook[%d] (%s): secret_ref is required",
 				i, endpoint.Path)
 		}
 
-		// If using secret_ref, validate it exists in tokens
-		if endpoint.SecretRef != "" {
-			if _, exists := v.tokens[endpoint.SecretRef]; !exists {
-				return fmt.Errorf("webhook[%d] (%s): secret_ref %q not found in tokens.yaml",
-					i, endpoint.Path, endpoint.SecretRef)
-			}
+		if _, exists := v.tokens[endpoint.SecretRef]; !exists {
+			return fmt.Errorf("webhook[%d] (%s): secret_ref %q not found in tokens.yaml",
+				i, endpoint.Path, endpoint.SecretRef)
 		}
 
 		// Validate required fields

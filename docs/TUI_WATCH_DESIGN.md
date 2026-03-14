@@ -13,6 +13,10 @@
 5. **Connection awareness** - show SSE clients, API activity
 6. **Operator UX** - inspired by systemctl, k9s, lazydocker, htop
 
+## Screenshot
+
+![Ductile system watch TUI](Ductile-system-watch-screenshot.png)
+
 ## Architecture
 
 ### Theme System (Scaffold)
@@ -283,6 +287,7 @@ For running jobs with known timeouts:
 ### Health Endpoint (`/healthz`)
 - Polled every 5 seconds
 - Provides: status, uptime, queue_depth, plugins_loaded
+- Metadata: config_path, binary_path, version
 - Plus custom field: `sse_clients` (connection count)
 
 ### Jobs API (`/jobs/:id`)

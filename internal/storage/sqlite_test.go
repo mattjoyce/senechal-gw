@@ -22,4 +22,12 @@ func TestOpenSQLiteBootstrapsTables(t *testing.T) {
 			t.Fatalf("table %q missing: %v", table, err)
 		}
 	}
+
+	var jobIDColumn string
+	if err := db.QueryRow("SELECT name FROM pragma_table_info('job_log') WHERE name = 'job_id';").Scan(&jobIDColumn); err != nil {
+		t.Fatalf("job_log.job_id missing: %v", err)
+	}
+	if jobIDColumn != "job_id" {
+		t.Fatalf("job_log column = %q, want job_id", jobIDColumn)
+	}
 }

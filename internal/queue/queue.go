@@ -68,22 +68,58 @@ WHERE status IN (?, ?);
 	return n, nil
 }
 
-// CountOutstandingPollJobs returns queued+running poll jobs for a plugin.
-func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (int, error) {
+// CountOutstandingJobs returns queued+running jobs for a plugin command.
+func (q *Queue) CountOutstandingJobs(ctx context.Context, plugin, command string) (int, error) {
 	if plugin == "" {
 		return 0, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return 0, fmt.Errorf("command is empty")
 	}
 
 	row := q.db.QueryRowContext(ctx, `
 SELECT COUNT(*)
 FROM job_queue
-WHERE plugin = ? AND command = 'poll' AND status IN (?, ?);
-`, plugin, StatusQueued, StatusRunning)
+WHERE plugin = ? AND command = ? AND status IN (?, ?);
+`, plugin, command, StatusQueued, StatusRunning)
 	var n int
 	if err := row.Scan(&n); err != nil {
-		return 0, fmt.Errorf("count outstanding poll jobs: %w", err)
+		return 0, fmt.Errorf("count outstanding jobs: %w", err)
 	}
 	return n, nil
+}
+
+// CountOutstandingPollJobs returns queued+running poll jobs for a plugin.
+func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (int, error) {
+	return q.CountOutstandingJobs(ctx, plugin, "poll")
+}
+
+// CancelOutstandingJobs marks queued+running jobs for a plugin command as dead.
+func (q *Queue) CancelOutstandingJobs(ctx context.Context, plugin, command, reason string) (int, error) {
+	if plugin == "" {
+		return 0, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return 0, fmt.Errorf("command is empty")
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "cancelled by scheduler"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := q.db.ExecContext(ctx, `
+UPDATE job_queue
+SET status = ?, completed_at = ?, last_error = ?
+WHERE plugin = ? AND command = ? AND status IN (?, ?);
+`, StatusDead, now, reason, plugin, command, StatusQueued, StatusRunning)
+	if err != nil {
+		return 0, fmt.Errorf("cancel outstanding jobs: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("cancel outstanding jobs rows affected: %w", err)
+	}
+	return int(affected), nil
 }
 
 func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error) {
@@ -98,21 +134,47 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	}
 	if req.DedupeKey != nil {
 		dedupeKey := strings.TrimSpace(*req.DedupeKey)
-		if dedupeKey != "" && q.dedupeTTL > 0 {
-			existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, dedupeKey, q.dedupeTTL)
-			if err != nil {
-				return "", fmt.Errorf("dedupe lookup: %w", err)
+		dedupeTTL := q.dedupeTTL
+		if req.DedupeTTL != nil {
+			dedupeTTL = *req.DedupeTTL
+		}
+		if dedupeKey != "" {
+			if req.DedupeTTL != nil {
+				existingID, found, err := q.findOutstandingByDedupeKey(ctx, dedupeKey)
+				if err != nil {
+					return "", fmt.Errorf("dedupe lookup: %w", err)
+				}
+				if found {
+					q.logger.Info(
+						"dropped duplicate enqueue",
+						"dedupe_key", dedupeKey,
+						"existing_job_id", existingID,
+						"dedupe_reason", "outstanding",
+					)
+					return "", &DedupeDropError{
+						DedupeKey:     dedupeKey,
+						ExistingJobID: existingID,
+					}
+				}
 			}
-			if found {
-				q.logger.Info(
-					"dropped duplicate enqueue",
-					"dedupe_key", dedupeKey,
-					"existing_job_id", existingID,
-					"dedupe_ttl", q.dedupeTTL.String(),
-				)
-				return "", &DedupeDropError{
-					DedupeKey:     dedupeKey,
-					ExistingJobID: existingID,
+
+			if dedupeTTL > 0 {
+				existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, dedupeKey, dedupeTTL)
+				if err != nil {
+					return "", fmt.Errorf("dedupe lookup: %w", err)
+				}
+				if found {
+					q.logger.Info(
+						"dropped duplicate enqueue",
+						"dedupe_key", dedupeKey,
+						"existing_job_id", existingID,
+						"dedupe_ttl", dedupeTTL.String(),
+						"dedupe_reason", "recent_success",
+					)
+					return "", &DedupeDropError{
+						DedupeKey:     dedupeKey,
+						ExistingJobID: existingID,
+					}
 				}
 			}
 		}
@@ -128,7 +190,7 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 
 	var payload any
 	if len(req.Payload) > 0 {
-		payload = string(req.Payload)
+		payload = req.Payload
 	}
 
 	_, err := q.db.ExecContext(ctx, `
@@ -167,17 +229,72 @@ LIMIT 1;
 	return id, true, nil
 }
 
+func (q *Queue) findOutstandingByDedupeKey(ctx context.Context, dedupeKey string) (string, bool, error) {
+	var id string
+	err := q.db.QueryRowContext(ctx, `
+SELECT id
+FROM job_queue
+WHERE dedupe_key = ?
+  AND status IN (?, ?)
+ORDER BY created_at DESC, rowid DESC
+LIMIT 1;
+`, dedupeKey, StatusQueued, StatusRunning).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}
+
 // Dequeue claims the oldest queued job and marks it running. Returns (nil, nil)
 // if the queue is empty.
 func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
+	return q.DequeueEligible(ctx, nil, nil)
+}
+
+// DequeueEligible claims the oldest queued job whose plugin is NOT in
+// skipPlugins and whose dedupe_key is NOT in activeConcurrencyKeys. This
+// allows the dispatcher to skip plugins that have reached their parallelism
+// cap and prevent concurrent execution of jobs sharing a concurrency key
+// (e.g. same repo target).
+//
+// When both slices are empty the behavior is identical to Dequeue.
+// Returns (nil, nil) when no eligible job exists.
+func (q *Queue) DequeueEligible(ctx context.Context, skipPlugins []string, activeConcurrencyKeys []string) (*Job, error) {
 	now := time.Now().UTC()
 	nowS := now.Format(time.RFC3339Nano)
 
-	row := q.db.QueryRowContext(ctx, `
+	// Build the dynamic WHERE clause and args.
+	args := []any{StatusQueued, nowS}
+
+	pluginFilter := ""
+	if len(skipPlugins) > 0 {
+		placeholders := make([]string, len(skipPlugins))
+		for i, p := range skipPlugins {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		pluginFilter = " AND plugin NOT IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	keyFilter := ""
+	if len(activeConcurrencyKeys) > 0 {
+		placeholders := make([]string, len(activeConcurrencyKeys))
+		for i, k := range activeConcurrencyKeys {
+			placeholders[i] = "?"
+			args = append(args, k)
+		}
+		keyFilter = " AND (dedupe_key IS NULL OR dedupe_key NOT IN (" + strings.Join(placeholders, ",") + "))"
+	}
+
+	query := `
 WITH next AS (
   SELECT id
   FROM job_queue
-  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)
+  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)` +
+		pluginFilter + keyFilter + `
   ORDER BY created_at ASC, rowid ASC
   LIMIT 1
 )
@@ -186,9 +303,15 @@ SET status = ?, started_at = ?
 WHERE id IN (SELECT id FROM next)
 RETURNING
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id;
-`, StatusQueued, nowS, StatusRunning, nowS)
+  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id;`
 
+	args = append(args, StatusRunning, nowS)
+
+	return q.scanDequeuedJob(q.db.QueryRowContext(ctx, query, args...))
+}
+
+// scanDequeuedJob scans a single RETURNING row from a dequeue CTE into a Job.
+func (q *Queue) scanDequeuedJob(row *sql.Row) (*Job, error) {
 	var (
 		j              Job
 		payload        sql.NullString
@@ -266,7 +389,11 @@ WHERE status = ?;
 	if err != nil {
 		return nil, fmt.Errorf("query jobs by status: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var jobs []*Job
 	for rows.Next() {
@@ -366,26 +493,27 @@ func (q *Queue) ListJobs(ctx context.Context, filter ListJobsFilter) ([]*JobSumm
 
 	whereClause := strings.Join(whereParts, " AND ")
 
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM job_queue WHERE %s;`, whereClause)
+	// whereClause is composed from fixed fragments; values are parameterized via args.
+	countQuery := "SELECT COUNT(*) FROM job_queue WHERE " + whereClause + ";"
 	var total int
 	if err := q.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count jobs: %w", err)
 	}
 
-	listQuery := fmt.Sprintf(`
-SELECT
-  id, plugin, command, status, created_at, started_at, completed_at, attempt
-FROM job_queue
-WHERE %s
-ORDER BY created_at DESC, rowid DESC
-LIMIT ?;
-`, whereClause)
+	listQuery := strings.Builder{}
+	listQuery.WriteString("\nSELECT\n  id, plugin, command, status, created_at, started_at, completed_at, attempt\nFROM job_queue\nWHERE ")
+	listQuery.WriteString(whereClause)
+	listQuery.WriteString("\nORDER BY created_at DESC, rowid DESC\nLIMIT ?;\n")
 	listArgs := append(append([]any{}, args...), limit)
-	rows, err := q.db.QueryContext(ctx, listQuery, listArgs...)
+	rows, err := q.db.QueryContext(ctx, listQuery.String(), listArgs...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list jobs: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var jobs []*JobSummary
 	for rows.Next() {
@@ -435,11 +563,145 @@ LIMIT ?;
 	return jobs, total, nil
 }
 
-// LatestCompletedPollResult returns the most recently completed poll result for a plugin
-// submitted by the scheduler identity.
-func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*PollResult, error) {
+// ListJobLogs retrieves job log rows with optional filters and search terms.
+func (q *Queue) ListJobLogs(ctx context.Context, filter JobLogFilter) ([]*JobLogEntry, int, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var (
+		whereParts []string
+		args       []any
+	)
+	whereParts = append(whereParts, "1=1")
+
+	if filter.JobID != "" {
+		whereParts = append(whereParts, "(q.id = ? OR l.id LIKE ?)")
+		args = append(args, filter.JobID, filter.JobID+"-%")
+	}
+	if filter.Plugin != "" {
+		whereParts = append(whereParts, "l.plugin = ?")
+		args = append(args, filter.Plugin)
+	}
+	if filter.Command != "" {
+		whereParts = append(whereParts, "l.command = ?")
+		args = append(args, filter.Command)
+	}
+	if filter.Status != nil {
+		whereParts = append(whereParts, "l.status = ?")
+		args = append(args, *filter.Status)
+	}
+	if filter.SubmittedBy != "" {
+		whereParts = append(whereParts, "l.submitted_by = ?")
+		args = append(args, filter.SubmittedBy)
+	}
+	if filter.Since != nil {
+		whereParts = append(whereParts, "l.completed_at >= ?")
+		args = append(args, filter.Since.Format(time.RFC3339Nano))
+	}
+	if filter.Until != nil {
+		whereParts = append(whereParts, "l.completed_at <= ?")
+		args = append(args, filter.Until.Format(time.RFC3339Nano))
+	}
+	if strings.TrimSpace(filter.Query) != "" {
+		needle := "%" + strings.ToLower(strings.TrimSpace(filter.Query)) + "%"
+		whereParts = append(whereParts, "(LOWER(COALESCE(l.last_error, '')) LIKE ? OR LOWER(COALESCE(l.stderr, '')) LIKE ? OR LOWER(COALESCE(l.result, '')) LIKE ?)")
+		args = append(args, needle, needle, needle)
+	}
+
+	whereClause := strings.Join(whereParts, " AND ")
+
+	countQuery := "SELECT COUNT(*) FROM job_log l LEFT JOIN job_queue q ON l.job_id = q.id AND l.attempt = q.attempt WHERE " + whereClause + ";"
+	var total int
+	if err := q.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count job logs: %w", err)
+	}
+
+	listQuery := strings.Builder{}
+	listQuery.WriteString("\nSELECT\n  COALESCE(l.job_id, COALESCE(q.id, '')) AS job_id, l.id, l.plugin, l.command, l.status, l.attempt, l.submitted_by, l.created_at, l.completed_at, l.last_error, l.stderr")
+	if filter.IncludeResult {
+		listQuery.WriteString(", l.result")
+	} else {
+		listQuery.WriteString(", NULL")
+	}
+	listQuery.WriteString("\nFROM job_log l\nLEFT JOIN job_queue q ON l.job_id = q.id AND l.attempt = q.attempt\nWHERE ")
+	listQuery.WriteString(whereClause)
+	listQuery.WriteString("\nORDER BY l.completed_at DESC, l.rowid DESC\nLIMIT ?;\n")
+
+	listArgs := append(append([]any{}, args...), limit)
+	rows, err := q.db.QueryContext(ctx, listQuery.String(), listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list job logs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
+
+	var logs []*JobLogEntry
+	for rows.Next() {
+		var (
+			entry       JobLogEntry
+			jobID       sql.NullString
+			statusS     string
+			createdAtS  string
+			completedAt string
+			lastErrS    sql.NullString
+			stderrS     sql.NullString
+			resultS     sql.NullString
+		)
+
+		if err := rows.Scan(&jobID, &entry.LogID, &entry.Plugin, &entry.Command, &statusS, &entry.Attempt, &entry.SubmittedBy, &createdAtS, &completedAt, &lastErrS, &stderrS, &resultS); err != nil {
+			return nil, 0, fmt.Errorf("scan job log: %w", err)
+		}
+
+		if jobID.Valid {
+			entry.JobID = jobID.String
+		}
+		entry.Status = Status(statusS)
+
+		createdAt, err := time.Parse(time.RFC3339Nano, createdAtS)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse job log created_at: %w", err)
+		}
+		entry.CreatedAt = createdAt
+
+		completedAtT, err := time.Parse(time.RFC3339Nano, completedAt)
+		if err != nil {
+			return nil, 0, fmt.Errorf("parse job log completed_at: %w", err)
+		}
+		entry.CompletedAt = completedAtT
+
+		if lastErrS.Valid {
+			entry.LastError = &lastErrS.String
+		}
+		if stderrS.Valid {
+			entry.Stderr = &stderrS.String
+		}
+		if resultS.Valid {
+			entry.Result = json.RawMessage(resultS.String)
+		}
+
+		logs = append(logs, &entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate job logs: %w", err)
+	}
+
+	return logs, total, nil
+}
+
+// LatestCompletedCommandResult returns the most recently completed result for a
+// plugin command submitted by a given producer identity.
+func (q *Queue) LatestCompletedCommandResult(ctx context.Context, plugin, command, submittedBy string) (*CommandResult, error) {
 	if plugin == "" {
 		return nil, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return nil, fmt.Errorf("command is empty")
 	}
 	if submittedBy == "" {
 		return nil, fmt.Errorf("submitted_by is empty")
@@ -448,11 +710,11 @@ func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submitted
 	row := q.db.QueryRowContext(ctx, `
 SELECT id, status, completed_at
 FROM job_queue
-WHERE plugin = ? AND command = 'poll' AND submitted_by = ? AND completed_at IS NOT NULL
+WHERE plugin = ? AND command = ? AND submitted_by = ? AND completed_at IS NOT NULL
   AND status IN (?, ?, ?, ?)
 ORDER BY completed_at DESC, rowid DESC
 LIMIT 1;
-`, plugin, submittedBy, StatusSucceeded, StatusFailed, StatusTimedOut, StatusDead)
+`, plugin, command, submittedBy, StatusSucceeded, StatusFailed, StatusTimedOut, StatusDead)
 
 	var (
 		jobID       string
@@ -463,19 +725,153 @@ LIMIT 1;
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("latest completed poll result: %w", err)
+		return nil, fmt.Errorf("latest completed command result: %w", err)
 	}
 
 	completedAtT, err := time.Parse(time.RFC3339Nano, completedAt)
 	if err != nil {
-		return nil, fmt.Errorf("latest completed poll result: parse completed_at: %w", err)
+		return nil, fmt.Errorf("latest completed command result: parse completed_at: %w", err)
 	}
 
-	return &PollResult{
+	return &CommandResult{
 		JobID:       jobID,
 		Status:      Status(statusS),
 		CompletedAt: completedAtT,
 	}, nil
+}
+
+// LatestCompletedPollResult returns the most recently completed poll result for a plugin
+// submitted by the scheduler identity.
+func (q *Queue) LatestCompletedPollResult(ctx context.Context, plugin, submittedBy string) (*PollResult, error) {
+	return q.LatestCompletedCommandResult(ctx, plugin, "poll", submittedBy)
+}
+
+// GetScheduleEntryState returns persisted schedule-entry state for plugin+schedule_id.
+func (q *Queue) GetScheduleEntryState(ctx context.Context, plugin, scheduleID string) (*ScheduleEntryState, error) {
+	if plugin == "" {
+		return nil, fmt.Errorf("plugin is empty")
+	}
+	if scheduleID == "" {
+		return nil, fmt.Errorf("schedule_id is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT plugin, schedule_id, command, status, reason, last_fired_at, last_success_job_id, last_success_at, next_run_at, updated_at
+FROM schedule_entries
+WHERE plugin = ? AND schedule_id = ?;
+`, plugin, scheduleID)
+
+	var (
+		state            ScheduleEntryState
+		statusS          string
+		reason           sql.NullString
+		lastFiredAt      sql.NullString
+		lastSuccessJobID sql.NullString
+		lastSuccessAt    sql.NullString
+		nextRunAt        sql.NullString
+		updatedAt        string
+	)
+	if err := row.Scan(
+		&state.Plugin,
+		&state.ScheduleID,
+		&state.Command,
+		&statusS,
+		&reason,
+		&lastFiredAt,
+		&lastSuccessJobID,
+		&lastSuccessAt,
+		&nextRunAt,
+		&updatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get schedule entry state: %w", err)
+	}
+
+	state.Status = ScheduleEntryStatus(statusS)
+	if reason.Valid {
+		state.Reason = &reason.String
+	}
+	if lastFiredAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, lastFiredAt.String); err == nil {
+			state.LastFiredAt = &t
+		}
+	}
+	if lastSuccessJobID.Valid {
+		state.LastSuccessJobID = &lastSuccessJobID.String
+	}
+	if lastSuccessAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, lastSuccessAt.String); err == nil {
+			state.LastSuccessAt = &t
+		}
+	}
+	if nextRunAt.Valid {
+		if t, err := time.Parse(time.RFC3339Nano, nextRunAt.String); err == nil {
+			state.NextRunAt = &t
+		}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
+		state.UpdatedAt = t
+	}
+	return &state, nil
+}
+
+// UpsertScheduleEntryState inserts or updates persisted schedule-entry state.
+func (q *Queue) UpsertScheduleEntryState(ctx context.Context, state ScheduleEntryState) error {
+	if state.Plugin == "" {
+		return fmt.Errorf("plugin is empty")
+	}
+	if state.ScheduleID == "" {
+		return fmt.Errorf("schedule_id is empty")
+	}
+	if state.Command == "" {
+		return fmt.Errorf("command is empty")
+	}
+	if state.Status == "" {
+		state.Status = ScheduleEntryActive
+	}
+
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	var reason any
+	if state.Reason != nil {
+		reason = *state.Reason
+	}
+	var lastFiredAt any
+	if state.LastFiredAt != nil {
+		lastFiredAt = state.LastFiredAt.UTC().Format(time.RFC3339Nano)
+	}
+	var lastSuccessJobID any
+	if state.LastSuccessJobID != nil {
+		lastSuccessJobID = *state.LastSuccessJobID
+	}
+	var lastSuccessAt any
+	if state.LastSuccessAt != nil {
+		lastSuccessAt = state.LastSuccessAt.UTC().Format(time.RFC3339Nano)
+	}
+	var nextRunAt any
+	if state.NextRunAt != nil {
+		nextRunAt = state.NextRunAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	_, err := q.db.ExecContext(ctx, `
+INSERT INTO schedule_entries(plugin, schedule_id, command, status, reason, last_fired_at, last_success_job_id, last_success_at, next_run_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(plugin, schedule_id) DO UPDATE SET
+  command = excluded.command,
+  status = excluded.status,
+  reason = excluded.reason,
+  last_fired_at = excluded.last_fired_at,
+  last_success_job_id = excluded.last_success_job_id,
+  last_success_at = excluded.last_success_at,
+  next_run_at = excluded.next_run_at,
+  updated_at = excluded.updated_at;
+`, state.Plugin, state.ScheduleID, state.Command, state.Status, reason, lastFiredAt, lastSuccessJobID, lastSuccessAt, nextRunAt, updatedAt)
+	if err != nil {
+		return fmt.Errorf("upsert schedule entry state: %w", err)
+	}
+
+	return nil
 }
 
 // GetCircuitBreaker returns the persisted circuit breaker row for plugin+command.
@@ -652,7 +1048,7 @@ func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Sta
 	if jobID == "" {
 		return fmt.Errorf("jobID is empty")
 	}
-	if status != StatusSucceeded && status != StatusFailed && status != StatusTimedOut && status != StatusDead {
+	if status != StatusSucceeded && status != StatusSkipped && status != StatusFailed && status != StatusTimedOut && status != StatusDead {
 		return fmt.Errorf("invalid terminal status: %q", status)
 	}
 
@@ -710,10 +1106,10 @@ WHERE id = ?;
 
 	_, err = tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO job_log(
-  id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
+  id, job_id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
 )
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-`, logID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, logID, jobID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID)
 	if err != nil {
 		return fmt.Errorf("insert job_log: %w", err)
 	}
@@ -740,13 +1136,17 @@ SELECT
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_tree t
-LEFT JOIN job_log l ON l.id = (t.id || '-' || t.attempt)
+LEFT JOIN job_log l ON l.job_id = t.id AND l.attempt = t.attempt
 LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 `, rootJobID)
 	if err != nil {
 		return nil, fmt.Errorf("get job tree: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			q.logger.Warn("close rows", "error", err)
+		}
+	}()
 
 	var results []*JobResult
 	for rows.Next() {
@@ -816,7 +1216,7 @@ SELECT
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_queue q
-LEFT JOIN job_log l ON l.id = (q.id || '-' || q.attempt)
+LEFT JOIN job_log l ON l.job_id = q.id AND l.attempt = q.attempt
 LEFT JOIN event_context ec ON ec.id = q.event_context_id
 WHERE q.id = ?;
 `, jobID)

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/mattjoyce/ductile/internal/auth"
+	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
@@ -25,6 +26,7 @@ type JobQueuer interface {
 	GetJobByID(ctx context.Context, jobID string) (*queue.JobResult, error)
 	GetJobTree(ctx context.Context, rootJobID string) ([]*queue.JobResult, error)
 	ListJobs(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
+	ListJobLogs(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error)
 	Depth(ctx context.Context) (int, error)
 }
 
@@ -54,12 +56,15 @@ type PluginRegistry interface {
 // Config holds API server configuration
 type Config struct {
 	Listen string
-	// APIKey is the legacy single bearer token (admin/full access).
-	APIKey string
-	// Tokens is an optional list of scoped bearer tokens.
+	// Tokens is a list of scoped bearer tokens.
 	Tokens            []auth.TokenConfig
 	MaxConcurrentSync int
 	MaxSyncTimeout    time.Duration
+	ConfigPath        string
+	BinaryPath        string
+	Version           string
+	RuntimeConfig     *config.Config
+	ReloadFunc        func(context.Context) (ReloadResponse, error)
 }
 
 // Server represents the HTTP API server
@@ -75,6 +80,7 @@ type Server struct {
 	startedAt     time.Time
 	events        *events.Hub
 	syncSemaphore chan struct{}
+	reloadFunc    func(context.Context) (ReloadResponse, error)
 }
 
 // New creates a new API server instance
@@ -93,6 +99,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		startedAt:     time.Now(),
 		events:        hub,
 		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
+		reloadFunc:    config.ReloadFunc,
 	}
 }
 
@@ -145,9 +152,10 @@ func (s *Server) setupRoutes() *chi.Mux {
 
 	// Routes
 	// Unauthenticated discovery endpoints.
+	r.Get("/", s.handleRoot)
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/plugins", s.handleListPlugins)
-	r.Get("/skills", s.handleListPlugins)
+	r.Get("/skills", s.handleListSkills)
 	r.Get("/openapi.json", s.handleOpenAPIAll)
 	r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 	r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
@@ -155,13 +163,15 @@ func (s *Server) setupRoutes() *chi.Mux {
 	// Protected API.
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
-		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/trigger/{plugin}/{command}", s.handleTrigger)
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
+		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 	})
 
 	return r

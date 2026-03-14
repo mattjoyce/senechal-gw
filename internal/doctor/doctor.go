@@ -49,7 +49,6 @@ func (d *Doctor) Validate() *Result {
 	d.validateRoutes(r)
 	d.warnUnusedPlugins(r)
 	d.warnMissingEnvVars(r)
-	d.warnDeprecatedSyntax(r)
 	d.warnSuspiciousSchedule(r)
 
 	r.Valid = len(r.Errors) == 0
@@ -67,7 +66,7 @@ func (d *Doctor) addWarning(r *Result, category, field, msg string) {
 // validateServiceConfig checks required service fields.
 func (d *Doctor) validateServiceConfig(r *Result) {
 	if len(d.cfg.EffectivePluginRoots()) == 0 {
-		d.addError(r, "service", "plugin_roots", "plugin_roots or plugins_dir is required")
+		d.addError(r, "service", "plugin_roots", "plugin_roots is required")
 	}
 	if d.cfg.State.Path == "" {
 		d.addError(r, "service", "state.path", "state.path is required")
@@ -83,22 +82,40 @@ func (d *Doctor) validatePluginRefs(r *Result) {
 		if !pc.Enabled {
 			continue
 		}
-		if _, ok := d.registry.Get(name); !ok {
-			d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s", name),
-				fmt.Sprintf("plugin %q in config but not found in configured plugin roots", name))
+
+		lookupName := name
+		uses := strings.TrimSpace(pc.Uses)
+		if uses != "" {
+			if uses == name {
+				d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s.uses", name),
+					fmt.Sprintf("plugin %q: uses must reference a different base plugin", name))
+				continue
+			}
+			lookupName = uses
+		}
+
+		p, ok := d.registry.Get(lookupName)
+		if !ok {
+			field := fmt.Sprintf("plugins.%s", name)
+			if uses != "" {
+				field = fmt.Sprintf("plugins.%s.uses", name)
+			}
+			d.addError(r, "plugin_refs", field,
+				fmt.Sprintf("plugin %q in config but not found in configured plugin roots", lookupName))
+			continue
 		}
 
 		// Check required config keys
-		if p, ok := d.registry.Get(name); ok && p.ConfigKeys != nil {
+		if p.ConfigKeys != nil {
 			for _, key := range p.ConfigKeys.Required {
 				if pc.Config == nil {
 					d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s.config", name),
-						fmt.Sprintf("plugin %q requires config key %q", name, key))
+						fmt.Sprintf("plugin %q requires config key %q", lookupName, key))
 					continue
 				}
 				if _, exists := pc.Config[key]; !exists {
 					d.addError(r, "plugin_refs", fmt.Sprintf("plugins.%s.config.%s", name, key),
-						fmt.Sprintf("plugin %q requires config key %q", name, key))
+						fmt.Sprintf("plugin %q requires config key %q", lookupName, key))
 				}
 			}
 		}
@@ -113,8 +130,8 @@ func (d *Doctor) validateAPIConfig(r *Result) {
 	if d.cfg.API.Listen == "" {
 		d.addError(r, "api", "api.listen", "api.listen is required when API is enabled")
 	}
-	if d.cfg.API.Auth.APIKey == "" && len(d.cfg.API.Auth.Tokens) == 0 {
-		d.addWarning(r, "api", "api.auth", "API enabled but no authentication configured")
+	if len(d.cfg.API.Auth.Tokens) == 0 {
+		d.addError(r, "api", "api.auth.tokens", "api.auth.tokens must be configured when API is enabled")
 	}
 }
 
@@ -208,9 +225,9 @@ func (d *Doctor) validateWebhooks(r *Result) {
 		seen[normalized] = i
 
 		// Check secret configured
-		if ep.Secret == "" && ep.SecretRef == "" {
+		if ep.SecretRef == "" {
 			d.addError(r, "webhooks", field,
-				fmt.Sprintf("webhook %q: either secret or secret_ref is required", ep.Path))
+				fmt.Sprintf("webhook %q: secret_ref is required", ep.Path))
 		}
 	}
 }
@@ -292,10 +309,10 @@ func (d *Doctor) warnMissingEnvVars(r *Result) {
 	// Check webhook secrets
 	if d.cfg.Webhooks != nil {
 		for i, ep := range d.cfg.Webhooks.Endpoints {
-			if ep.Secret != "" && envVarRe.MatchString(ep.Secret) {
-				for _, m := range envVarRe.FindAllStringSubmatch(ep.Secret, -1) {
+			if ep.SecretRef != "" && envVarRe.MatchString(ep.SecretRef) {
+				for _, m := range envVarRe.FindAllStringSubmatch(ep.SecretRef, -1) {
 					if os.Getenv(m[1]) == "" {
-						d.addWarning(r, "env_vars", fmt.Sprintf("webhooks.endpoints[%d].secret", i),
+						d.addWarning(r, "env_vars", fmt.Sprintf("webhooks.endpoints[%d].secret_ref", i),
 							fmt.Sprintf("environment variable ${%s} not set", m[1]))
 					}
 				}
@@ -304,37 +321,31 @@ func (d *Doctor) warnMissingEnvVars(r *Result) {
 	}
 }
 
-// warnDeprecatedSyntax warns about legacy config patterns.
-func (d *Doctor) warnDeprecatedSyntax(r *Result) {
-	if d.cfg.API.Auth.APIKey != "" && len(d.cfg.API.Auth.Tokens) > 0 {
-		d.addWarning(r, "deprecated", "api.auth",
-			"both api_key and tokens configured; prefer tokens array only")
-	}
-	if d.cfg.API.Auth.APIKey != "" && len(d.cfg.API.Auth.Tokens) == 0 {
-		d.addWarning(r, "deprecated", "api.auth.api_key",
-			"legacy api_key grants full access; migrate to tokens array with scopes")
-	}
-}
-
 // warnSuspiciousSchedule warns about intervals that seem too short or too long.
 func (d *Doctor) warnSuspiciousSchedule(r *Result) {
 	for name, pc := range d.cfg.Plugins {
-		if pc.Schedule == nil || !pc.Enabled {
+		if !pc.Enabled {
 			continue
 		}
-		interval, err := config.ParseInterval(pc.Schedule.Every)
-		if err != nil {
-			d.addError(r, "schedule", fmt.Sprintf("plugins.%s.schedule.every", name),
-				fmt.Sprintf("invalid schedule interval %q: %v", pc.Schedule.Every, err))
+		schedules := pc.NormalizedSchedules()
+		if len(schedules) == 0 {
 			continue
 		}
-		// Only warn for very short intervals.
-		if interval.Minutes() < 1 {
-			d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedule.every", name),
-				fmt.Sprintf("schedule interval %q is very short (< 1m)", pc.Schedule.Every))
-		}
-		if interval.Hours() > 24 {
-			// weekly/monthly are fine, just flag unusual custom values
+		for i, schedule := range schedules {
+			if strings.TrimSpace(schedule.Cron) != "" {
+				continue
+			}
+			interval, err := config.ParseInterval(schedule.Every)
+			if err != nil {
+				d.addError(r, "schedule", fmt.Sprintf("plugins.%s.schedules[%d].every", name, i),
+					fmt.Sprintf("invalid schedule interval %q: %v", schedule.Every, err))
+				continue
+			}
+			if interval.Minutes() < 1 {
+				d.addWarning(r, "schedule", fmt.Sprintf("plugins.%s.schedules[%d].every", name, i),
+					fmt.Sprintf("schedule interval %q is very short (< 1m)", schedule.Every))
+			}
+			_ = interval // weekly/monthly are fine; only sub-minute intervals are warned on here.
 		}
 	}
 }

@@ -19,7 +19,9 @@ func TestDiscover(t *testing.T) {
 			setupFn: func(t *testing.T) string {
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "test-plugin")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				manifest := `manifest_spec: ductile.plugin
 manifest_version: 1
@@ -27,13 +29,21 @@ name: test-plugin
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll, health]
+commands:
+  - name: poll
+    type: write
+  - name: health
+    type: read
 `
-				os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+				if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+					t.Fatalf("write manifest: %v", err)
+				}
 
 				// Create executable entrypoint
 				entrypoint := filepath.Join(pluginDir, "run.sh")
-				os.WriteFile(entrypoint, []byte("#!/bin/sh\necho ok"), 0755)
+				if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\necho ok"), 0o755); err != nil {
+					t.Fatalf("write entrypoint: %v", err)
+				}
 
 				return dir
 			},
@@ -59,7 +69,9 @@ commands: [poll, health]
 
 				for _, name := range []string{"plugin1", "plugin2"} {
 					pluginDir := filepath.Join(dir, name)
-					os.Mkdir(pluginDir, 0755)
+					if err := os.Mkdir(pluginDir, 0o755); err != nil {
+						t.Fatalf("mkdir plugin dir: %v", err)
+					}
 
 					manifest := `manifest_spec: ductile.plugin
 manifest_version: 1
@@ -67,11 +79,17 @@ name: ` + name + `
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
-					os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+					if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+						t.Fatalf("write manifest: %v", err)
+					}
 					entrypoint := filepath.Join(pluginDir, "run.sh")
-					os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0755)
+					if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0o755); err != nil {
+						t.Fatalf("write entrypoint: %v", err)
+					}
 				}
 
 				return dir
@@ -83,7 +101,9 @@ commands: [poll]
 			name: "directory without manifest skipped",
 			setupFn: func(t *testing.T) string {
 				dir := t.TempDir()
-				os.Mkdir(filepath.Join(dir, "no-manifest"), 0755)
+				if err := os.Mkdir(filepath.Join(dir, "no-manifest"), 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 				return dir
 			},
 			wantCount: 0,
@@ -94,7 +114,9 @@ commands: [poll]
 			setupFn: func(t *testing.T) string {
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "bad-protocol")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				manifest := `manifest_spec: ductile.plugin
 manifest_version: 1
@@ -102,9 +124,13 @@ name: bad-protocol
 version: 1.0.0
 protocol: 99
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
-				os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+				if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+					t.Fatalf("write manifest: %v", err)
+				}
 				return dir
 			},
 			wantCount: 0,
@@ -115,7 +141,9 @@ commands: [poll]
 			setupFn: func(t *testing.T) string {
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "non-exec")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				manifest := `manifest_spec: ductile.plugin
 manifest_version: 1
@@ -123,11 +151,17 @@ name: non-exec
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
-				os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
+				if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+					t.Fatalf("write manifest: %v", err)
+				}
 				// Create non-executable file
-				os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\n"), 0644)
+				if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+					t.Fatalf("write entrypoint: %v", err)
+				}
 				return dir
 			},
 			wantCount: 0,
@@ -185,7 +219,9 @@ name: ` + manifestName + `
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 		if err := os.WriteFile(filepath.Join(pDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
 			t.Fatalf("write manifest: %v", err)
@@ -230,7 +266,9 @@ name: plugin-x
 version: 1.0.0
 protocol: 2
 entrypoint: run.sh
-commands: [poll]
+commands:
+  - name: poll
+    type: write
 `
 	if err := os.WriteFile(filepath.Join(nested, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
@@ -346,14 +384,26 @@ func TestValidateManifest(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid command",
+			name: "custom command is valid",
 			manifest: &Manifest{
 				ManifestSpec:    SupportedManifestSpec,
 				ManifestVersion: SupportedManifestVersion,
 				Name:            "test",
 				Protocol:        2,
 				Entrypoint:      "run.sh",
-				Commands:        Commands{{Name: "invalid_command", Type: CommandTypeWrite}},
+				Commands:        Commands{{Name: "token_refresh", Type: CommandTypeWrite}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid command format",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "bad command!", Type: CommandTypeWrite}},
 			},
 			wantErr: true,
 		},
@@ -380,10 +430,14 @@ func TestValidateTrust(t *testing.T) {
 			setupFn: func(t *testing.T) (string, string, string) {
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "test")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				entrypoint := filepath.Join(pluginDir, "run.sh")
-				os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0755)
+				if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatalf("write entrypoint: %v", err)
+				}
 
 				return entrypoint, pluginDir, dir
 			},
@@ -394,10 +448,14 @@ func TestValidateTrust(t *testing.T) {
 			setupFn: func(t *testing.T) (string, string, string) {
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "test")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				entrypoint := filepath.Join(pluginDir, "run.sh")
-				os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0644) // Not executable
+				if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0o644); err != nil {
+					t.Fatalf("write entrypoint: %v", err)
+				} // Not executable
 
 				return entrypoint, pluginDir, dir
 			},
@@ -410,7 +468,9 @@ func TestValidateTrust(t *testing.T) {
 				// where permissions are restricted. Skip if chmod fails to set world-writable.
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "test")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				// Explicitly chmod to world-writable
 				if err := os.Chmod(pluginDir, 0777); err != nil {
@@ -424,7 +484,9 @@ func TestValidateTrust(t *testing.T) {
 				}
 
 				entrypoint := filepath.Join(pluginDir, "run.sh")
-				os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0755)
+				if err := os.WriteFile(entrypoint, []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatalf("write entrypoint: %v", err)
+				}
 
 				return entrypoint, pluginDir, dir
 			},
@@ -435,7 +497,9 @@ func TestValidateTrust(t *testing.T) {
 			setupFn: func(t *testing.T) (string, string, string) {
 				dir := t.TempDir()
 				pluginDir := filepath.Join(dir, "test")
-				os.Mkdir(pluginDir, 0755)
+				if err := os.Mkdir(pluginDir, 0o755); err != nil {
+					t.Fatalf("mkdir plugin dir: %v", err)
+				}
 
 				entrypoint := filepath.Join(pluginDir, "nonexistent.sh")
 
@@ -449,7 +513,9 @@ func TestValidateTrust(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			entrypoint, pluginPath, pluginsDir := tt.setupFn(t)
 
-			err := validateTrust(entrypoint, pluginPath, pluginsDir)
+			logger := func(string, string, ...any) {}
+
+			err := validateTrust(entrypoint, pluginPath, pluginsDir, false, logger)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validateTrust() error = %v, wantErr %v", err, tt.wantErr)
@@ -470,11 +536,13 @@ func TestValidateTrustInRoots(t *testing.T) {
 		t.Fatalf("write entrypoint: %v", err)
 	}
 
-	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA, rootB}); err != nil {
+	logger := func(string, string, ...any) {}
+
+	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA, rootB}, false, logger); err != nil {
 		t.Fatalf("validateTrustInRoots() error = %v, want nil", err)
 	}
 
-	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA}); err == nil {
+	if err := validateTrustInRoots(entrypoint, pluginDir, []string{rootA}, false, logger); err == nil {
 		t.Fatal("validateTrustInRoots() expected error when rootB is not configured")
 	}
 }
@@ -503,7 +571,9 @@ func TestPluginSupportsCommand(t *testing.T) {
 func TestDiscover_TypedCommandMetadata(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := filepath.Join(dir, "test-plugin")
-	os.Mkdir(pluginDir, 0755)
+	if err := os.Mkdir(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
 
 	manifest := `manifest_spec: ductile.plugin
 manifest_version: 1
@@ -517,8 +587,12 @@ commands:
   - name: health
     type: read
 `
-	os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0644)
-	os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0755)
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0o755); err != nil {
+		t.Fatalf("write entrypoint: %v", err)
+	}
 
 	logger := func(level, msg string, args ...any) {}
 	reg, err := Discover(dir, logger)
@@ -534,5 +608,80 @@ commands:
 	}
 	if got := p.GetWriteCommands(); len(got) != 1 || got[0] != "poll" {
 		t.Fatalf("GetWriteCommands() = %v, want [poll]", got)
+	}
+}
+
+func TestDiscover_ConcurrencySafe_DefaultTrue(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "safe-default")
+	if err := os.Mkdir(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: safe-default
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0o755); err != nil {
+		t.Fatalf("write entrypoint: %v", err)
+	}
+
+	reg, err := Discover(dir, func(level, msg string, args ...any) {})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	p, ok := reg.Get("safe-default")
+	if !ok {
+		t.Fatalf("plugin not discovered")
+	}
+	if !p.ConcurrencySafe {
+		t.Fatalf("expected default ConcurrencySafe=true when manifest field omitted")
+	}
+}
+
+func TestDiscover_ConcurrencySafe_FalseHint(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "serial-plugin")
+	if err := os.Mkdir(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: serial-plugin
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+concurrency_safe: false
+commands:
+  - name: poll
+    type: write
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\necho ok"), 0o755); err != nil {
+		t.Fatalf("write entrypoint: %v", err)
+	}
+
+	reg, err := Discover(dir, func(level, msg string, args ...any) {})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	p, ok := reg.Get("serial-plugin")
+	if !ok {
+		t.Fatalf("plugin not discovered")
+	}
+	if p.ConcurrencySafe {
+		t.Fatalf("expected ConcurrencySafe=false from manifest hint")
 	}
 }

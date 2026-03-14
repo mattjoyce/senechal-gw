@@ -18,7 +18,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
+def pick(payload: Dict[str, Any], context: Dict[str, Any], key: str, default: Any = None) -> Any:
+    if key in payload and payload[key] not in (None, ""):
+        return payload[key]
+    if key in context and context[key] not in (None, ""):
+        return context[key]
+    return default
+
+
+def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     """Handle command - dispatches based on event type or action field.
 
     Args:
@@ -30,14 +38,14 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
         Response envelope with status, events, state_updates, and logs
     """
     payload = event.get("payload", {})
-    action = payload.get("action", "")
+    action = pick(payload, context, "action", "")
     event_type = event.get("type", "")
 
     # Dispatch based on action or event type
     if action == "read" or event_type == "file.read_request":
-        return read_file(config, state, payload)
+        return read_file(config, state, payload, context)
     elif action == "write" or event_type.startswith("fabric.completed"):
-        return write_file(config, state, payload)
+        return write_file(config, state, payload, context)
     else:
         return error_response(
             f"Unknown action '{action}'. Specify 'read' or 'write' in payload.action",
@@ -45,7 +53,7 @@ def handle_command(config: Dict[str, Any], state: Dict[str, Any], event: Dict[st
         )
 
 
-def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     """Read a file and emit file.read event.
 
     Security: All paths validated against allowed_read_paths with realpath resolution.
@@ -58,7 +66,7 @@ def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, 
     Returns:
         Success response with file.read event or error response
     """
-    file_path = payload.get("file_path")
+    file_path = pick(payload, context, "file_path")
     if not file_path:
         return error_response("Missing required field 'file_path' in payload", retry=False)
 
@@ -101,14 +109,16 @@ def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, 
 
     # Propagate pipeline context fields (pattern, output_dir, etc.)
     for field in ["pattern", "output_dir", "output_path"]:
-        if field in payload:
-            event_payload[field] = payload[field]
+        value = pick(payload, context, field)
+        if value is not None and value != "":
+            event_payload[field] = value
 
     # Update state counters
     reads_count = state.get("reads_count", 0) + 1
 
     return {
         "status": "ok",
+        "result": f"Read {size_bytes:,} bytes from {filename}",
         "events": [
             {
                 "type": "file.read",
@@ -126,7 +136,7 @@ def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, 
     }
 
 
-def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     """Write content to a file and emit file.written event.
 
     Security: All paths validated against allowed_write_paths with realpath resolution.
@@ -141,7 +151,7 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
         Success response with file.written event or error response
     """
     # Prefer 'result' (processed data from fabric) over 'content' (raw input)
-    content = payload.get("result") or payload.get("content")
+    content = pick(payload, context, "result") or pick(payload, context, "content")
     if not content:
         return error_response(
             "Missing required field 'content' or 'result' in payload",
@@ -155,12 +165,13 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
         )
 
     # Determine output path
-    output_path = payload.get("output_path")
-    output_dir = payload.get("output_dir")
+    output_path = pick(payload, context, "output_path")
+    output_dir = pick(payload, context, "output_dir") or config.get("default_output_dir", "").strip() or None
 
     if not output_path and not output_dir:
         return error_response(
-            "Missing required field 'output_path' or 'output_dir' in payload",
+            "Missing required field 'output_path' or 'output_dir' in payload. "
+            "Or set plugins.file_handler.config.default_output_dir in your config.",
             retry=False
         )
 
@@ -168,7 +179,7 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
     if not output_path:
         assert output_dir is not None  # Type narrowing for mypy
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        pattern = payload.get("pattern", "report")
+        pattern = pick(payload, context, "pattern", "report")
         # Sanitize pattern for filename safety
         safe_pattern = "".join(c if c.isalnum() or c in "-_" else "_" for c in pattern)
         filename = f"{safe_pattern}_{timestamp}.md"
@@ -210,6 +221,7 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
 
     return {
         "status": "ok",
+        "result": f"Wrote {size_bytes:,} bytes to {os.path.basename(abs_path)}",
         "events": [
             {
                 "type": "file.written",
@@ -271,6 +283,7 @@ def health_command(config: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "status": "ok",
+        "result": f"Health OK: {len(read_paths)} read paths, {len(write_paths)} write paths",
         "state_updates": {
             "last_health_check": datetime.now(timezone.utc).isoformat(),
             "read_paths_configured": len(read_paths),
@@ -380,17 +393,19 @@ def main() -> None:
     config = request.get("config", {})
     state = request.get("state", {})
     event = request.get("event", {})
+    context = request.get("context", {})
 
     # Dispatch to command handlers
     if command == "poll":
         # Poll command - no-op for event-driven plugin
         response = {
             "status": "ok",
+            "result": "file_handler poll (no-op)",
             "state_updates": {"last_poll": datetime.now(timezone.utc).isoformat()},
             "logs": [{"level": "info", "message": "file_handler poll (no-op, event-driven)"}],
         }
     elif command == "handle":
-        response = handle_command(config, state, event)
+        response = handle_command(config, state, event, context)
     elif command == "health":
         response = health_command(config)
     else:

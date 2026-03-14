@@ -1,0 +1,17 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: switch
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Classify payloads by field value and emit the first matching event type."
+commands:
+  - name: handle
+    type: write
+    description: "Route an event to a new type based on configured field match rules."
+  - name: health
+    type: read
+    description: "Validate plugin configuration."
+config_keys:
+  required: [field, checks]
+  optional: []

@@ -21,23 +21,25 @@ func TestDispatcher_WaitForJobTree(t *testing.T) {
 	// Plugin A emits an event that triggers Plugin B
 	scriptA := `#!/bin/bash
 read input
-echo '{"status":"ok","events":[{"type":"test.event"}]}'
+echo '{"status":"ok","result":"emitted test.event","events":[{"type":"test.event"}]}'
 `
 	scriptB := `#!/bin/bash
 read input
-echo '{"status":"ok","logs":[{"level":"info","message":"done"}]}'
+echo '{"status":"ok","result":"done","logs":[{"level":"info","message":"done"}]}'
 `
 
 	registry := plugin.NewRegistry()
 	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
 	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
-	registry.Add(plugA)
-	registry.Add(plugB)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
 
 	// Create pipeline
 	tmpDir := filepath.Dir(pluginsDir)
-	pipelinesDir := filepath.Join(tmpDir, "pipelines")
-	os.MkdirAll(pipelinesDir, 0755)
 	pipelineYAML := `pipelines:
   - name: test-pipeline
     on: test.event
@@ -45,11 +47,14 @@ echo '{"status":"ok","logs":[{"level":"info","message":"done"}]}'
       - id: step_b
         uses: plugin-b
 `
-	os.WriteFile(filepath.Join(pipelinesDir, "test.yaml"), []byte(pipelineYAML), 0644)
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
 
-	routerEngine, err := router.LoadFromConfigDir(tmpDir, registry, nil)
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
-		t.Fatalf("LoadFromConfigDir: %v", err)
+		t.Fatalf("LoadFromConfigFiles: %v", err)
 	}
 	disp.router = routerEngine
 	disp.registry = registry

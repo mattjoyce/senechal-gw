@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mattjoyce/ductile/schemas/tokens.schema.json",
+  "title": "Ductile Tokens",
+  "description": "Schema for ductile tokens.yaml — API bearer tokens with scoped permissions (directory mode).",
+  "type": "object",
+  "properties": {
+    "tokens": {
+      "type": "array",
+      "description": "List of API token entries.",
+      "items": {
+        "type": "object",
+        "description": "A bearer token with scoped permissions.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Human-readable token name.",
+            "minLength": 1
+          },
+          "key": {
+            "type": "string",
+            "description": "Bearer token value (use ${ENV_VAR} for secrets).",
+            "minLength": 1
+          },
+          "scopes_file": {
+            "type": "string",
+            "description": "Path to a JSON scopes definition file."
+          },
+          "scopes_hash": {
+            "type": "string",
+            "description": "BLAKE3 hash of the scopes file for integrity verification."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the token was created.",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the token's purpose."
+          }
+        },
+        "required": ["name", "key"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["tokens"],
+  "additionalProperties": false
+}

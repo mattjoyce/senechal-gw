@@ -13,8 +13,13 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary with CGO enabled for SQLite
-RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags="-w -s" -o ductile ./cmd/ductile
+# Derive version from git state (same script used locally and in CI)
+RUN VERSION=$(./scripts/version.sh) && \
+    COMMIT=$(git rev-parse --short HEAD) && \
+    BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) && \
+    CGO_ENABLED=1 GOOS=linux go build -a \
+      -ldflags="-w -s -X main.version=${VERSION} -X main.gitCommit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
+      -o ductile ./cmd/ductile
 
 # Runtime stage
 FROM alpine:latest
@@ -34,8 +39,8 @@ COPY --from=builder /build/ductile .
 # Copy plugins directory
 COPY --chown=ductile:ductile plugins/ ./plugins/
 
-# Copy pipelines directory if it exists
-COPY --chown=ductile:ductile pipelines ./pipelines
+# Copy pipelines directory if it exists (wildcard avoids failure when absent)
+COPY --chown=ductile:ductile pipeline[s] ./pipelines
 
 # Create data directory for state persistence
 RUN mkdir -p /app/data && chown -R ductile:ductile /app/data
@@ -51,4 +56,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD [ -f /app/ductile.pid ] || exit 1
 
 # Default command
-CMD ["./ductile", "start"]
+CMD ["./ductile", "system", "start"]

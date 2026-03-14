@@ -28,30 +28,74 @@ Ductile is written in Go and requires version **1.25.4** or newer.
 After building the binary, you can run the included `echo` plugin to verify the system.
 
 ### Step 1: Verify Plugin Discovery
-Ductile expects a `plugins/` directory. Check that the echo manifest is present:
+Ductile discovers plugins from `plugin_roots`.
+For this repo, the local `plugins/` directory includes `echo`:
 ```bash
 ls -F plugins/echo/manifest.yaml
 ```
 
 ### Step 2: Configure the Plugin
-The `config.yaml` file in the root defines how plugins run. The `echo` plugin is enabled by default to run every 5 minutes.
+Ductile uses a directory-based config layout (typically `~/.config/ductile/`).
+This repo ships example files in `config/` — copy that folder to your config dir and edit.
+
+```bash
+cp -R ./config ~/.config/ductile
+```
 
 ```yaml
-# config.yaml excerpt
+# ~/.config/ductile/config.yaml excerpt
+plugin_roots:
+  - "~/.config/ductile/plugins"
+  - "./plugins"
+
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml
+  - webhooks.yaml
+```
+
+```yaml
+# ~/.config/ductile/plugins.yaml excerpt
 plugins:
   echo:
     enabled: true
-    schedule:
-      every: 5m
-      jitter: 30s
+    schedules:
+      - id: default
+        every: 5m
+        jitter: 30s
     config:
       message: "Hello from Ductile!"
 ```
 
+### Step 2b: Add an External Plugin Root (Optional)
+You can mount additional plugin volumes and add them to `plugin_roots` in priority order:
+
+```yaml
+plugin_roots:
+  - "~/.config/ductile/plugins"
+  - "./plugins"
+  - "/opt/ductile/plugins-private"
+```
+
+Container example:
+```bash
+docker run --rm \
+  -v "$PWD/config:/config" \
+  -v "$PWD/plugins:/app/plugins" \
+  -v "/srv/ductile-private-plugins:/opt/ductile/plugins-private:ro" \
+  ductile:latest ./ductile system start --config-dir /config
+```
+
 ### Step 3: Start the Gateway
-Run the service in the foreground:
+Run the service in the foreground (defaults to `~/.config/ductile`):
 ```bash
 ./ductile system start
+```
+
+Or explicitly point to a config directory:
+```bash
+./ductile system start --config-dir ~/.config/ductile
 ```
 
 You will see logs indicating the scheduler has started. After 5 minutes (or however you configured it), you'll see the echo job execute and complete.

@@ -57,6 +57,33 @@ type tokenInspectJSONOutput struct {
 	ConfigTarget string   `json:"config_target"`
 }
 
+const redactedValue = "[redacted]"
+
+func redactTokenEntry(entry config.TokenEntry) config.TokenEntry {
+	entry.Key = redactedValue
+	return entry
+}
+
+func redactTokenEntries(entries []config.TokenEntry) []config.TokenEntry {
+	out := make([]config.TokenEntry, len(entries))
+	for i, entry := range entries {
+		out[i] = redactTokenEntry(entry)
+	}
+	return out
+}
+
+func redactWebhookEndpoint(entry config.WebhookEndpoint) config.WebhookEndpoint {
+	return entry
+}
+
+func redactWebhookEndpoints(entries []config.WebhookEndpoint) []config.WebhookEndpoint {
+	out := make([]config.WebhookEndpoint, len(entries))
+	for i, entry := range entries {
+		out[i] = redactWebhookEndpoint(entry)
+	}
+	return out
+}
+
 func runConfigToken(args []string) int {
 	if len(args) == 0 || isHelpToken(args[0]) {
 		printConfigTokenHelp()
@@ -81,6 +108,7 @@ func runConfigToken(args []string) int {
 		printConfigTokenHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config token action: %s\n", action)
 		return 1
 	}
@@ -108,6 +136,7 @@ func runConfigScope(args []string) int {
 		printConfigScopeHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config scope action: %s\n", action)
 		return 1
 	}
@@ -305,7 +334,7 @@ func runConfigTokenList(args []string) int {
 	}
 
 	if format == "json" {
-		out, _ := json.MarshalIndent(tokensCfg.Tokens, "", "  ")
+		out, _ := json.MarshalIndent(redactTokenEntries(tokensCfg.Tokens), "", "  ")
 		fmt.Println(string(out))
 		return 0
 	}
@@ -342,12 +371,8 @@ func runConfigTokenInspect(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -391,7 +416,7 @@ func runConfigTokenInspect(args []string) int {
 	if format == "json" {
 		out := tokenInspectJSONOutput{
 			Name:         entry.Name,
-			Key:          entry.Key,
+			Key:          redactedValue,
 			ScopesFile:   entry.ScopesFile,
 			ScopesHash:   entry.ScopesHash,
 			CurrentHash:  currentHash,
@@ -411,7 +436,7 @@ func runConfigTokenInspect(args []string) int {
 	if entry.CreatedAt != "" {
 		fmt.Printf("Created: %s\n", entry.CreatedAt)
 	}
-	fmt.Printf("Key: %s\n", entry.Key)
+	fmt.Printf("Key: %s\n", redactedValue)
 	if entry.ScopesFile != "" {
 		fmt.Printf("Scope file: %s\n", entry.ScopesFile)
 	}
@@ -447,12 +472,8 @@ func runConfigTokenRehash(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -537,12 +558,8 @@ func runConfigTokenDelete(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -628,12 +645,8 @@ func runConfigScopeMutation(mode string, args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -765,12 +778,8 @@ func runConfigScopeValidate(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -873,6 +882,21 @@ func validateConfigAtPath(configPath string) (*doctor.Result, int, error) {
 	if err != nil {
 		return nil, 1, err
 	}
+	configPaths, err := config.CollectConfigPaths(configPath, cfg)
+	if err != nil {
+		return nil, 1, err
+	}
+	symlinkWarnings, err := config.DetectSymlinks(configPaths)
+	if err != nil {
+		return nil, 1, err
+	}
+	for _, warning := range symlinkWarnings {
+		fmt.Fprintf(os.Stderr, "WARN: symlink detected (path=%s resolved=%s)\n", warning.Path, warning.Resolved)
+	}
+	if len(symlinkWarnings) > 0 && !cfg.Service.AllowSymlinks {
+		return nil, 1, fmt.Errorf("symlinks detected in config paths but not allowed")
+	}
+
 	registry, err := discoverRegistry(cfg, configPath)
 	if err != nil {
 		return nil, 1, err
@@ -892,13 +916,24 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 	if err != nil {
 		return nil, err
 	}
-	return plugin.DiscoverMany(pluginRoots, func(level, msg string, args ...any) {})
+	registry, err := plugin.DiscoverManyWithOptions(pluginRoots, func(level, msg string, args ...any) {
+		if level == "warn" {
+			fmt.Fprintf(os.Stderr, "WARN: %s %v\n", msg, args)
+		}
+	}, plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := plugin.ApplyAliases(registry, cfg.Plugins); err != nil {
+		return nil, err
+	}
+	return registry, nil
 }
 
 func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {
 	roots := cfg.EffectivePluginRoots()
 	if len(roots) == 0 {
-		return nil, fmt.Errorf("plugin_roots or plugins_dir is required")
+		return nil, fmt.Errorf("plugin_roots is required")
 	}
 
 	baseDir := configPath
@@ -961,8 +996,8 @@ func printValidationSummary(result *doctor.Result) {
 func refreshConfigIntegrity(configDir string) error {
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err != nil {
-		_, legacyErr := config.GenerateChecksumsWithReport(configDir, []string{"tokens.yaml", "webhooks.yaml"}, false)
-		if legacyErr != nil {
+		_, includeErr := config.GenerateChecksumsWithReport(configDir, []string{"tokens.yaml", "webhooks.yaml"}, false)
+		if includeErr != nil {
 			return err
 		}
 		return nil
@@ -971,6 +1006,7 @@ func refreshConfigIntegrity(configDir string) error {
 }
 
 func loadTokensFile(path string) (*config.TokensFileConfig, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -997,11 +1033,13 @@ func writeTokensFile(path string, cfg *config.TokensFileConfig) error {
 }
 
 func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	if current, err := os.ReadFile(path); err == nil {
+		// #nosec G703 -- backup path is derived from operator-controlled config path.
 		if err := os.WriteFile(path+".bak", current, mode); err != nil {
 			return err
 		}
@@ -1012,7 +1050,7 @@ func writeFileAtomicWithBackup(path string, data []byte, mode os.FileMode) error
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
@@ -1041,6 +1079,7 @@ func parseScopesInput(scopesArg, scopesFile string) ([]string, error) {
 	if scopesFile == "-" {
 		raw, err = ioReadAll(os.Stdin)
 	} else {
+		// #nosec G304 -- config paths are operator-controlled local inputs.
 		raw, err = os.ReadFile(scopesFile)
 	}
 	if err != nil {
@@ -1061,6 +1100,7 @@ func parseScopesInput(scopesArg, scopesFile string) ([]string, error) {
 }
 
 func loadScopeDoc(path string) (*scopeDoc, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1170,7 +1210,7 @@ func validateScopeAgainstRegistry(scope string, registry *plugin.Registry) ([]st
 
 	if resource == "read" || resource == "trigger" || resource == "admin" {
 		return []string{
-			fmt.Sprintf("Type: low-level scope"),
+			"Type: low-level scope",
 			fmt.Sprintf("Resource: %s", resource),
 			fmt.Sprintf("Selector: %s", access),
 		}, nil
@@ -1230,28 +1270,33 @@ func validateScopeAgainstRegistry(scope string, registry *plugin.Registry) ([]st
 	return lines, nil
 }
 
-func splitFlagsAndPositionals(args []string, takesValue map[string]bool) ([]string, []string) {
+func parseFlagsAndPositionals(fs *flag.FlagSet, args []string) ([]string, error) {
+	takesValue := make(map[string]bool)
+	fs.VisitAll(func(f *flag.Flag) {
+		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+			return
+		}
+		takesValue["-"+f.Name] = true
+		takesValue["--"+f.Name] = true
+	})
+
 	flags := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if !strings.HasPrefix(arg, "-") {
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			if takesValue[arg] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flags = append(flags, args[i+1])
+				i++
+			}
+		} else {
 			positionals = append(positionals, arg)
-			continue
-		}
-
-		flags = append(flags, arg)
-		if strings.Contains(arg, "=") {
-			continue
-		}
-		if takesValue[arg] && i+1 < len(args) {
-			i++
-			flags = append(flags, args[i])
 		}
 	}
 
-	return flags, positionals
+	return positionals, fs.Parse(flags)
 }
 
 func ioReadAll(f *os.File) ([]byte, error) {
@@ -1277,6 +1322,7 @@ func runConfigPlugin(args []string) int {
 		printConfigPluginHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config plugin action: %s\n", action)
 		return 1
 	}
@@ -1361,12 +1407,8 @@ func runConfigPluginShow(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -1408,12 +1450,8 @@ func runConfigPluginSet(args []string) int {
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-		"--format":     true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -1460,7 +1498,7 @@ func runConfigPluginSet(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to encode plugin file: %v\n", err)
 		return 1
 	}
-	if err := writeFileAtomicWithBackup(targetFile, raw, 0o644); err != nil {
+	if err := writeFileAtomicWithBackup(targetFile, raw, 0o600); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write plugin file: %v\n", err)
 		return 1
 	}
@@ -1513,6 +1551,7 @@ func runConfigRoute(args []string) int {
 		printConfigRouteHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config route action: %s\n", action)
 		return 1
 	}
@@ -1672,6 +1711,7 @@ func runConfigWebhook(args []string) int {
 		printConfigWebhookHelp()
 		return 0
 	default:
+		// #nosec G705 -- stderr output is plain text, not HTML.
 		fmt.Fprintf(os.Stderr, "Unknown config webhook action: %s\n", action)
 		return 1
 	}
@@ -1701,7 +1741,8 @@ func runConfigWebhookList(args []string) int {
 	}
 
 	if format == "json" {
-		raw, _ := json.MarshalIndent(webhooksCfg.Webhooks, "", "  ")
+		// #nosec G117 -- webhook secrets are redacted before marshaling.
+		raw, _ := json.MarshalIndent(redactWebhookEndpoints(webhooksCfg.Webhooks), "", "  ")
 		fmt.Println(string(raw))
 		return 0
 	}
@@ -1718,18 +1759,14 @@ func runConfigWebhookList(args []string) int {
 		fmt.Printf("\n%s\n", name)
 		fmt.Printf("  Path: %s\n", hook.Path)
 		fmt.Printf("  Plugin: %s\n", hook.Plugin)
-		if hook.SecretRef != "" {
-			fmt.Printf("  SecretRef: %s\n", hook.SecretRef)
-		} else if hook.Secret != "" {
-			fmt.Printf("  Secret: %s\n", hook.Secret)
-		}
+		fmt.Printf("  SecretRef: %s\n", hook.SecretRef)
 	}
 	return 0
 }
 
 func runConfigWebhookAdd(args []string) int {
 	var configPath, configDir, format string
-	var name, path, pluginName, secret, secretRef, signatureHeader, maxBodySize string
+	var name, path, pluginName, secretRef, signatureHeader, maxBodySize string
 	fs := flag.NewFlagSet("webhook add", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
@@ -1737,7 +1774,6 @@ func runConfigWebhookAdd(args []string) int {
 	fs.StringVar(&name, "name", "", "Webhook name")
 	fs.StringVar(&path, "path", "", "Webhook path (e.g. /webhook/github)")
 	fs.StringVar(&pluginName, "plugin", "", "Target plugin")
-	fs.StringVar(&secret, "secret", "", "Webhook secret value")
 	fs.StringVar(&secretRef, "secret-ref", "", "Webhook secret reference")
 	fs.StringVar(&signatureHeader, "signature-header", "X-Signature-256", "Signature header name")
 	fs.StringVar(&maxBodySize, "max-body-size", "1MB", "Maximum request body size")
@@ -1746,15 +1782,11 @@ func runConfigWebhookAdd(args []string) int {
 		return 1
 	}
 	if path == "" || pluginName == "" {
-		fmt.Fprintln(os.Stderr, "Usage: ductile config webhook add --path <path> --plugin <name> [--name <name>] [--secret <value> | --secret-ref <value>]")
+		fmt.Fprintln(os.Stderr, "Usage: ductile config webhook add --path <path> --plugin <name> [--name <name>] --secret-ref <value>")
 		return 1
 	}
-	if secret == "" && secretRef == "" {
-		fmt.Fprintln(os.Stderr, "Error: one of --secret or --secret-ref is required")
-		return 1
-	}
-	if secret != "" && secretRef != "" {
-		fmt.Fprintln(os.Stderr, "Error: use only one of --secret or --secret-ref")
+	if secretRef == "" {
+		fmt.Fprintln(os.Stderr, "Error: --secret-ref is required")
 		return 1
 	}
 
@@ -1784,7 +1816,6 @@ func runConfigWebhookAdd(args []string) int {
 		Name:            name,
 		Path:            path,
 		Plugin:          pluginName,
-		Secret:          secret,
 		SecretRef:       secretRef,
 		SignatureHeader: signatureHeader,
 		MaxBodySize:     maxBodySize,
@@ -1806,7 +1837,7 @@ func runConfigWebhookAdd(args []string) int {
 	}
 	if format == "json" {
 		out := map[string]any{
-			"webhook":    entry,
+			"webhook":    redactWebhookEndpoint(entry),
 			"updated":    webhooksFile,
 			"validation": validation,
 		}
@@ -1846,6 +1877,7 @@ func runConfigInit(args []string) int {
 		fmt.Fprintf(os.Stderr, "Failed to create config directory: %v\n", err)
 		return 1
 	}
+	// #nosec G302 -- directory permissions are enforced separately from file permissions.
 	if err := os.Chmod(configDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to set permissions on config directory: %v\n", err)
 		return 1
@@ -1864,13 +1896,13 @@ func runConfigInit(args []string) int {
 	}
 
 	pluginsDir := filepath.Join(configDir, "plugins")
-	pipelinesDir := filepath.Join(configDir, "pipelines")
 	scopesDir := filepath.Join(configDir, "scopes")
-	for _, dir := range []string{pluginsDir, pipelinesDir, scopesDir} {
+	for _, dir := range []string{pluginsDir, scopesDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create directory %s: %v\n", dir, err)
 			return 1
 		}
+		// #nosec G302 -- directory permissions are enforced separately from file permissions.
 		_ = os.Chmod(dir, 0o700)
 	}
 
@@ -1884,7 +1916,8 @@ state:
 api:
   enabled: false
   listen: "127.0.0.1:8080"
-plugins_dir: ` + pluginsDir + `
+plugin_roots:
+  - ` + pluginsDir + `
 plugins: {}
 `
 	if err := writeIfNeeded(filepath.Join(configDir, "config.yaml"), configYAML, 0o600); err != nil {
@@ -1959,11 +1992,8 @@ func runConfigRestore(args []string) int {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
 	fs.StringVar(&configDir, "config-dir", "", "Path to config directory")
-	flagArgs, positionals := splitFlagsAndPositionals(args, map[string]bool{
-		"--config":     true,
-		"--config-dir": true,
-	})
-	if err := fs.Parse(flagArgs); err != nil {
+	positionals, err := parseFlagsAndPositionals(fs, args)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
@@ -1978,7 +2008,14 @@ func runConfigRestore(args []string) int {
 		fmt.Fprintf(os.Stderr, "Resolve config failed: %v\n", err)
 		return 1
 	}
-	if err := restoreConfigBackup(resolvedDir, archivePath); err != nil {
+	allowSymlinks := false
+	if cfg, loadErr := config.Load(resolvedPath); loadErr == nil {
+		allowSymlinks = cfg.Service.AllowSymlinks
+	} else {
+		fmt.Fprintf(os.Stderr, "WARN: unable to load config for symlink policy, defaulting to allow_symlinks=false: %v\n", loadErr)
+	}
+
+	if err := restoreConfigBackup(resolvedDir, archivePath, allowSymlinks); err != nil {
 		fmt.Fprintf(os.Stderr, "Restore failed: %v\n", err)
 		return 1
 	}
@@ -2022,6 +2059,7 @@ func loadOrCreatePluginConfig(cfg *config.Config, configDir, name string) (strin
 	files, err := config.DiscoverConfigFiles(configDir)
 	if err == nil {
 		for _, path := range files.Plugins {
+			// #nosec G304 -- config paths are operator-controlled local inputs.
 			raw, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return "", config.PluginConf{}, readErr
@@ -2038,8 +2076,8 @@ func loadOrCreatePluginConfig(cfg *config.Config, configDir, name string) (strin
 
 	defaultCfg := config.PluginConf{
 		Enabled: false,
-		Schedule: &config.ScheduleConfig{
-			Every: "daily",
+		Schedules: []config.ScheduleConfig{
+			{ID: "default", Every: "daily"},
 		},
 	}
 	if existing, ok := cfg.Plugins[name]; ok {
@@ -2072,26 +2110,64 @@ func setNestedMapValue(root map[string]any, path []string, value any) {
 	if len(path) == 0 {
 		return
 	}
-	current := root
-	for i := 0; i < len(path)-1; i++ {
-		segment := strings.TrimSpace(path[i])
-		next, ok := current[segment]
-		if !ok {
-			child := map[string]any{}
-			current[segment] = child
-			current = child
-			continue
+	updated := setNestedValue(root, path, value)
+	if updatedMap, ok := updated.(map[string]any); ok {
+		for k, v := range updatedMap {
+			root[k] = v
 		}
-		asMap, ok := next.(map[string]any)
-		if !ok {
-			child := map[string]any{}
-			current[segment] = child
-			current = child
-			continue
-		}
-		current = asMap
 	}
-	current[strings.TrimSpace(path[len(path)-1])] = value
+}
+
+func setNestedValue(current any, path []string, value any) any {
+	if len(path) == 0 {
+		return current
+	}
+	segment := strings.TrimSpace(path[0])
+	if len(path) == 1 {
+		if idx, ok := parseIndex(segment); ok {
+			slice := ensureSlice(current, idx)
+			slice[idx] = value
+			return slice
+		}
+		m, ok := current.(map[string]any)
+		if !ok || m == nil {
+			m = map[string]any{}
+		}
+		m[segment] = value
+		return m
+	}
+
+	if idx, ok := parseIndex(segment); ok {
+		slice := ensureSlice(current, idx)
+		slice[idx] = setNestedValue(slice[idx], path[1:], value)
+		return slice
+	}
+
+	m, ok := current.(map[string]any)
+	if !ok || m == nil {
+		m = map[string]any{}
+	}
+	m[segment] = setNestedValue(m[segment], path[1:], value)
+	return m
+}
+
+func parseIndex(segment string) (int, bool) {
+	idx, err := strconv.Atoi(segment)
+	if err != nil || idx < 0 {
+		return 0, false
+	}
+	return idx, true
+}
+
+func ensureSlice(current any, idx int) []any {
+	slice, ok := current.([]any)
+	if !ok || slice == nil {
+		slice = []any{}
+	}
+	for len(slice) <= idx {
+		slice = append(slice, map[string]any{})
+	}
+	return slice
 }
 
 func containsRoute(routes []config.RouteConfig, target config.RouteConfig) bool {
@@ -2104,6 +2180,7 @@ func containsRoute(routes []config.RouteConfig, target config.RouteConfig) bool 
 }
 
 func loadRoutesFile(path string) (*config.RoutesFileConfig, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2126,10 +2203,11 @@ func writeRoutesFile(path string, cfg *config.RoutesFileConfig) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomicWithBackup(path, raw, 0o644)
+	return writeFileAtomicWithBackup(path, raw, 0o600)
 }
 
 func loadWebhooksFile(path string) (*config.WebhooksFileConfig, error) {
+	// #nosec G304 -- config paths are operator-controlled local inputs.
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -2155,18 +2233,25 @@ func writeWebhooksFile(path string, cfg *config.WebhooksFileConfig) error {
 	return writeFileAtomicWithBackup(path, raw, 0o600)
 }
 
+const (
+	maxConfigBackupEntries  = 2048
+	maxConfigBackupBytes    = 50 << 20
+	maxConfigBackupFileSize = 10 << 20
+)
+
 func createConfigBackup(configDir, outputPath string) ([]string, error) {
-	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "pipelines", "scopes"}
+	items := []string{"config.yaml", "routes.yaml", "tokens.yaml", "webhooks.yaml", ".checksums", "plugins", "scopes"}
+	// #nosec G304 -- output path is operator-controlled local input.
 	archiveFile, err := os.Create(outputPath)
 	if err != nil {
 		return nil, err
 	}
-	defer archiveFile.Close()
+	defer func() { _ = archiveFile.Close() }()
 
 	gz := gzip.NewWriter(archiveFile)
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
+	defer func() { _ = tw.Close() }()
 
 	included := []string{}
 	for _, rel := range items {
@@ -2195,11 +2280,13 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 				if entryInfo.IsDir() {
 					return nil
 				}
+				// config paths are operator-controlled local inputs.
+				// #nosec
 				file, err := os.Open(path)
 				if err != nil {
 					return err
 				}
-				defer file.Close()
+				defer func() { _ = file.Close() }()
 				_, err = io.Copy(tw, file)
 				return err
 			})
@@ -2218,15 +2305,21 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 		if err := tw.WriteHeader(header); err != nil {
 			return nil, err
 		}
+		// #nosec G304 -- config paths are operator-controlled local inputs.
+		// #nosec G122 -- config paths are operator-controlled; archives are local operator workflows.
 		file, err := os.Open(abs)
 		if err != nil {
 			return nil, err
 		}
 		if _, err := io.Copy(tw, file); err != nil {
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil {
+				return nil, closeErr
+			}
 			return nil, err
 		}
-		file.Close()
+		if err := file.Close(); err != nil {
+			return nil, err
+		}
 		included = append(included, rel)
 	}
 
@@ -2234,12 +2327,13 @@ func createConfigBackup(configDir, outputPath string) ([]string, error) {
 	return included, nil
 }
 
-func restoreConfigBackup(configDir, archivePath string) error {
+func restoreConfigBackup(configDir, archivePath string, allowSymlinks bool) error {
+	// #nosec G304 -- archive path is operator-controlled local input.
 	file, err := os.Open(archivePath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return err
@@ -2249,8 +2343,10 @@ func restoreConfigBackup(configDir, archivePath string) error {
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
+	var totalBytes int64
+	var totalEntries int
 
 	for {
 		header, err := tr.Next()
@@ -2260,6 +2356,22 @@ func restoreConfigBackup(configDir, archivePath string) error {
 		if err != nil {
 			return err
 		}
+
+		totalEntries++
+		if totalEntries > maxConfigBackupEntries {
+			return fmt.Errorf("archive contains too many entries (max %d)", maxConfigBackupEntries)
+		}
+		if header.Size < 0 {
+			return fmt.Errorf("invalid archive entry size for %s", header.Name)
+		}
+		if header.Size > maxConfigBackupFileSize {
+			return fmt.Errorf("archive entry %s exceeds max size (%d bytes)", header.Name, maxConfigBackupFileSize)
+		}
+		if totalBytes+header.Size > maxConfigBackupBytes {
+			return fmt.Errorf("archive exceeds max size (%d bytes)", maxConfigBackupBytes)
+		}
+		totalBytes += header.Size
+
 		cleanName := filepath.Clean(header.Name)
 		if strings.HasPrefix(cleanName, "..") {
 			return fmt.Errorf("invalid archive path: %s", header.Name)
@@ -2278,17 +2390,50 @@ func restoreConfigBackup(configDir, archivePath string) error {
 			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 				return err
 			}
+			// destination path is operator-controlled config dir.
+			// #nosec
 			out, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode))
 			if err != nil {
 				return err
 			}
-			if _, err := io.Copy(out, tr); err != nil {
-				out.Close()
+			limitReader := &io.LimitedReader{R: tr, N: header.Size}
+			if _, err := io.Copy(out, limitReader); err != nil {
+				if closeErr := out.Close(); closeErr != nil {
+					return closeErr
+				}
 				return err
 			}
 			if err := out.Close(); err != nil {
 				return err
 			}
+			if limitReader.N != 0 {
+				return fmt.Errorf("archive entry %s truncated", header.Name)
+			}
+		case tar.TypeSymlink:
+			if !allowSymlinks {
+				return fmt.Errorf("symlink entry not allowed: %s", header.Name)
+			}
+			fmt.Fprintf(os.Stderr, "WARN: symlink entry detected in archive: %s -> %s\n", header.Name, header.Linkname)
+			if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+				return err
+			}
+			if err := os.Symlink(header.Linkname, dest); err != nil {
+				return err
+			}
+		case tar.TypeLink:
+			if !allowSymlinks {
+				return fmt.Errorf("hardlink entry not allowed: %s", header.Name)
+			}
+			fmt.Fprintf(os.Stderr, "WARN: hardlink entry detected in archive: %s -> %s\n", header.Name, header.Linkname)
+			linkTarget := filepath.Join(configDir, filepath.Clean(header.Linkname))
+			if !strings.HasPrefix(linkTarget, filepath.Clean(configDir)+string(os.PathSeparator)) && filepath.Clean(linkTarget) != filepath.Clean(configDir) {
+				return fmt.Errorf("invalid hardlink target: %s", header.Linkname)
+			}
+			if err := os.Link(linkTarget, dest); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported archive entry type %q for %s", header.Typeflag, header.Name)
 		}
 	}
 	return nil

@@ -42,11 +42,11 @@ func (m *fsWorkspaceManager) Create(ctx context.Context, jobID string) (Workspac
 		return Workspace{}, err
 	}
 
-	if err := os.MkdirAll(m.baseDir, 0o755); err != nil {
+	if err := os.MkdirAll(m.baseDir, 0o700); err != nil {
 		return Workspace{}, fmt.Errorf("create workspace base directory: %w", err)
 	}
 
-	if err := os.Mkdir(path, 0o755); err != nil {
+	if err := os.Mkdir(path, 0o700); err != nil {
 		return Workspace{}, fmt.Errorf("create workspace for job %q: %w", jobID, err)
 	}
 
@@ -172,10 +172,10 @@ func (m *fsWorkspaceManager) cloneTreeWithHardLinks(ctx context.Context, srcDir,
 		return fmt.Errorf("source path %q is not a directory", srcDir)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dstDir), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dstDir), 0o700); err != nil {
 		return fmt.Errorf("create destination parent: %w", err)
 	}
-	if err := os.Mkdir(dstDir, srcInfo.Mode().Perm()); err != nil {
+	if err := os.Mkdir(dstDir, 0o700); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
 
@@ -203,10 +203,11 @@ func (m *fsWorkspaceManager) cloneTreeWithHardLinks(ctx context.Context, srcDir,
 
 		switch {
 		case d.IsDir():
-			if err := os.Mkdir(dstPath, info.Mode().Perm()); err != nil {
+			if err := os.Mkdir(dstPath, 0o700); err != nil {
 				return fmt.Errorf("create directory %q: %w", dstPath, err)
 			}
 		case info.Mode().IsRegular():
+			// #nosec G122 -- workspace tree is internal; job IDs are validated and not attacker-controlled.
 			if err := os.Link(path, dstPath); err != nil {
 				return fmt.Errorf("hard-link %q to %q: %w", path, dstPath, err)
 			}
@@ -215,6 +216,7 @@ func (m *fsWorkspaceManager) cloneTreeWithHardLinks(ctx context.Context, srcDir,
 			if err != nil {
 				return fmt.Errorf("read symlink %q: %w", path, err)
 			}
+			// #nosec G122 -- workspace tree is internal; job IDs are validated and not attacker-controlled.
 			if err := os.Symlink(target, dstPath); err != nil {
 				return fmt.Errorf("create symlink %q: %w", dstPath, err)
 			}
