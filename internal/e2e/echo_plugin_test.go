@@ -43,12 +43,6 @@ func TestEchoPlugin_DiscoveryAndProtocolOK(t *testing.T) {
 	if resp.Status != "ok" {
 		t.Fatalf("expected status=ok, got %q", resp.Status)
 	}
-	if resp.StateUpdates == nil {
-		t.Fatalf("expected state_updates")
-	}
-	if _, ok := resp.StateUpdates["last_run"]; !ok {
-		t.Fatalf("expected state_updates.last_run")
-	}
 	if len(resp.Logs) == 0 {
 		t.Fatalf("expected response.logs")
 	}

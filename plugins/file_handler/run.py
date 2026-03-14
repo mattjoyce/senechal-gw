@@ -113,9 +113,6 @@ def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, 
         if value is not None and value != "":
             event_payload[field] = value
 
-    # Update state counters
-    reads_count = state.get("reads_count", 0) + 1
-
     return {
         "status": "ok",
         "result": f"Read {size_bytes:,} bytes from {filename}",
@@ -125,11 +122,6 @@ def read_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str, 
                 "payload": event_payload,
             }
         ],
-        "state_updates": {
-            "last_read": datetime.now(timezone.utc).isoformat(),
-            "reads_count": reads_count,
-            "last_file_path": abs_path,
-        },
         "logs": [
             {"level": "info", "message": f"Read {size_bytes:,} bytes from {filename}"},
         ],
@@ -217,7 +209,6 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
         return error_response(f"Unexpected error writing file: {type(e).__name__}: {e}", retry=True)
 
     size_bytes = len(content.encode('utf-8'))
-    writes_count = state.get("writes_count", 0) + 1
 
     return {
         "status": "ok",
@@ -231,11 +222,6 @@ def write_file(config: Dict[str, Any], state: Dict[str, Any], payload: Dict[str,
                 },
             }
         ],
-        "state_updates": {
-            "last_write": datetime.now(timezone.utc).isoformat(),
-            "writes_count": writes_count,
-            "last_output_path": abs_path,
-        },
         "logs": [
             {"level": "info", "message": f"Wrote {size_bytes:,} bytes to {os.path.basename(abs_path)}"},
         ],
@@ -284,11 +270,6 @@ def health_command(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
         "result": f"Health OK: {len(read_paths)} read paths, {len(write_paths)} write paths",
-        "state_updates": {
-            "last_health_check": datetime.now(timezone.utc).isoformat(),
-            "read_paths_configured": len(read_paths),
-            "write_paths_configured": len(write_paths),
-        },
         "logs": [
             {
                 "level": "info",
@@ -401,7 +382,6 @@ def main() -> None:
         response = {
             "status": "ok",
             "result": "file_handler poll (no-op)",
-            "state_updates": {"last_poll": datetime.now(timezone.utc).isoformat()},
             "logs": [{"level": "info", "message": "file_handler poll (no-op, event-driven)"}],
         }
     elif command == "handle":
