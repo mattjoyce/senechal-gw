@@ -54,3 +54,6 @@ Thumbs.db
 gosec.json
 __pycache__/
 test-artifacts/
+
+# Dolt database files (added by bd init)
+.dolt/
