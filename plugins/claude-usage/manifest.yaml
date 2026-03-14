@@ -1,0 +1,20 @@
+manifest_spec: ductile.plugin
+manifest_version: 1
+name: claude-usage
+version: 0.1.0
+protocol: 2
+entrypoint: run.py
+description: "Fetches Anthropic Claude API usage and cost reports."
+commands:
+  - name: summary
+    type: read
+    description: "Returns a summary of costs and usage for the current month."
+    output_schema:
+      total_cost_usd: number
+      total_tokens: number
+      period: string
+  - name: poll
+    type: read
+    description: "Polls current usage stats."
+config_keys:
+  required: [anthropic_api_key]
