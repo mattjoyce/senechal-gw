@@ -855,7 +855,7 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 		t.Fatalf("origin_channel_id = %#v, want %q", accumulated["origin_channel_id"], "chan-1")
 	}
 
-	childArtifact := filepath.Join(workspaceBaseDir, childJob.ID, "artifact.txt")
+	childArtifact := filepath.Join(workspaceBaseDir, childJob.ID[:2], childJob.ID, "artifact.txt")
 	b, err := os.ReadFile(childArtifact)
 	if err != nil {
 		t.Fatalf("read child artifact: %v", err)
@@ -1008,10 +1008,10 @@ echo '{"status":"ok","result":"ran-c"}'
 		t.Fatalf("step_c status = %q, want %q", stepCResult.Status, queue.StatusSucceeded)
 	}
 
-	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepBJob.ID)); err != nil {
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepBJob.ID[:2], stepBJob.ID)); err != nil {
 		t.Fatalf("stat skipped step workspace: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepCJob.ID)); err != nil {
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepCJob.ID[:2], stepCJob.ID)); err != nil {
 		t.Fatalf("stat successor workspace: %v", err)
 	}
 

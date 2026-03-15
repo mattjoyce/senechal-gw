@@ -373,7 +373,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Spawn plugin and execute
-	resp, rawResp, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
+	resp, rawResp, stdoutBytes, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {
@@ -425,12 +425,33 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		return
 	}
 
+	// recordBlackBox writes terminal job data into the workspace .ductile/ bundle.
+	// Errors are non-fatal — log and continue.
+	recordBlackBox := func(status queue.Status, lastError *string) {
+		meta := BlackBoxMetadata{
+			JobID:       job.ID,
+			Plugin:      job.Plugin,
+			Command:     job.Command,
+			Status:      string(status),
+			Attempt:     job.Attempt,
+			CreatedAt:   job.CreatedAt,
+			StartedAt:   job.StartedAt,
+			CompletedAt: time.Now().UTC(),
+			LastError:   lastError,
+			Context:     requestContext,
+		}
+		if err := writeBlackBox(workspaceDir, stdoutBytes, stderr, meta); err != nil {
+			jobLogger.Warn("black box write failed (non-fatal)", "error", err)
+		}
+	}
+
 	// Apply state updates
 	if len(resp.StateUpdates) > 0 {
 		updatesJSON, err := json.Marshal(resp.StateUpdates)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to marshal state updates: %v", err)
 			jobLogger.Error(errMsg)
+			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
@@ -438,6 +459,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if _, err := d.state.ShallowMerge(ctx, job.Plugin, updatesJSON); err != nil {
 			errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
 			jobLogger.Error(errMsg)
+			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
@@ -459,17 +481,19 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := d.routeEvents(ctx, job, resp.Events, jobLogger); err != nil {
 			errMsg := fmt.Sprintf("failed to route events: %v", err)
 			jobLogger.Error(errMsg)
+			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 	}
 
 	// Mark job as succeeded
+	recordBlackBox(queue.StatusSucceeded, nil)
 	d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
-// Returns the response, stderr output, and any error.
+// Returns the parsed response, raw response bytes, raw stdout bytes, stderr output, exit code, and any error.
 func (d *Dispatcher) spawnPlugin(
 	ctx context.Context,
 	pluginName string,
@@ -477,7 +501,7 @@ func (d *Dispatcher) spawnPlugin(
 	req *protocol.Request,
 	timeout time.Duration,
 	logger *slog.Logger,
-) (*protocol.Response, json.RawMessage, string, int, error) {
+) (*protocol.Response, json.RawMessage, []byte, string, int, error) {
 	// Create timer for timeout enforcement
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
@@ -488,7 +512,7 @@ func (d *Dispatcher) spawnPlugin(
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, "", 0, fmt.Errorf("create stdin pipe: %w", err)
+		return nil, nil, nil, "", 0, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
 	// Capture stdout and stderr
@@ -500,7 +524,7 @@ func (d *Dispatcher) spawnPlugin(
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		return nil, nil, "", 0, fmt.Errorf("start process: %w", err)
+		return nil, nil, nil, "", 0, fmt.Errorf("start process: %w", err)
 	}
 
 	d.events.Publish("plugin.spawned", map[string]any{
@@ -565,12 +589,13 @@ func (d *Dispatcher) spawnPlugin(
 		}
 
 		stderrStr := truncateStderr(stderr.String())
-		return nil, nil, stderrStr, 0, context.DeadlineExceeded
+		return nil, nil, stdout.Bytes(), stderrStr, 0, context.DeadlineExceeded
 
 	case err := <-waitErr:
 		// Process completed
 		werr := <-writeErr
 
+		stdoutBytes := stdout.Bytes()
 		stderrStr := truncateStderr(stderr.String())
 		exitCode := 0
 
@@ -580,19 +605,19 @@ func (d *Dispatcher) spawnPlugin(
 				exitCode = exitErr.ExitCode()
 				logger.Warn("plugin exited with non-zero status", "exit_code", exitCode)
 			} else {
-				return nil, nil, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
+				return nil, nil, stdoutBytes, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
 			}
 		}
 
 		// Decode response from stdout
-		resp, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdout.Bytes()))
+		resp, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdoutBytes))
 		if err != nil {
 			// If we also had a stdin write error, include it for diagnostics
 			if werr != nil {
 				logger.Warn("stdin write failed (process may not read stdin)", "error", werr)
 			}
 			logger.Error("failed to decode plugin response", "error", err, "stdout", string(rawBytes))
-			return nil, json.RawMessage(rawBytes), stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
+			return nil, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
 		}
 
 		// Log stdin write errors as warnings — some plugins don't read stdin
@@ -602,7 +627,7 @@ func (d *Dispatcher) spawnPlugin(
 			logger.Debug("stdin write error (ignored, valid response received)", "error", werr)
 		}
 
-		return resp, json.RawMessage(rawBytes), stderrStr, exitCode, nil
+		return resp, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, nil
 	}
 }
 

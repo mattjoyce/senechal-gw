@@ -19,6 +19,7 @@ type Config struct {
 	API             APIConfig             `yaml:"api,omitempty"`
 	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
 	Plugins         map[string]PluginConf `yaml:"plugins"`
+	Workspace       WorkspaceConfig        `yaml:"workspace,omitempty"`
 	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
 	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
@@ -48,6 +49,12 @@ type ServiceConfig struct {
 // StateConfig defines state storage settings.
 type StateConfig struct {
 	Path string `yaml:"path"`
+}
+
+// WorkspaceConfig defines workspace lifecycle settings.
+type WorkspaceConfig struct {
+	TTL             time.Duration `yaml:"ttl,omitempty"`
+	JanitorInterval time.Duration `yaml:"janitor_interval,omitempty"`
 }
 
 // APIConfig defines HTTP API server settings.
@@ -415,6 +422,9 @@ func Defaults() *Config {
 		API: APIConfig{
 			Enabled: false,
 			Listen:  "127.0.0.1:8080",
+		},
+		Workspace: WorkspaceConfig{
+			TTL: 7 * 24 * time.Hour,
 		},
 		Plugins: make(map[string]PluginConf),
 	}
