@@ -53,6 +53,10 @@ func New(db *sql.DB, opts ...Option) *Queue {
 	return q
 }
 
+func (q *Queue) GetDB() *sql.DB {
+	return q.db
+}
+
 // Depth returns the number of outstanding jobs (queued or running).
 // Used by /healthz for quick operational visibility.
 func (q *Queue) Depth(ctx context.Context) (int, error) {
@@ -66,6 +70,68 @@ WHERE status IN (?, ?);
 		return 0, fmt.Errorf("queue depth: %w", err)
 	}
 	return n, nil
+}
+
+// Metrics returns high-frequency state metrics for the queue.
+func (q *Queue) Metrics(ctx context.Context) (QueueMetrics, error) {
+	var m QueueMetrics
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Queue Depth (Queued)
+	err := q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM job_queue WHERE status = ?", StatusQueued).Scan(&m.QueueDepth)
+	if err != nil {
+		return m, fmt.Errorf("metrics depth: %w", err)
+	}
+
+	// Running Count
+	err = q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM job_queue WHERE status = ?", StatusRunning).Scan(&m.RunningCount)
+	if err != nil {
+		return m, fmt.Errorf("metrics running: %w", err)
+	}
+
+	// Delayed Count (Queued with next_retry_at > now)
+	err = q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM job_queue WHERE status = ? AND next_retry_at > ?", StatusQueued, now).Scan(&m.DelayedCount)
+	if err != nil {
+		return m, fmt.Errorf("metrics delayed: %w", err)
+	}
+
+	// Dead Count
+	err = q.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM job_queue WHERE status = ?", StatusDead).Scan(&m.DeadCount)
+	if err != nil {
+		return m, fmt.Errorf("metrics dead: %w", err)
+	}
+
+	// Active Jobs
+	rows, err := q.db.QueryContext(ctx, "SELECT id, plugin, command, started_at FROM job_queue WHERE status = ? ORDER BY started_at ASC", StatusRunning)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var aj ActiveJob
+			var startedAtS sql.NullString
+			if err := rows.Scan(&aj.JobID, &aj.Plugin, &aj.Command, &startedAtS); err == nil {
+				if startedAtS.Valid {
+					if t, err := time.Parse(time.RFC3339Nano, startedAtS.String); err == nil {
+						aj.StartedAt = t
+					}
+				}
+				m.ActiveJobs = append(m.ActiveJobs, aj)
+			}
+		}
+	}
+
+	// Plugin Lanes (Saturation)
+	rows, err = q.db.QueryContext(ctx, "SELECT plugin, COUNT(*) FROM job_queue WHERE status = ? GROUP BY plugin", StatusRunning)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var pl PluginLane
+			if err := rows.Scan(&pl.Plugin, &pl.ActiveCount); err == nil {
+				m.PluginLanes = append(m.PluginLanes, pl)
+			}
+		}
+	}
+
+	return m, nil
 }
 
 // CountOutstandingJobs returns queued+running jobs for a plugin command.
@@ -1124,15 +1190,15 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 func (q *Queue) GetJobTree(ctx context.Context, rootJobID string) ([]*JobResult, error) {
 	rows, err := q.db.QueryContext(ctx, `
 WITH RECURSIVE job_tree AS (
-    SELECT id, status, plugin, command, last_error, started_at, completed_at, attempt, event_context_id
+    SELECT id, parent_job_id, status, plugin, command, last_error, started_at, completed_at, attempt, event_context_id
     FROM job_queue WHERE id = ?
     UNION ALL
-    SELECT jq.id, jq.status, jq.plugin, jq.command, jq.last_error, jq.started_at, jq.completed_at, jq.attempt, jq.event_context_id
+    SELECT jq.id, jq.parent_job_id, jq.status, jq.plugin, jq.command, jq.last_error, jq.started_at, jq.completed_at, jq.attempt, jq.event_context_id
     FROM job_queue jq
     JOIN job_tree jt ON jq.parent_job_id = jt.id
 )
 SELECT
-  t.id, t.status, t.plugin, t.command, t.last_error, t.started_at, t.completed_at,
+  t.id, t.parent_job_id, t.status, t.plugin, t.command, t.last_error, t.started_at, t.completed_at,
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_tree t
@@ -1152,6 +1218,7 @@ LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 	for rows.Next() {
 		var (
 			id          string
+			parentID    sql.NullString
 			statusS     string
 			plugin      string
 			command     string
@@ -1161,13 +1228,18 @@ LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 			resultS     sql.NullString
 			stepID      string
 		)
-		if err := rows.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
+		if err := rows.Scan(&id, &parentID, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
 			return nil, fmt.Errorf("scan job tree row: %w", err)
 		}
 
 		var lastErr *string
 		if lastErrS.Valid {
 			lastErr = &lastErrS.String
+		}
+
+		var pID *string
+		if parentID.Valid {
+			pID = &parentID.String
 		}
 
 		var startedAt *time.Time
@@ -1191,6 +1263,7 @@ LEFT JOIN event_context ec ON ec.id = t.event_context_id;
 
 		results = append(results, &JobResult{
 			JobID:       id,
+			ParentJobID: pID,
 			Status:      Status(statusS),
 			Plugin:      plugin,
 			Command:     command,
@@ -1212,7 +1285,7 @@ func (q *Queue) GetJobByID(ctx context.Context, jobID string) (*JobResult, error
 
 	row := q.db.QueryRowContext(ctx, `
 SELECT
-  q.id, q.status, q.plugin, q.command, q.last_error, q.started_at, q.completed_at,
+  q.id, q.parent_job_id, q.status, q.plugin, q.command, q.last_error, q.started_at, q.completed_at,
   l.result,
   COALESCE(ec.step_id, '') AS step_id
 FROM job_queue q
@@ -1223,6 +1296,7 @@ WHERE q.id = ?;
 
 	var (
 		id          string
+		parentID    sql.NullString
 		statusS     string
 		plugin      string
 		command     string
@@ -1232,7 +1306,7 @@ WHERE q.id = ?;
 		resultS     sql.NullString
 		stepID      string
 	)
-	if err := row.Scan(&id, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
+	if err := row.Scan(&id, &parentID, &statusS, &plugin, &command, &lastErrS, &startedAtS, &completedAt, &resultS, &stepID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrJobNotFound
 		}
@@ -1242,6 +1316,11 @@ WHERE q.id = ?;
 	var lastErr *string
 	if lastErrS.Valid {
 		lastErr = &lastErrS.String
+	}
+
+	var pID *string
+	if parentID.Valid {
+		pID = &parentID.String
 	}
 
 	var startedAt *time.Time
@@ -1265,6 +1344,7 @@ WHERE q.id = ?;
 
 	return &JobResult{
 		JobID:       id,
+		ParentJobID: pID,
 		Status:      Status(statusS),
 		Plugin:      plugin,
 		Command:     command,

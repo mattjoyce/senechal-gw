@@ -159,6 +159,7 @@ func (e *DedupeDropError) Is(target error) bool {
 // JobResult is a lightweight projection for API job retrieval.
 type JobResult struct {
 	JobID       string
+	ParentJobID *string
 	Status      Status
 	Plugin      string
 	Command     string
@@ -179,4 +180,26 @@ type JobSummary struct {
 	StartedAt   *time.Time
 	CompletedAt *time.Time
 	Attempt     int
+}
+
+// QueueMetrics provides high-frequency state metrics for the queue.
+type QueueMetrics struct {
+	QueueDepth   int           `json:"queue_depth"`
+	RunningCount int           `json:"running_count"`
+	DelayedCount int           `json:"delayed_count"`
+	DeadCount    int           `json:"dead_count"`
+	ActiveJobs   []ActiveJob   `json:"active_jobs,omitempty"`
+	PluginLanes  []PluginLane  `json:"plugin_lanes,omitempty"`
+}
+
+type ActiveJob struct {
+	JobID     string    `json:"job_id"`
+	Plugin    string    `json:"plugin"`
+	Command   string    `json:"command"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+type PluginLane struct {
+	Plugin      string `json:"plugin"`
+	ActiveCount int    `json:"active_count"`
 }

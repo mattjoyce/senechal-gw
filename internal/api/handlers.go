@@ -719,6 +719,80 @@ func (s *Server) handleWellKnownPlugin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetJobTree handles GET /job/{jobID}/tree
+func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "jobID")
+
+	results, err := s.queue.GetJobTree(r.Context(), jobID)
+	if err != nil {
+		s.logger.Error("failed to retrieve job tree", "job_id", jobID, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to retrieve job tree")
+		return
+	}
+
+	resp := make([]JobResultData, 0, len(results))
+	for _, res := range results {
+		resp = append(resp, JobResultData{
+			JobID:       res.JobID,
+			ParentJobID: res.ParentJobID,
+			Plugin:      res.Plugin,
+			Command:     res.Command,
+			Status:      string(res.Status),
+			Result:      res.Result,
+			LastError:   res.LastError,
+			StartedAt:   res.StartedAt,
+			CompletedAt: res.CompletedAt,
+		})
+	}
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
+// handleAnalyticsSummary handles GET /analytics/summary
+func (s *Server) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
+	// Simple summary of job statuses in the last 24h
+	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	
+	rows, err := s.queue.(*queue.Queue).GetDB().QueryContext(r.Context(), `
+SELECT status, COUNT(*)
+FROM job_log
+WHERE completed_at >= ?
+GROUP BY status;
+`, cutoff)
+	if err != nil {
+		s.logger.Error("failed to query analytics summary", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to query analytics summary")
+		return
+	}
+	defer rows.Close()
+
+	summary := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err == nil {
+			summary[status] = count
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"window": "24h",
+		"stats":  summary,
+	})
+}
+
+// handleQueueMetrics handles GET /analytics/queue
+func (s *Server) handleQueueMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.queue.Metrics(r.Context())
+	if err != nil {
+		s.logger.Error("failed to retrieve queue metrics", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "failed to retrieve queue metrics")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, metrics)
+}
+
 // respondJSON is a helper to write JSON responses
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")

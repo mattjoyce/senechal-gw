@@ -32,20 +32,23 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 
 func ExtractBearerToken(r *http.Request) (string, error) {
 	auth := r.Header.Get("Authorization")
-	if auth == "" {
-		return "", errors.New("missing Authorization header")
+	if auth != "" {
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) {
+			return "", errors.New("invalid Authorization header format")
+		}
+		token := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
+		if token != "" {
+			return token, nil
+		}
 	}
 
-	const prefix = "Bearer "
-	if !strings.HasPrefix(auth, prefix) {
-		return "", errors.New("invalid Authorization header format")
+	// Fallback to query parameter for SSE/EventSource support
+	if qToken := r.URL.Query().Get("token"); qToken != "" {
+		return qToken, nil
 	}
 
-	token := strings.TrimSpace(strings.TrimPrefix(auth, prefix))
-	if token == "" {
-		return "", errors.New("missing API key")
-	}
-	return token, nil
+	return "", errors.New("missing Authorization header or token query parameter")
 }
 
 func constantTimeEqual(a, b string) bool {

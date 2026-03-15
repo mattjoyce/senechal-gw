@@ -81,6 +81,7 @@ type SyncResponse struct {
 // JobResultData represents a single job's result in a tree.
 type JobResultData struct {
 	JobID       string          `json:"job_id"`
+	ParentJobID *string         `json:"parent_job_id,omitempty"`
 	Plugin      string          `json:"plugin"`
 	Command     string          `json:"command"`
 	Status      string          `json:"status"`

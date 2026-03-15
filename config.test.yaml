@@ -30,9 +30,9 @@ plugins:
   # Echo plugin for basic testing
   echo:
     enabled: true
-    schedule:
-      every: 5m                # Minimum allowed interval
-      jitter: 10s
+    schedules:
+      - every: 5m                # Minimum allowed interval
+        jitter: 10s
     timeout: 30s
     max_attempts: 3
     circuit_breaker:
@@ -52,23 +52,23 @@ plugins:
 
   # Fabric plugin for text analysis (event-driven via routing)
   fabric:
-    enabled: true
+    enabled: false
     timeout: 120s
     max_attempts: 1
     config:
       FABRIC_DEFAULT_MODEL: "gpt-4"
 
 # Routes: event-driven plugin chaining for multi-plugin pipeline
-routes:
-  # Step 1: file.read → fabric (analyze text)
-  - from: file_handler
-    event_type: file.read
-    to: fabric
-
-  # Step 2: fabric.completed → file_handler (write report)
-  - from: fabric
-    event_type: fabric.completed
-    to: file_handler
+routes: []
+#  # Step 1: file.read → fabric (analyze text)
+#  - from: file_handler
+#    event_type: file.read
+#    to: fabric
+#
+#  # Step 2: fabric.completed → file_handler (write report)
+#  - from: fabric
+#    event_type: fabric.completed
+#    to: file_handler
 
 # Webhooks: HTTP listener endpoints (for testing webhooks)
 # webhooks:

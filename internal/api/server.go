@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/rs/cors"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
@@ -28,6 +29,7 @@ type JobQueuer interface {
 	ListJobs(ctx context.Context, filter queue.ListJobsFilter) ([]*queue.JobSummary, int, error)
 	ListJobLogs(ctx context.Context, filter queue.JobLogFilter) ([]*queue.JobLogEntry, int, error)
 	Depth(ctx context.Context) (int, error)
+	Metrics(ctx context.Context) (queue.QueueMetrics, error)
 }
 
 // TreeWaiter defines the interface for waiting on job tree completion
@@ -150,6 +152,16 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
 
+	// CORS
+	r.Use(cors.New(cors.Options{
+		AllowedOrigins:   []string{"*"}, // Be more restrictive in production if needed
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300, // Maximum value not ignored by any of major browsers
+	}).Handler)
+
 	// Routes
 	// Unauthenticated discovery endpoints.
 	r.Get("/", s.handleRoot)
@@ -167,10 +179,13 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}", s.handleGetJob)
+		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job/{jobID}/tree", s.handleGetJobTree)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
 		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
+		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
+		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 	})
 
