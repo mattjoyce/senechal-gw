@@ -16,17 +16,20 @@ import (
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
+	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 // Scheduler manages the scheduling and recovery of plugin jobs.
 type Scheduler struct {
-	cfg             *config.Config
-	queue           QueueService // Use the interface here
-	events          *events.Hub
-	logger          *slog.Logger
-	stopCh          chan struct{}
-	wg              sync.WaitGroup
-	supportsCommand func(pluginName, commandName string) bool
+	cfg              *config.Config
+	queue            QueueService // Use the interface here
+	events           *events.Hub
+	logger           *slog.Logger
+	stopCh           chan struct{}
+	wg               sync.WaitGroup
+	supportsCommand  func(pluginName, commandName string) bool
+	workspaceManager workspace.Manager
+	workspaceTTL     time.Duration
 }
 
 const (
@@ -45,6 +48,14 @@ type Option func(*Scheduler)
 func WithCommandSupportChecker(fn func(pluginName, commandName string) bool) Option {
 	return func(s *Scheduler) {
 		s.supportsCommand = fn
+	}
+}
+
+// WithWorkspaceJanitor enables automatic workspace cleanup on each scheduler tick.
+func WithWorkspaceJanitor(wm workspace.Manager, ttl time.Duration) Option {
+	return func(s *Scheduler) {
+		s.workspaceManager = wm
+		s.workspaceTTL = ttl
 	}
 }
 
@@ -151,6 +162,16 @@ func (s *Scheduler) tick(ctx context.Context) {
 	if s.cfg.Service.JobLogRetention > 0 {
 		if err := s.queue.PruneJobLogs(ctx, s.cfg.Service.JobLogRetention); err != nil {
 			s.logger.Error("Failed to prune job logs", "error", err)
+		}
+	}
+
+	// Janitor: clean up stale workspace directories
+	if s.workspaceManager != nil && s.workspaceTTL > 0 {
+		report, err := s.workspaceManager.Cleanup(ctx, s.workspaceTTL)
+		if err != nil {
+			s.logger.Error("workspace cleanup failed", "error", err)
+		} else if report.DeletedDirs > 0 {
+			s.logger.Info("workspace cleanup complete", "deleted_dirs", report.DeletedDirs)
 		}
 	}
 }

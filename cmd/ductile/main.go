@@ -84,6 +84,8 @@ func runCLI(cliArgs []string) int {
 		return runJobNoun(args)
 	case "plugin":
 		return runPluginNoun(args)
+	case "workspace":
+		return runWorkspaceNoun(args)
 	case "skills":
 		return runSystemSkills(args)
 	case "api":
@@ -1145,6 +1147,110 @@ func runSystemReload(actionArgs []string) int {
 	return 0
 }
 
+func runWorkspaceNoun(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: ductile workspace <verb>")
+		fmt.Fprintln(os.Stderr, "  migrate    Migrate flat workspace dirs to sharded layout")
+		return 1
+	}
+	switch args[0] {
+	case "migrate":
+		return runWorkspaceMigrate(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown workspace verb %q\n", args[0])
+		return 1
+	}
+}
+
+func runWorkspaceMigrate(args []string) int {
+	fs := flag.NewFlagSet("workspace migrate", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	dryRun := fs.Bool("dry-run", false, "Print moves without executing")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	if *configPath == "" {
+		*configPath = os.Getenv("DUCTILE_CONFIG")
+	}
+	if *configPath == "" {
+		fmt.Fprintln(os.Stderr, "error: --config is required")
+		return 1
+	}
+
+	cfg, err := loadConfigForTool(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+		return 1
+	}
+
+	wsBaseDir := filepath.Join(filepath.Dir(cfg.State.Path), "workspaces")
+
+	entries, err := os.ReadDir(wsBaseDir)
+	if os.IsNotExist(err) {
+		_, _ = fmt.Fprintln(os.Stdout, "workspace directory does not exist; nothing to migrate")
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading workspace dir: %v\n", err)
+		return 1
+	}
+
+	moved := 0
+	skipped := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Skip entries that look like shard dirs (exactly 2 hex-ish chars).
+		if len(name) == 2 {
+			skipped++
+			continue
+		}
+		if len(name) < 2 {
+			fmt.Fprintf(os.Stderr, "skipping entry %q (name too short)\n", name)
+			skipped++
+			continue
+		}
+
+		shard := name[:2]
+		src := filepath.Join(wsBaseDir, name)
+		shardDir := filepath.Join(wsBaseDir, shard)
+		dst := filepath.Join(shardDir, name)
+
+		if _, err := os.Stat(dst); err == nil {
+			// Destination already exists — already migrated.
+			skipped++
+			continue
+		}
+
+		if *dryRun {
+			fmt.Printf("would move: %s -> %s\n", src, dst)
+			moved++
+			continue
+		}
+
+		if err := os.MkdirAll(shardDir, 0o700); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating shard dir %q: %v\n", shardDir, err)
+			return 1
+		}
+		if err := os.Rename(src, dst); err != nil {
+			fmt.Fprintf(os.Stderr, "error moving %q -> %q: %v\n", src, dst, err)
+			return 1
+		}
+		fmt.Printf("moved: %s -> %s\n", src, dst)
+		moved++
+	}
+
+	if *dryRun {
+		fmt.Printf("dry-run: would move %d directories (%d already skipped)\n", moved, skipped)
+	} else {
+		fmt.Printf("migration complete: moved %d directories (%d skipped)\n", moved, skipped)
+	}
+	return 0
+}
+
 func runSystemSkills(args []string) int {
 	fs := flag.NewFlagSet("skills", flag.ContinueOnError)
 	configPath := fs.String("config", "", "Path to configuration file or directory")
@@ -1969,13 +2075,16 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 
 	rt.ctx, rt.cancel = context.WithCancel(context.Background())
 
-	sched := scheduler.New(cfg, q, hub, logger, scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
-		plug, ok := registry.Get(pluginName)
-		if !ok {
-			return false
-		}
-		return plug.SupportsCommand(commandName)
-	}))
+	sched := scheduler.New(cfg, q, hub, logger,
+		scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
+			plug, ok := registry.Get(pluginName)
+			if !ok {
+				return false
+			}
+			return plug.SupportsCommand(commandName)
+		}),
+		scheduler.WithWorkspaceJanitor(wsManager, cfg.Workspace.TTL),
+	)
 	rt.scheduler = sched
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 	rt.dispatcher = disp

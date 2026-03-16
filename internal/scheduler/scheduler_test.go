@@ -2,13 +2,17 @@ package scheduler
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 // TestLogBuffer is a bytes.Buffer that can be used to capture log output.
@@ -124,4 +128,98 @@ func TestScheduleConstraintsAllowAt(t *testing.T) {
 
 	_, _, err = scheduleConstraintsAllowAt(config.ScheduleConfig{Timezone: "Mars/Phobos"}, now)
 	assert.Error(t, err)
+}
+
+// stubWorkspaceManager is a minimal workspace.Manager that records Cleanup calls.
+type stubWorkspaceManager struct {
+	cleanupCalls atomic.Int32
+	cleanupTTL   atomic.Value // stores time.Duration
+}
+
+func (m *stubWorkspaceManager) Create(_ context.Context, _ string) (workspace.Workspace, error) {
+	return workspace.Workspace{}, nil
+}
+func (m *stubWorkspaceManager) Clone(_ context.Context, _, _ string) (workspace.Workspace, error) {
+	return workspace.Workspace{}, nil
+}
+func (m *stubWorkspaceManager) Open(_ context.Context, _ string) (workspace.Workspace, error) {
+	return workspace.Workspace{}, nil
+}
+func (m *stubWorkspaceManager) Cleanup(_ context.Context, olderThan time.Duration) (workspace.CleanupReport, error) {
+	m.cleanupCalls.Add(1)
+	m.cleanupTTL.Store(olderThan)
+	return workspace.CleanupReport{}, nil
+}
+
+// stubQueueService satisfies QueueService with minimal no-op implementations.
+type stubQueueService struct{}
+
+func (s *stubQueueService) Enqueue(_ context.Context, _ queue.EnqueueRequest) (string, error) {
+	return "", nil
+}
+func (s *stubQueueService) CountOutstandingJobs(_ context.Context, _, _ string) (int, error) {
+	return 0, nil
+}
+func (s *stubQueueService) CancelOutstandingJobs(_ context.Context, _, _, _ string) (int, error) {
+	return 0, nil
+}
+func (s *stubQueueService) LatestCompletedCommandResult(_ context.Context, _, _, _ string) (*queue.CommandResult, error) {
+	return nil, nil
+}
+func (s *stubQueueService) GetCircuitBreaker(_ context.Context, _, _ string) (*queue.CircuitBreaker, error) {
+	return nil, nil
+}
+func (s *stubQueueService) UpsertCircuitBreaker(_ context.Context, _ queue.CircuitBreaker) error {
+	return nil
+}
+func (s *stubQueueService) ResetCircuitBreaker(_ context.Context, _, _ string) error { return nil }
+func (s *stubQueueService) GetScheduleEntryState(_ context.Context, _, _ string) (*queue.ScheduleEntryState, error) {
+	return nil, nil
+}
+func (s *stubQueueService) UpsertScheduleEntryState(_ context.Context, _ queue.ScheduleEntryState) error {
+	return nil
+}
+func (s *stubQueueService) FindJobsByStatus(_ context.Context, _ queue.Status) ([]*queue.Job, error) {
+	return nil, nil
+}
+func (s *stubQueueService) UpdateJobForRecovery(_ context.Context, _ string, _ queue.Status, _ int, _ *time.Time, _ string) error {
+	return nil
+}
+func (s *stubQueueService) PruneJobLogs(_ context.Context, _ time.Duration) error { return nil }
+
+func TestSchedulerJanitorCalledOnTick(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	cfg.Plugins = map[string]config.PluginConf{} // no scheduled plugins
+
+	wm := &stubWorkspaceManager{}
+	ttl := 48 * time.Hour
+
+	sched := New(cfg, &stubQueueService{}, nil, logger,
+		WithWorkspaceJanitor(wm, ttl),
+	)
+
+	ctx := context.Background()
+	sched.tick(ctx)
+
+	if wm.cleanupCalls.Load() != 1 {
+		t.Fatalf("Cleanup() call count = %d, want 1", wm.cleanupCalls.Load())
+	}
+	got, _ := wm.cleanupTTL.Load().(time.Duration)
+	if got != ttl {
+		t.Errorf("Cleanup() TTL = %v, want %v", got, ttl)
+	}
+}
+
+func TestSchedulerJanitorNotCalledWhenNotConfigured(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	cfg.Plugins = map[string]config.PluginConf{}
+
+	sched := New(cfg, &stubQueueService{}, nil, logger)
+	// No WithWorkspaceJanitor — workspaceManager is nil.
+
+	ctx := context.Background()
+	sched.tick(ctx)
+	// Just verify no panic; no Cleanup to assert.
 }

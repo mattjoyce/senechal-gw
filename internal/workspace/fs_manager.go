@@ -42,7 +42,7 @@ func (m *fsWorkspaceManager) Create(ctx context.Context, jobID string) (Workspac
 		return Workspace{}, err
 	}
 
-	if err := os.MkdirAll(m.baseDir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return Workspace{}, fmt.Errorf("create workspace base directory: %w", err)
 	}
 
@@ -110,7 +110,8 @@ func (m *fsWorkspaceManager) Open(ctx context.Context, jobID string) (Workspace,
 }
 
 // Cleanup removes workspace directories older than olderThan based on directory
-// modification time.
+// modification time. It walks the two-level sharded layout (baseDir/shard/jobID)
+// and prunes empty shard directories after removing job directories.
 func (m *fsWorkspaceManager) Cleanup(ctx context.Context, olderThan time.Duration) (CleanupReport, error) {
 	if err := ctx.Err(); err != nil {
 		return CleanupReport{}, err
@@ -119,7 +120,7 @@ func (m *fsWorkspaceManager) Cleanup(ctx context.Context, olderThan time.Duratio
 		return CleanupReport{}, fmt.Errorf("olderThan must be positive")
 	}
 
-	entries, err := os.ReadDir(m.baseDir)
+	shards, err := os.ReadDir(m.baseDir)
 	if os.IsNotExist(err) {
 		return CleanupReport{}, nil
 	}
@@ -130,27 +131,46 @@ func (m *fsWorkspaceManager) Cleanup(ctx context.Context, olderThan time.Duratio
 	cutoff := m.now().Add(-olderThan)
 	report := CleanupReport{}
 
-	for _, entry := range entries {
+	for _, shardEntry := range shards {
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		if !entry.IsDir() {
+		if !shardEntry.IsDir() {
 			continue
 		}
 
-		info, err := entry.Info()
+		shardPath := filepath.Join(m.baseDir, shardEntry.Name())
+		jobEntries, err := os.ReadDir(shardPath)
 		if err != nil {
-			return report, fmt.Errorf("read workspace entry info %q: %w", entry.Name(), err)
-		}
-		if info.ModTime().After(cutoff) {
-			continue
+			return report, fmt.Errorf("read shard directory %q: %w", shardEntry.Name(), err)
 		}
 
-		path := filepath.Join(m.baseDir, entry.Name())
-		if err := os.RemoveAll(path); err != nil {
-			return report, fmt.Errorf("remove workspace %q: %w", entry.Name(), err)
+		for _, jobEntry := range jobEntries {
+			if err := ctx.Err(); err != nil {
+				return report, err
+			}
+			if !jobEntry.IsDir() {
+				continue
+			}
+
+			info, err := jobEntry.Info()
+			if err != nil {
+				return report, fmt.Errorf("read workspace entry info %q: %w", jobEntry.Name(), err)
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+
+			jobPath := filepath.Join(shardPath, jobEntry.Name())
+			if err := os.RemoveAll(jobPath); err != nil {
+				return report, fmt.Errorf("remove workspace %q: %w", jobEntry.Name(), err)
+			}
+			report.DeletedDirs++
 		}
-		report.DeletedDirs++
+
+		// Attempt to remove the shard directory if it is now empty; ignore errors
+		// (the directory may still contain recently-created job dirs).
+		_ = os.Remove(shardPath)
 	}
 
 	return report, nil
@@ -160,7 +180,8 @@ func (m *fsWorkspaceManager) workspacePath(jobID string) (string, error) {
 	if err := validateJobID(jobID); err != nil {
 		return "", err
 	}
-	return filepath.Join(m.baseDir, jobID), nil
+	shard := jobID[:2]
+	return filepath.Join(m.baseDir, shard, jobID), nil
 }
 
 func (m *fsWorkspaceManager) cloneTreeWithHardLinks(ctx context.Context, srcDir, dstDir string) error {
@@ -232,6 +253,9 @@ func validateJobID(jobID string) error {
 	trimmed := strings.TrimSpace(jobID)
 	if trimmed == "" {
 		return fmt.Errorf("jobID is empty")
+	}
+	if len(trimmed) < 2 {
+		return fmt.Errorf("jobID %q is too short (minimum 2 characters)", jobID)
 	}
 	if trimmed == "." || trimmed == ".." {
 		return fmt.Errorf("jobID %q is invalid", jobID)
