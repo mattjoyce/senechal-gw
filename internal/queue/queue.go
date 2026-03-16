@@ -104,7 +104,7 @@ func (q *Queue) Metrics(ctx context.Context) (QueueMetrics, error) {
 	// Active Jobs
 	rows, err := q.db.QueryContext(ctx, "SELECT id, plugin, command, started_at FROM job_queue WHERE status = ? ORDER BY started_at ASC", StatusRunning)
 	if err == nil {
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var aj ActiveJob
 			var startedAtS sql.NullString
@@ -122,7 +122,7 @@ func (q *Queue) Metrics(ctx context.Context) (QueueMetrics, error) {
 	// Plugin Lanes (Saturation)
 	rows, err = q.db.QueryContext(ctx, "SELECT plugin, COUNT(*) FROM job_queue WHERE status = ? GROUP BY plugin", StatusRunning)
 	if err == nil {
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var pl PluginLane
 			if err := rows.Scan(&pl.Plugin, &pl.ActiveCount); err == nil {

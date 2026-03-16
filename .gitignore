@@ -46,6 +46,10 @@ go.work.sum
 # Beads local database
 .beads/
 
+# Fixture state
+test/fixtures/docker/**/state/
+test/fixtures/docker/**/config/state/
+
 # OS
 .DS_Store
 Thumbs.db

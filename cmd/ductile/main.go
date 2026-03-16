@@ -998,7 +998,7 @@ func runWorkspaceMigrate(args []string) int {
 
 	entries, err := os.ReadDir(wsBaseDir)
 	if os.IsNotExist(err) {
-		fmt.Fprintln(os.Stdout, "workspace directory does not exist; nothing to migrate")
+		_, _ = fmt.Fprintln(os.Stdout, "workspace directory does not exist; nothing to migrate")
 		return 0
 	}
 	if err != nil {
