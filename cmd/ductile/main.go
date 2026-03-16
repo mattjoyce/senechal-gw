@@ -897,7 +897,7 @@ func runAPINoun(args []string) int {
 		fmt.Fprintf(os.Stderr, "Request failed: %v\n", err)
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

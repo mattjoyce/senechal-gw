@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="${1:-all}"
 
+echo "==> test-docker: building ductile binary"
+(cd "$ROOT_DIR" && go build -o ductile ./cmd/ductile)
+
 if [[ -x "$ROOT_DIR/scripts/test-docker-runner" ]]; then
   exec "$ROOT_DIR/scripts/test-docker-runner" "$FIXTURE"
 fi

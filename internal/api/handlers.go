@@ -764,7 +764,7 @@ GROUP BY status;
 		s.writeError(w, http.StatusInternalServerError, "failed to query analytics summary")
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	summary := make(map[string]int)
 	for rows.Next() {
