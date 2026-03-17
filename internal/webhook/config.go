@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -53,6 +54,7 @@ func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Conf
 // parseMaxBodySize parses size strings like "1MB", "2048576", "1048576" to bytes.
 // Returns DefaultMaxBodySize if empty.
 func parseMaxBodySize(size string) (int64, error) {
+	size = strings.TrimSpace(size)
 	if size == "" {
 		return DefaultMaxBodySize, nil
 	}
@@ -82,8 +84,13 @@ func parseMaxBodySize(size string) (int64, error) {
 		return 0, fmt.Errorf("size must be positive")
 	}
 
+	// Check for overflow before multiplication
+	if multiplier > 1 && value > (math.MaxInt64/multiplier) {
+		return 0, fmt.Errorf("size too large")
+	}
+
 	result := value * multiplier
-	if result < 0 { // Check for overflow
+	if result < 0 { // Secondary overflow check
 		return 0, fmt.Errorf("size too large")
 	}
 
