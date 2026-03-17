@@ -125,7 +125,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 	})
 
 	// Sort plugin names for deterministic iteration (critical for testing)
-	var pluginNames []string
+	pluginNames := make([]string, 0, len(s.cfg.Plugins))
 	for name := range s.cfg.Plugins {
 		pluginNames = append(pluginNames, name)
 	}
@@ -158,7 +158,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 func (s *Scheduler) runStartupCatchUp(ctx context.Context) error {
 	now := time.Now().UTC()
 
-	var pluginNames []string
+	pluginNames := make([]string, 0, len(s.cfg.Plugins))
 	for name := range s.cfg.Plugins {
 		pluginNames = append(pluginNames, name)
 	}
