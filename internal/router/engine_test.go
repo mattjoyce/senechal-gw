@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
@@ -97,5 +98,86 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	}
 	if out[0].Plugin != "plugin-c" || out[0].StepID != "step_c" {
 		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+}
+
+func TestCloneEvent(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		ev   protocol.Event
+	}{
+		{
+			name: "full event",
+			ev: protocol.Event{
+				Type:      "test.event",
+				DedupeKey: "key-1",
+				Source:    "plugin-1",
+				Timestamp: now,
+				EventID:   "evt-123",
+				Payload:   map[string]any{"foo": "bar", "num": 42},
+			},
+		},
+		{
+			name: "nil payload",
+			ev: protocol.Event{
+				Type:      "test.event",
+				Timestamp: now,
+			},
+		},
+		{
+			name: "empty payload",
+			ev: protocol.Event{
+				Type:      "test.event",
+				Timestamp: now,
+				Payload:   map[string]any{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cloned := cloneEvent(tt.ev)
+
+			if cloned.Type != tt.ev.Type {
+				t.Errorf("Type mismatch: got %q, want %q", cloned.Type, tt.ev.Type)
+			}
+			if cloned.DedupeKey != tt.ev.DedupeKey {
+				t.Errorf("DedupeKey mismatch: got %q, want %q", cloned.DedupeKey, tt.ev.DedupeKey)
+			}
+			if cloned.Source != tt.ev.Source {
+				t.Errorf("Source mismatch: got %q, want %q", cloned.Source, tt.ev.Source)
+			}
+			if !cloned.Timestamp.Equal(tt.ev.Timestamp) {
+				t.Errorf("Timestamp mismatch: got %v, want %v", cloned.Timestamp, tt.ev.Timestamp)
+			}
+			if cloned.EventID != tt.ev.EventID {
+				t.Errorf("EventID mismatch: got %q, want %q", cloned.EventID, tt.ev.EventID)
+			}
+
+			if tt.ev.Payload == nil {
+				if cloned.Payload != nil {
+					t.Error("Payload should be nil")
+				}
+			} else {
+				if cloned.Payload == nil {
+					t.Fatal("Payload should not be nil")
+				}
+				if len(cloned.Payload) != len(tt.ev.Payload) {
+					t.Errorf("Payload length mismatch: got %d, want %d", len(cloned.Payload), len(tt.ev.Payload))
+				}
+				for k, v := range tt.ev.Payload {
+					if cloned.Payload[k] != v {
+						t.Errorf("Payload key %q mismatch: got %v, want %v", k, cloned.Payload[k], v)
+					}
+				}
+
+				// Verify it's a new map
+				cloned.Payload["new_key"] = "new_val"
+				if _, ok := tt.ev.Payload["new_key"]; ok {
+					t.Error("Modifying cloned payload affected original payload")
+				}
+			}
+		})
 	}
 }
