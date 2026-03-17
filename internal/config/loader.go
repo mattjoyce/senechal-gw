@@ -50,7 +50,10 @@ func Load(configPath string) (*Config, error) {
 
 	// Add root node to SourceFiles (manually since loadConfigFile returns a partial Config)
 	// #nosec G304 -- config paths are operator-controlled local inputs.
-	rootData, _ := os.ReadFile(absPath)
+	rootData, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file for source mapping: %w", err)
+	}
 	var rootNode yaml.Node
 	if err := yaml.Unmarshal(rootData, &rootNode); err == nil {
 		cfg.SourceFiles[absPath] = &rootNode
@@ -251,7 +254,10 @@ func loadIncludeFile(cfg *Config, includeIndex int, includePath string, absPath 
 
 	// Load included file
 	// #nosec G304 -- config include paths are operator-controlled local inputs.
-	includedData, _ := os.ReadFile(absPath)
+	includedData, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Errorf("failed to read include file %q: %w", absPath, err)
+	}
 	var includedNode yaml.Node
 	if err := yaml.Unmarshal(includedData, &includedNode); err == nil {
 		cfg.SourceFiles[absPath] = &includedNode
