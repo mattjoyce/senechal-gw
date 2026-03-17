@@ -110,7 +110,7 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 }
 
 func ensureColumnExists(ctx context.Context, db *sql.DB, table, column, columnDef string) error {
-	cols, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s);", table))
+	cols, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s);", quoteIdentifier(table)))
 	if err != nil {
 		return fmt.Errorf("bootstrap sqlite: inspect %s columns: %w", table, err)
 	}
@@ -142,11 +142,15 @@ func ensureColumnExists(ctx context.Context, db *sql.DB, table, column, columnDe
 		return nil
 	}
 
-	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", table, column, columnDef)
+	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", quoteIdentifier(table), quoteIdentifier(column), columnDef)
 	if _, err := db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("bootstrap sqlite: add %s.%s column: %w", table, column, err)
 	}
 	return nil
+}
+
+func quoteIdentifier(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 func ensureIndexExists(ctx context.Context, db *sql.DB, name, stmt string) error {
