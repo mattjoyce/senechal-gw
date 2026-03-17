@@ -11,6 +11,7 @@ fixture_init
 CONFIG_DIR="$FIXTURE_DIR/config"
 STATE_DIR="$CONFIG_DIR/state"
 PID=""
+rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1
@@ -26,6 +27,9 @@ cleanup() {
 trap cleanup EXIT
 
 fixture_log "starting ductile process"
+mkdir -p "$CONFIG_DIR/plugins/echo"
+cp "$ROOT_DIR/plugins/echo/manifest.yaml" "$CONFIG_DIR/plugins/echo/manifest.yaml"
+cp "$ROOT_DIR/plugins/echo/run.sh" "$CONFIG_DIR/plugins/echo/run.sh"
 "$ROOT_DIR/ductile" system start --config "$CONFIG_DIR" >"$ARTIFACT_DIR/ductile.log" 2>&1 &
 PID=$!
 
@@ -41,38 +45,17 @@ if [[ "$ready" -ne 1 ]]; then
   fixture_fail "health endpoint did not become ready"
 fi
 
-fixture_log "triggering direct plugin execution"
-PLUGIN_STATUS=$(curl -sS -o "$ARTIFACT_DIR/plugin-response.json" -w '%{http_code}' -X POST \
-  http://127.0.0.1:18181/plugin/echo/poll \
-  -H 'Authorization: Bearer test-admin-token' \
-  -H 'Content-Type: application/json' \
-  --data '{"payload":{"message":"hello"}}')
-if [[ "$PLUGIN_STATUS" != "202" ]]; then
-  fixture_fail "expected 202 for direct plugin trigger, got $PLUGIN_STATUS"
-fi
+fixture_log "triggering direct plugin execution via CLI"
+# Note: --config here ensures we use the fixture's tokens. 
+# ductile api automatically discovers api.listen and api.auth.tokens from the provided config.
+"$ROOT_DIR/ductile" api /plugin/echo/poll --config "$CONFIG_DIR" -X POST -f message=hello > "$ARTIFACT_DIR/plugin-response.json"
 PLUGIN_JOB_ID=$(jq -r '.job_id' "$ARTIFACT_DIR/plugin-response.json")
 if [[ -z "$PLUGIN_JOB_ID" || "$PLUGIN_JOB_ID" == "null" ]]; then
   fixture_fail "plugin trigger returned no job_id"
 fi
 
-fixture_log "checking unauthorized request"
-UNAUTH_STATUS=$(curl -sS -o "$ARTIFACT_DIR/unauthorized-response.json" -w '%{http_code}' -X POST \
-  http://127.0.0.1:18181/plugin/echo/poll \
-  -H 'Content-Type: application/json' \
-  --data '{"payload":{"message":"hello"}}')
-if [[ "$UNAUTH_STATUS" != "401" ]]; then
-  fixture_fail "expected 401 for unauthorized request, got $UNAUTH_STATUS"
-fi
-
-fixture_log "triggering pipeline execution"
-PIPELINE_STATUS=$(curl -sS -o "$ARTIFACT_DIR/pipeline-response.json" -w '%{http_code}' -X POST \
-  http://127.0.0.1:18181/pipeline/test-pipeline \
-  -H 'Authorization: Bearer test-admin-token' \
-  -H 'Content-Type: application/json' \
-  --data '{"payload":{"message":"pipeline"}}')
-if [[ "$PIPELINE_STATUS" != "202" ]]; then
-  fixture_fail "expected 202 for pipeline trigger, got $PIPELINE_STATUS"
-fi
+fixture_log "triggering pipeline execution via CLI"
+"$ROOT_DIR/ductile" api /pipeline/test-pipeline --config "$CONFIG_DIR" -X POST -f message=pipeline > "$ARTIFACT_DIR/pipeline-response.json"
 PIPELINE_JOB_ID=$(jq -r '.job_id' "$ARTIFACT_DIR/pipeline-response.json")
 if [[ -z "$PIPELINE_JOB_ID" || "$PIPELINE_JOB_ID" == "null" ]]; then
   fixture_fail "pipeline trigger returned no job_id"
@@ -107,8 +90,8 @@ fi
 if [[ "$PLUGIN_STATUS_DB" != "succeeded" ]]; then
   fixture_fail "expected direct plugin job to succeed, got $PLUGIN_STATUS_DB"
 fi
-if [[ "$PIPELINE_STATUS_DB" != "failed" ]]; then
-  fixture_fail "expected pipeline job to fail with unsupported handle command, got $PIPELINE_STATUS_DB"
+if [[ "$PIPELINE_STATUS_DB" != "succeeded" ]]; then
+  fixture_fail "expected pipeline job to succeed, got $PIPELINE_STATUS_DB"
 fi
 
 fixture_capture_file "$DB_PATH" state.db

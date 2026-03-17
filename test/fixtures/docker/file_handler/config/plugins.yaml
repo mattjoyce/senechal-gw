@@ -1,0 +1,6 @@
+plugins:
+  file_handler:
+    enabled: true
+    config:
+      allowed_read_paths: "/tmp/ductile-test-fh"
+      allowed_write_paths: "/tmp/ductile-test-fh"

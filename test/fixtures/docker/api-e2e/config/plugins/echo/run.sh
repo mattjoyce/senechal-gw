@@ -86,7 +86,7 @@ emit_response() {
         --arg ts "$timestamp" \
         --arg msg "$message" \
         --arg job "$job_id" \
-        '{status:"ok", result:($msg + " at " + $ts), events:[], state_updates:{last_run:$ts, job_id:$job}, logs:[{level:"info", message:($msg + " at " + $ts)}] }'
+        '{status:"ok", result:($msg + " at " + $ts), events:[], logs:[{level:"info", message:($msg + " at " + $ts)}] }'
       return 0
     fi
 
@@ -109,7 +109,6 @@ if status == "ok":
     "status": "ok",
     "result": f"{msg} at {ts}",
     "events": [],
-    "state_updates": {"last_run": ts, "job_id": job},
     "logs": [{"level": "info", "message": f"{msg} at {ts}"}],
   }
 else:
@@ -130,8 +129,8 @@ PY
   local esc_err="${err//\\/\\\\}"
   esc_err="${esc_err//\"/\\\"}"
   if [[ "$status" == "ok" ]]; then
-    printf '{"status":"ok","result":"%s at %s","events":[],"state_updates":{"last_run":"%s","job_id":"%s"},"logs":[{"level":"info","message":"%s at %s"}]}\n' \
-      "$esc_msg" "$timestamp" "$timestamp" "$job_id" "$esc_msg" "$timestamp"
+    printf '{"status":"ok","result":"%s at %s","events":[],"logs":[{"level":"info","message":"%s at %s"}]}\n' \
+      "$esc_msg" "$timestamp" "$esc_msg" "$timestamp"
   else
     printf '{"status":"error","error":"%s","retry":false,"logs":[{"level":"error","message":"%s"}]}\n' \
       "$esc_err" "$esc_err"
@@ -143,13 +142,13 @@ case "$mode" in
     sleep 999
     ;;
   protocol_error)
-    printf '{"status": "ok", "state_updates": {"last_run": "%s"}' "$timestamp"
+    printf '{"status": "ok", "logs": [{"level": "info", "message": "protocol_error mode"}]'
     exit 0
     ;;
 esac
 
 case "$command_val" in
-  poll|health)
+  poll|health|handle)
     if [[ "$mode" == "error" ]]; then
       emit_response "error" "echo plugin forced error (mode=error)"
       exit 0

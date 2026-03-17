@@ -1,0 +1,6 @@
+pipelines:
+  - name: watch-pipeline
+    on: file.found
+    steps:
+      - id: notify
+        uses: echo

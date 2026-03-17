@@ -6,6 +6,9 @@ protocol: 2
 entrypoint: run.sh
 description: "A demonstration plugin that echoes input, emits events, and demonstrates protocol v2 state merging."
 commands:
+  - name: handle
+    type: write
+    description: "Echoes the input payload and emits an echo.event."
   - name: poll
     type: write
     description: "Emits echo.poll events and updates the internal last_run timestamp."
@@ -15,7 +18,6 @@ commands:
       message: string
     output_schema:
       status: string
-      last_run: string
   - name: health
     type: read
     description: "Returns the current health status and plugin version."

@@ -1,0 +1,5 @@
+plugins:
+  sys_exec:
+    enabled: true
+    config:
+      command: ["sh", "-c", "echo $DUCTILE_PAYLOAD_MESSAGE > output.txt"]
