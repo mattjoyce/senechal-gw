@@ -142,7 +142,12 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			if stepID == "" {
 				stepID = pipeline.EntryStepID
 			}
-			root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, stepID, json.RawMessage(`{}`))
+			triggerPayload, err := json.Marshal(event.Payload)
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "failed to marshal trigger payload")
+				return
+			}
+			root, err := s.contextStore.Create(r.Context(), nil, pipeline.Name, stepID, json.RawMessage(triggerPayload))
 			if err != nil {
 				s.logger.Error("failed to create event context for pipeline entry", "pipeline", pipeline.Name, "step_id", stepID, "error", err)
 				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
