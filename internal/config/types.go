@@ -424,7 +424,8 @@ func Defaults() *Config {
 			Listen:  "127.0.0.1:8080",
 		},
 		Workspace: WorkspaceConfig{
-			TTL: 7 * 24 * time.Hour,
+			TTL:             7 * 24 * time.Hour,
+			JanitorInterval: 1 * time.Hour,
 		},
 		Plugins: make(map[string]PluginConf),
 	}

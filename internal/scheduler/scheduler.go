@@ -30,6 +30,8 @@ type Scheduler struct {
 	supportsCommand  func(pluginName, commandName string) bool
 	workspaceManager workspace.Manager
 	workspaceTTL     time.Duration
+	janitorInterval  time.Duration
+	tickCount        uint64
 }
 
 const (
@@ -51,11 +53,14 @@ func WithCommandSupportChecker(fn func(pluginName, commandName string) bool) Opt
 	}
 }
 
-// WithWorkspaceJanitor enables automatic workspace cleanup on each scheduler tick.
-func WithWorkspaceJanitor(wm workspace.Manager, ttl time.Duration) Option {
+// WithWorkspaceJanitor enables automatic workspace cleanup on a sub-tick interval.
+// janitorInterval controls how often cleanup runs relative to the scheduler tick;
+// it is rounded down to the nearest whole number of ticks (minimum 1).
+func WithWorkspaceJanitor(wm workspace.Manager, ttl, janitorInterval time.Duration) Option {
 	return func(s *Scheduler) {
 		s.workspaceManager = wm
 		s.workspaceTTL = ttl
+		s.janitorInterval = janitorInterval
 	}
 }
 
@@ -130,6 +135,8 @@ func (s *Scheduler) tickLoop(ctx context.Context) {
 
 // tick performs a single scheduling pass.
 func (s *Scheduler) tick(ctx context.Context) {
+	current := s.tickCount
+	s.tickCount++
 	s.logger.Debug("Scheduler tick")
 	s.events.Publish("scheduler.tick", map[string]any{
 		"at": time.Now().UTC(),
@@ -165,13 +172,21 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 	}
 
-	// Janitor: clean up stale workspace directories
+	// Janitor: clean up stale workspace directories at the configured interval.
 	if s.workspaceManager != nil && s.workspaceTTL > 0 {
-		report, err := s.workspaceManager.Cleanup(ctx, s.workspaceTTL)
-		if err != nil {
-			s.logger.Error("workspace cleanup failed", "error", err)
-		} else if report.DeletedDirs > 0 {
-			s.logger.Info("workspace cleanup complete", "deleted_dirs", report.DeletedDirs)
+		period := uint64(1)
+		if s.janitorInterval > 0 && s.cfg.Service.TickInterval > 0 {
+			if p := uint64(s.janitorInterval / s.cfg.Service.TickInterval); p > 1 {
+				period = p
+			}
+		}
+		if current%period == 0 {
+			report, err := s.workspaceManager.Cleanup(ctx, s.workspaceTTL)
+			if err != nil {
+				s.logger.Error("workspace cleanup failed", "error", err)
+			} else if report.DeletedDirs > 0 {
+				s.logger.Info("workspace cleanup complete", "deleted_dirs", report.DeletedDirs)
+			}
 		}
 	}
 }

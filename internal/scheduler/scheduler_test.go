@@ -194,13 +194,15 @@ func TestSchedulerJanitorCalledOnTick(t *testing.T) {
 
 	wm := &stubWorkspaceManager{}
 	ttl := 48 * time.Hour
+	// janitorInterval = 1 tick (equal to tick_interval) → runs every tick
+	janitorInterval := cfg.Service.TickInterval
 
 	sched := New(cfg, &stubQueueService{}, nil, logger,
-		WithWorkspaceJanitor(wm, ttl),
+		WithWorkspaceJanitor(wm, ttl, janitorInterval),
 	)
 
 	ctx := context.Background()
-	sched.tick(ctx)
+	sched.tick(ctx) // tick 0 → should run
 
 	if wm.cleanupCalls.Load() != 1 {
 		t.Fatalf("Cleanup() call count = %d, want 1", wm.cleanupCalls.Load())
@@ -208,6 +210,31 @@ func TestSchedulerJanitorCalledOnTick(t *testing.T) {
 	got, _ := wm.cleanupTTL.Load().(time.Duration)
 	if got != ttl {
 		t.Errorf("Cleanup() TTL = %v, want %v", got, ttl)
+	}
+}
+
+func TestSchedulerJanitorRespectsInterval(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	cfg.Service.TickInterval = time.Minute
+	cfg.Plugins = map[string]config.PluginConf{}
+
+	wm := &stubWorkspaceManager{}
+	ttl := 48 * time.Hour
+	// janitorInterval = 3 ticks → runs on tick 0, 3, 6, ...
+	janitorInterval := 3 * time.Minute
+
+	sched := New(cfg, &stubQueueService{}, nil, logger,
+		WithWorkspaceJanitor(wm, ttl, janitorInterval),
+	)
+
+	ctx := context.Background()
+	for i := 0; i < 7; i++ {
+		sched.tick(ctx)
+	}
+	// ticks 0, 3, 6 → 3 calls
+	if wm.cleanupCalls.Load() != 3 {
+		t.Fatalf("Cleanup() call count = %d, want 3", wm.cleanupCalls.Load())
 	}
 }
 

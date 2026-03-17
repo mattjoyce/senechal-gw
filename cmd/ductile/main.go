@@ -2083,7 +2083,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			}
 			return plug.SupportsCommand(commandName)
 		}),
-		scheduler.WithWorkspaceJanitor(wsManager, cfg.Workspace.TTL),
+		scheduler.WithWorkspaceJanitor(wsManager, cfg.Workspace.TTL, cfg.Workspace.JanitorInterval),
 	)
 	rt.scheduler = sched
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
