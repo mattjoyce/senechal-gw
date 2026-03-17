@@ -1006,7 +1006,7 @@ func runSystemSkills(args []string) int {
 
 	// --- Plugin Skills ---
 	plugins := registry.All()
-	var pNames []string
+	pNames := make([]string, 0, len(plugins))
 	for name := range plugins {
 		pNames = append(pNames, name)
 	}
@@ -1652,7 +1652,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 
 		configDir := resolveConfigDir(configPath)
 
-		var sourceFiles []string
+		sourceFiles := make([]string, 0, len(cfg.SourceFiles))
 		for f := range cfg.SourceFiles {
 			sourceFiles = append(sourceFiles, f)
 		}
