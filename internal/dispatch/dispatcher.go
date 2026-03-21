@@ -882,6 +882,13 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 			}
 			childJobID, err := d.queue.Enqueue(ctx, enqueueReq)
 			if err != nil {
+				if errors.Is(err, queue.ErrDedupeDrop) {
+					logger.Info("skipping routed job (deduplicated)",
+						"plugin", next.Plugin,
+						"dedup_key", strings.TrimSpace(next.Event.DedupeKey),
+					)
+					continue
+				}
 				return fmt.Errorf("enqueue routed job for plugin %q: %w", next.Plugin, err)
 			}
 
