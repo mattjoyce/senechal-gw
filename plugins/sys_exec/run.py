@@ -219,6 +219,22 @@ def build_exec_env(config: Dict[str, Any], payload: Dict[str, Any], req: Dict[st
     return env
 
 
+def parse_exit_code_set(config: Dict[str, Any], key: str) -> set[int] | None:
+    """Parse a list of exit codes from config. Returns None if key is absent (meaning 'all')."""
+    raw = config.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return set()
+    out: set[int] = set()
+    for value in raw:
+        try:
+            out.add(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def parse_retry_exit_codes(config: Dict[str, Any]) -> set[int]:
     raw = config.get("retry_on_exit_codes", [])
     if not isinstance(raw, list):
@@ -294,6 +310,8 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     emit_event = coerce_bool(config.get("emit_event"), True)
     event_type = str(config.get("event_type", "sys_exec.completed")).strip() or "sys_exec.completed"
     retry_exit_codes = parse_retry_exit_codes(config)
+    success_exit_codes = parse_exit_code_set(config, "success_exit_codes")  # None = only 0
+    emit_event_on_exit_codes = parse_exit_code_set(config, "emit_event_on_exit_codes")  # None = all
 
     env = build_exec_env(config, payload, req)
     expanded_args = expand_env_vars(command_args, env)
@@ -340,7 +358,7 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
     stdout_text, stdout_truncated = truncate_text(completed.stdout or "", stdout_max)
     stderr_text, stderr_truncated = truncate_text(completed.stderr or "", stderr_max)
     exit_code = int(completed.returncode)
-    success = exit_code == 0
+    success = exit_code == 0 if success_exit_codes is None else exit_code in success_exit_codes
     upstream = upstream_label(req)
 
     logs = [
@@ -372,7 +390,8 @@ def handle_exec(req: Dict[str, Any]) -> Dict[str, Any]:
         event_payload["stdout"] = stdout_text
         event_payload["stderr"] = stderr_text
 
-    events = [{"type": event_type, "payload": event_payload}] if emit_event else []
+    emit_this = emit_event and (emit_event_on_exit_codes is None or exit_code in emit_event_on_exit_codes)
+    events = [{"type": event_type, "payload": event_payload}] if emit_this else []
 
     if success:
         return plugin_ok(
