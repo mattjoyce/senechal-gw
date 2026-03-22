@@ -54,7 +54,7 @@
         "path": { "type": "string" },
         "op": {
           "type": "string",
-          "enum": ["exists", "eq", "neq", "in", "gt", "gte", "lt", "lte"]
+          "enum": ["exists", "eq", "neq", "in", "gt", "gte", "lt", "lte", "contains", "startswith", "endswith", "regex"]
         },
         "value": {},
         "all": {

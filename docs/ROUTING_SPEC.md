@@ -145,24 +145,34 @@ The Routing system exposes specific "Admin Utilities" for the LLM:
 *   `pipeline visualize <name>`: Returns a Mermaid.js diagram of the DSL.
 *   `pipeline dry-run <step_id>`: Clones the workspace to a `/sandbox/` directory and executes the plugin.
 
-## 8. Branching & Decisions (Multi-Event Pattern)
+## 8. Branching & Decisions
 
-To keep the DSL declarative and simple, Ductile avoids `if/else` logic in YAML. Instead, it uses **Multi-Event Branching**.
+Ductile supports two models for decision making: **Step-Gating (DSL)** and **Multi-Event Branching (Plugin)**.
 
-### 8.1 The Pattern
-Plugins are responsible for decision-making. They inspect the data and emit a specific **Event Type** to signal the outcome.
+### 8.1 Step-Gating via `if`
+
+Pipelines can use the `if` keyword on any step to decide whether it should run based on the current payload, accumulated context, or plugin configuration.
+
+```yaml
+- id: notifier
+  uses: discord-notifier
+  if:
+    path: payload.status
+    op: eq
+    value: error
+```
+
+If the condition evaluates to `false`, the step is marked `skipped`, and a synthetic `ductile.step.skipped` event is routed to downstream steps to allow the chain to continue.
+
+### 8.2 Multi-Event Branching
+
+For complex domain-level decisions, plugins are responsible for emitting specific **Event Types** to signal different outcomes.
 
 **Example Pipeline:**
 ```yaml
 - id: validator
   uses: schema-checker
-  # No "if" keyword needed. The router matches the emitted event type.
-  on_events:
-    validation_success: [publisher]
-    validation_failed: [error-notifier]
+  # The router matches the emitted event type to the next pipeline or step.
 ```
 
-### 8.2 Benefits
-*   **Decoupled Logic:** The Core doesn't need a complex expression evaluator.
-*   **Explicit Ledger:** The decision point is recorded in the SQLite ledger as a specific event transition.
-*   **Plugin Autonomy:** Plugins can use complex internal logic (AI, regex, DB lookups) to decide the path without bloating the DSL.
+This pattern keeps the DSL declarative while offloading complex logic to the plugins.

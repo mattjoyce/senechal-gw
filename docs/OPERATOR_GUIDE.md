@@ -14,9 +14,8 @@ The primary way to run Ductile is in the foreground:
 For production environments, we recommend using a **systemd** unit. See [Architecture](ARCHITECTURE.md#14-deployment) for an example configuration.
 
 ### Reloading Configuration
-You can reload the configuration without restarting the service by sending a `SIGHUP` signal:
+You can reload the configuration without restarting the service by sending a `SIGHUP` signal or using the CLI:
 ```bash
-# This command is planned for a future release
 ./ductile system reload
 ```
 

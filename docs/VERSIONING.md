@@ -4,15 +4,15 @@ This document defines how `ductile` versions are assigned and how build metadata
 
 ## Versioning Policy
 
-Ductile uses **auto-derived versioning** — no manual version bumps, no release tags required.
+Ductile uses **Semantic Versioning (SemVer)** for releases and release candidates.
 
-Format: `v0.<commit-count>-<short-hash>`
+Format: `v<major>.<minor>.<patch>[-<pre-release>]`
 
 Examples:
-- `v0.381-ca42b56`
-- `v0.382-f1a3c9d`
+- `v1.0.0-rc.1`
+- `v1.0.1`
 
-The commit count is monotonically increasing. The short hash uniquely identifies the exact source state. Together they give a human-readable, sortable, unambiguous version without any ceremony.
+Development builds may include additional metadata like commit counts or short hashes if derived via the build scripts.
 
 ## CLI Version Output
 
@@ -27,20 +27,13 @@ Machine-readable output:
 
 Version output includes:
 
-- version string (`v0.<count>-<hash>`)
+- version string (`v1.0.0-rc.1`)
 - git commit (short SHA)
 - build time in UTC (RFC3339)
 
 ## Deriving the Version
 
-The canonical source is `scripts/version.sh`:
-
-```sh
-#!/bin/sh
-echo "v0.$(git rev-list --count HEAD)-$(git rev-parse --short HEAD)"
-```
-
-This script runs identically in local builds, Docker/Unraid, and any future CI. No state file, no manual step.
+Versions are typically set in `cmd/ductile/main.go`. The build process can override these using ldflags.
 
 ## Building Locally
 
@@ -56,7 +49,7 @@ Three ldflags variables are injected at build time:
 
 | Variable | Value |
 |---|---|
-| `main.version` | Output of `scripts/version.sh` |
+| `main.version` | The target version string |
 | `main.gitCommit` | `git rev-parse --short HEAD` |
 | `main.buildDate` | UTC timestamp at build time |
 

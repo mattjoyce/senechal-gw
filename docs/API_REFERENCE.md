@@ -19,6 +19,30 @@ Ductile uses scoped tokens configured in `api.auth.tokens`, with explicit scopes
 
 ## Endpoints
 
+### 0. Root / Discovery
+
+Unauthenticated discovery index for humans and agents.
+
+**Endpoint**: `GET /`
+
+**Response (200 OK)**:
+```json
+{
+  "name": "Ductile Gateway",
+  "description": "Lightweight, open-source integration engine for the agentic era.",
+  "uptime_seconds": 3600,
+  "discovery": {
+    "health": "/healthz",
+    "skills": "/skills",
+    "plugins": "/plugins",
+    "openapi": "/openapi.json",
+    "ai_plugin": "/.well-known/ai-plugin.json"
+  }
+}
+```
+
+---
+
 ### 1. Direct Plugin Execution
 
 Execute one plugin command directly. This **bypasses pipeline routing** and enqueues exactly one job.
@@ -92,54 +116,87 @@ Trigger a named pipeline directly.
 **Response (Async default - 202 Accepted)**:
 ```json
 {
-  "job_id": "uuid-v4",
-  "status": "queued",
-  "plugin": "pipeline",
-  "command": "pipeline_name"
+"job_id": "uuid-v4",
+"status": "queued",
+"plugin": "pipeline",
+"command": "pipeline_name"
 }
 ```
 
 **Response (Synchronous success - 200 OK)**:
 ```json
 {
-  "job_id": "uuid-v4",
-  "status": "succeeded",
-  "duration_ms": 1250,
-  "result": { "status": "ok" },
-  "tree": [
-    {
-      "job_id": "uuid-v4",
-      "plugin": "plugin_name",
-      "command": "command_name",
-      "status": "succeeded",
-      "result": { "status": "ok" }
-    }
-  ]
+"job_id": "uuid-v4",
+"status": "succeeded",
+"duration_ms": 1250,
+"result": { "status": "ok" },
+"tree": [
+  {
+    "job_id": "uuid-v4",
+    "plugin": "plugin_name",
+    "command": "command_name",
+    "status": "succeeded",
+    "result": { "status": "ok" }
+  }
+]
 }
 ```
 
 **Response (Timeout - 202 Accepted)**:
 ```json
 {
-  "job_id": "uuid-v4",
-  "status": "running",
-  "timeout_exceeded": true,
-  "message": "Pipeline still running after timeout."
+"job_id": "uuid-v4",
+"status": "running",
+"timeout_exceeded": true,
+"message": "Pipeline still running after timeout."
 }
 ```
 
 **Example (curl)**:
 ```bash
 curl -X POST http://localhost:8080/pipeline/url-to-fabric \
-  -H "Authorization: Bearer test_token" \
-  -H "Content-Type: application/json" \
-  -d '{"payload":{"url":"https://example.com"}}'
+-H "Authorization: Bearer test_token" \
+-H "Content-Type: application/json" \
+-d '{"payload":{"url":"https://example.com"}}'
+```
+
+---
+
+### 2.5 Job Tree
+
+Retrieve the execution tree for a pipeline job, including all child jobs.
+
+**Endpoint**: `GET /job/{job_id}/tree`
+
+**Response (200 OK)**:
+```json
+[
+{
+  "job_id": "uuid-v4",
+  "parent_job_id": null,
+  "plugin": "pipeline",
+  "command": "pipeline_name",
+  "status": "succeeded",
+  "result": { "status": "ok" },
+  "started_at": "2026-02-13T10:00:01Z",
+  "completed_at": "2026-02-13T10:00:05Z"
+},
+{
+  "job_id": "uuid-v4-child",
+  "parent_job_id": "uuid-v4",
+  "plugin": "plugin_name",
+  "command": "command_name",
+  "status": "succeeded",
+  "result": { "status": "ok" },
+  "started_at": "2026-02-13T10:00:02Z",
+  "completed_at": "2026-02-13T10:00:04Z"
+}
+]
 ```
 
 ---
 
 ### 3. Job Status and Results
-
 Retrieve the current status and execution results of a job.
 
 **Endpoint**: `GET /job/{job_id}`
@@ -448,6 +505,51 @@ Unified, operator-facing capability index across both atomic plugin commands and
 ```
 
 Pipeline entries default to `execution_mode: "asynchronous"` when unset in config.
+
+---
+
+### 10. System Reload
+
+Reload the configuration files without restarting the service. Requires `*` scope.
+
+**Endpoint**: `POST /system/reload`
+
+**Response (200 OK)**:
+```json
+{
+  "status": "ok",
+  "reloaded_at": "2026-02-13T10:00:00Z",
+  "message": "Configuration reloaded successfully."
+}
+```
+
+---
+
+### 11. Analytics
+
+Retrieve operational metrics and summaries. Requires `*` scope.
+
+#### Queue Metrics
+**Endpoint**: `GET /analytics/queue`
+
+Returns current queue depth and worker utilization.
+
+#### Analytics Summary
+**Endpoint**: `GET /analytics/summary`
+
+Returns a summary of job statuses over the last 24 hours.
+
+**Response (200 OK)**:
+```json
+{
+  "window": "24h",
+  "stats": {
+    "succeeded": 450,
+    "failed": 12,
+    "dead": 2
+  }
+}
+```
 
 ---
 

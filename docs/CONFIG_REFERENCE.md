@@ -146,7 +146,11 @@ Manifest interaction:
 - Such plugins run serial by default (effective parallelism = 1).
 - Operators can explicitly override with `plugins.<name>.parallelism > 1`.
 
-### 4.3 webhooks.yaml (High Security)
+### 4.3 webhooks.yaml (High Security - Experimental)
+
+> [!IMPORTANT]  
+> Webhook support is currently in early development and may not be fully functional in the current MVP.
+
 ```yaml
 webhooks:
   - name: github
@@ -158,13 +162,29 @@ webhooks:
 
 See [WEBHOOKS.md](WEBHOOKS.md) for full configuration details, include-mode caveats, and signing examples.
 
-### 4.4 tokens.yaml (High Security)
+---
+
+## 4.4 tokens.yaml (High Security)
 ```yaml
 tokens:
   - name: admin-cli
     key: ${ADMIN_API_KEY}
     scopes_file: scopes/admin-cli.json
     scopes_hash: blake3:a3f8c2d9...
+```
+
+---
+
+## 4.5 routes.yaml (Operational - Experimental)
+
+> [!IMPORTANT]  
+> Global routing rules via `routes.yaml` are experimental. Most users should prefer the `pipelines` DSL for orchestration.
+
+```yaml
+routes:
+  - from: source-plugin
+    event_type: event.name
+    to: target-plugin
 ```
 
 ---
