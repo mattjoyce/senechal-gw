@@ -250,6 +250,7 @@ Core Resources (Nouns):
   config    System configuration and integrity
   job       Execution instances and lineage
   plugin    Capability discovery and management (Connectors)
+  workspace Maintenance and migration of workspace data
   api       Directly call the gateway API
 
 System Commands:
@@ -263,7 +264,9 @@ System Commands:
 Config Commands:
   config lock       Authorize current state (update integrity hashes)
   config check      Validate syntax, policy, and integrity
-  config token create Interactively create a scoped API token
+  config show       Show full resolved configuration or a filtered entity node
+  config get        Read a single value from the resolved configuration
+  config set        Set a configuration value with either preview or apply mode
   config token      Manage scoped tokens
   config scope      Manage token scopes
   config plugin     Manage plugin configuration
@@ -275,10 +278,14 @@ Config Commands:
 
 Job Commands:
   job inspect <id>  Show lineage, baggage, and workspace artifacts
+  job logs          Query stored job logs for audit and troubleshooting
 
 Plugin Commands:
   plugin list       Show discovered plugins/connectors
-  plugin run <name> Manual execution (planned)
+  plugin run <name> Manual execution
+
+Workspace Commands:
+  workspace migrate Migrate flat workspace dirs to sharded layout
 
 API Commands:
   api <endpoint>    Directly call the gateway API (uses configured key)
@@ -963,7 +970,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch, skills")
 }
 
 func printConfigNounHelp(w *os.File) {
