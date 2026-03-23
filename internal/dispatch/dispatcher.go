@@ -251,7 +251,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			"decision": "fail",
 			"reason":   errMsg,
 		})
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 	d.events.Publish("job.preflight", map[string]any{
@@ -275,7 +275,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if !ok {
 		errMsg := fmt.Sprintf("plugin %q not found in registry", job.Plugin)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -283,7 +283,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if !plug.SupportsCommand(job.Command) {
 		errMsg := fmt.Sprintf("plugin %q does not support command %q", job.Plugin, job.Command)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -298,7 +298,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get plugin state: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -307,7 +307,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if err := json.Unmarshal(pluginState, &stateMap); err != nil {
 		errMsg := fmt.Sprintf("failed to unmarshal plugin state: %v", err)
 		jobLogger.Error(errMsg)
-		d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -342,7 +342,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := json.Unmarshal(job.Payload, &event); err != nil {
 			errMsg := fmt.Sprintf("failed to unmarshal event payload: %v", err)
 			jobLogger.Error(errMsg)
-			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 			return
 		}
 
@@ -452,7 +452,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			errMsg := fmt.Sprintf("failed to marshal state updates: %v", err)
 			jobLogger.Error(errMsg)
 			recordBlackBox(queue.StatusFailed, &errMsg)
-			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 
@@ -460,7 +460,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
 			jobLogger.Error(errMsg)
 			recordBlackBox(queue.StatusFailed, &errMsg)
-			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 		jobLogger.Debug("applied state updates", "updates", resp.StateUpdates)
@@ -482,14 +482,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			errMsg := fmt.Sprintf("failed to route events: %v", err)
 			jobLogger.Error(errMsg)
 			recordBlackBox(queue.StatusFailed, &errMsg)
-			d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 	}
 
 	// Mark job as succeeded
 	recordBlackBox(queue.StatusSucceeded, nil)
-	d.completeJob(ctx, jobLogger, job.ID, job.StartedAt, queue.StatusSucceeded, rawResp, nil, &stderr)
+	d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
 // spawnPlugin spawns the plugin subprocess, writes the request to stdin, and reads the response from stdout.
@@ -650,7 +650,7 @@ func (d *Dispatcher) failOrRetry(
 
 		if err := d.queue.UpdateJobForRecovery(ctx, job.ID, queue.StatusQueued, nextAttempt, &nextRetryAt, deref(lastError)); err != nil {
 			logger.Error("failed to schedule retry; marking job terminal", "error", err)
-			d.completeJob(ctx, logger, job.ID, job.StartedAt, status, result, lastError, stderr)
+			d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, status, result, lastError, stderr)
 			return
 		}
 
@@ -695,7 +695,7 @@ func (d *Dispatcher) failOrRetry(
 		})
 	}
 
-	d.completeJob(ctx, logger, job.ID, job.StartedAt, status, result, lastError, stderr)
+	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, status, result, lastError, stderr)
 }
 
 func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int) time.Duration {
@@ -1059,7 +1059,7 @@ func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queu
 	})
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to marshal skipped job result: %v", err)
-		d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
@@ -1072,11 +1072,11 @@ func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queu
 	// valid even though no plugin process ran.
 	if err := d.routeSkippedStepSuccessors(ctx, logger, job, reason); err != nil {
 		errMsg := fmt.Sprintf("failed to route successors after skip: %v", err)
-		d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
 		return
 	}
 
-	d.completeJob(ctx, logger, job.ID, job.StartedAt, queue.StatusSkipped, result, &reason, nil)
+	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusSkipped, result, &reason, nil)
 }
 
 func (d *Dispatcher) routeSkippedStepSuccessors(ctx context.Context, logger *slog.Logger, job *queue.Job, reason string) error {
@@ -1149,7 +1149,7 @@ func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string)
 }
 
 // completeJob marks a job as complete with the given status and logs the outcome.
-func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID string, startTime *time.Time, status queue.Status, result json.RawMessage, lastError, stderr *string) {
+func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID string, plugin string, startTime *time.Time, status queue.Status, result json.RawMessage, lastError, stderr *string) {
 	duration := time.Duration(0)
 	if startTime != nil {
 		duration = time.Since(*startTime)
@@ -1158,19 +1158,31 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 
 	eventData := map[string]any{
 		"job_id":      jobID,
+		"plugin":      plugin,
 		"status":      string(status),
 		"duration_ms": duration.Milliseconds(),
 	}
 	if lastError != nil {
 		eventData["error"] = *lastError
+		msg := fmt.Sprintf("Job failed [%s]: %s", plugin, *lastError)
+		eventData["message"] = msg
+		eventData["text"] = msg
 	}
 
 	switch status {
 	case queue.StatusSucceeded:
 		d.events.Publish("job.completed", eventData)
 	case queue.StatusTimedOut:
+		msg := fmt.Sprintf("Job timed out [%s]", plugin)
+		eventData["message"] = msg
+		eventData["text"] = msg
 		d.events.Publish("job.timed_out", eventData)
 	case queue.StatusFailed, queue.StatusDead:
+		if _, ok := eventData["message"]; !ok {
+			msg := fmt.Sprintf("Job failed [%s]", plugin)
+			eventData["message"] = msg
+			eventData["text"] = msg
+		}
 		d.events.Publish("job.failed", eventData)
 	}
 
