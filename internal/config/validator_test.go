@@ -86,17 +86,18 @@ func TestConfigValidator_ValidateWebhooks(t *testing.T) {
 		errMsg  string
 	}{
 		{
-			name: "Valid webhook with secret",
+			name: "Valid webhook with secret_ref",
 			config: &Config{
 				Plugins: map[string]PluginConf{
 					"p1": {Enabled: true},
 				},
 				Webhooks: &WebhooksConfig{
 					Endpoints: []WebhookEndpoint{
-						{Path: "/w1", Plugin: "p1", Secret: "s1", SignatureHeader: "X-Sig"},
+						{Path: "/w1", Plugin: "p1", SecretRef: "ref0", SignatureHeader: "X-Sig"},
 					},
 				},
 			},
+			tokens:  map[string]string{"ref0": "s1"},
 			wantErr: false,
 		},
 		{
@@ -120,7 +121,7 @@ func TestConfigValidator_ValidateWebhooks(t *testing.T) {
 				Plugins: map[string]PluginConf{},
 				Webhooks: &WebhooksConfig{
 					Endpoints: []WebhookEndpoint{
-						{Path: "/w1", Plugin: "p1", Secret: "s1", SignatureHeader: "X-Sig"},
+						{Path: "/w1", Plugin: "p1", SecretRef: "ref1", SignatureHeader: "X-Sig"},
 					},
 				},
 			},
@@ -128,7 +129,7 @@ func TestConfigValidator_ValidateWebhooks(t *testing.T) {
 			errMsg:  "webhook[0] (/w1): plugin \"p1\" does not exist",
 		},
 		{
-			name: "Missing secret and secret_ref",
+			name: "Missing secret_ref",
 			config: &Config{
 				Plugins: map[string]PluginConf{
 					"p1": {Enabled: true},
@@ -140,7 +141,7 @@ func TestConfigValidator_ValidateWebhooks(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "webhook[0] (/w1): either 'secret' or 'secret_ref' is required",
+			errMsg:  "webhook[0] (/w1): secret_ref is required",
 		},
 		{
 			name: "Missing secret_ref in tokens",
@@ -166,10 +167,11 @@ func TestConfigValidator_ValidateWebhooks(t *testing.T) {
 				},
 				Webhooks: &WebhooksConfig{
 					Endpoints: []WebhookEndpoint{
-						{Path: "/w1", Plugin: "p1", Secret: "s1"},
+						{Path: "/w1", Plugin: "p1", SecretRef: "ref1"},
 					},
 				},
 			},
+			tokens:  map[string]string{"ref1": "s1"},
 			wantErr: true,
 			errMsg:  "webhook[0] (/w1): signature_header is required",
 		},
@@ -313,7 +315,7 @@ func TestConfigValidator_ValidateCrossReferences(t *testing.T) {
 				},
 				Webhooks: &WebhooksConfig{
 					Endpoints: []WebhookEndpoint{
-						{Path: "/w1", Plugin: "p1", Secret: "s1", SignatureHeader: "X-Sig"},
+						{Path: "/w1", Plugin: "p1", SecretRef: "ref1", SignatureHeader: "X-Sig"},
 					},
 				},
 			},
