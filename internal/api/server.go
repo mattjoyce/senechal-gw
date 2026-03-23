@@ -187,6 +187,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
 		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
+		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
 	})
 
 	return r

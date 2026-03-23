@@ -2,7 +2,7 @@
 
 ## Base URL & Auth
 
-Default: `http://localhost:8081` (local prod) or `http://localhost:8080` (test)
+Default: `http://localhost:8081` (local prod) or `http://localhost:9001` (test)
 
 ```http
 Authorization: Bearer <token>

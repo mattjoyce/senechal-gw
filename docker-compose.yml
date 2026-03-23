@@ -22,7 +22,7 @@ services:
 
     # Expose API port
     ports:
-      - "8080:8080"
+      - "9001:8080"
 
     # Logging configuration
     logging:
