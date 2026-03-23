@@ -485,6 +485,21 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
+	} else if job.EventContextID != nil {
+		// Plugin emitted no events but is running within a pipeline step — emit a
+		// synthetic step-succeeded event so sequential successors can still advance.
+		// Symmetric with routeSkippedStepSuccessors for skipped steps.
+		synthetic := []protocol.Event{{
+			Type:    "ductile.step.succeeded",
+			Payload: map[string]any{"result": resp.Result},
+		}}
+		if err := d.routeEvents(ctx, job, synthetic, jobLogger); err != nil {
+			errMsg := fmt.Sprintf("failed to route step-succeeded event: %v", err)
+			jobLogger.Error(errMsg)
+			recordBlackBox(queue.StatusFailed, &errMsg)
+			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+			return
+		}
 	}
 
 	// Mark job as succeeded
