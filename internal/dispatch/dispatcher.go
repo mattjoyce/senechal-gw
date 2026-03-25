@@ -1186,6 +1186,9 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 
 	switch status {
 	case queue.StatusSucceeded:
+		msg := fmt.Sprintf("✅ %s completed (%dms)", plugin, duration.Milliseconds())
+		eventData["message"] = msg
+		eventData["text"] = msg
 		d.events.Publish("job.completed", eventData)
 	case queue.StatusTimedOut:
 		msg := fmt.Sprintf("Job timed out [%s]", plugin)
