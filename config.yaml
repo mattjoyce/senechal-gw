@@ -6,7 +6,7 @@ service:
   tick_interval: 60s           # Scheduler heartbeat
   log_level: info              # debug, info, warn, error
   log_format: json             # json
-  dedupe_ttl: 24h              # Deduplication window
+  dedupe_ttl: 2h               # Deduplication window (replay protection only; content-aware keys handle idempotency)
   job_log_retention: 168h      # 7 days
 
 state:
