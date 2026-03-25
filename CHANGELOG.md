@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-03-25
+- Dispatch now treats DedupeDropError as a skip rather than a routing failure, and pipeline steps with no events now emit a synthetic ductile.step.succeeded.
+- sys_exec now supports configurable success_exit_codes and emits events when exit codes match emit_event_on_exit_codes.
+- Documentation and schemas are aligned with the implementation, and CLI help output and LLM skill manifests are synchronized with the code.
+- The dispatcher now includes the plugin name and the message in the job.failed payload.
+- API adds /config/view endpoint with sensitive value redaction and updates test port to 9001, and config tests are updated to match the WebhookEndpoint struct.
+
 ## 2026-03-07
 - Discord notify plugin now supports an incoming webhook, adds a poll command with configurable poll_message, and includes a default_message fallback plus a User-Agent fix.
 - JSON Schemas for config, plugins, and pipelines YAML are added, with multi-file-merge support and validation for max_workers and plugin parallelism.
