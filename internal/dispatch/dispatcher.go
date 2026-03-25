@@ -504,6 +504,22 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Mark job as succeeded
 	recordBlackBox(queue.StatusSucceeded, nil)
+
+	// Route system completion event through the pipeline router for root-level jobs.
+	// Pipeline-step jobs (EventContextID set) are excluded to prevent notification
+	// loops (e.g. discord_notify completing → job.completed → discord_notify → ...).
+	if job.EventContextID == nil {
+		_ = d.routeEvents(ctx, job, []protocol.Event{{
+			Type: "job.completed",
+			Payload: map[string]any{
+				"job_id":  job.ID,
+				"plugin":  job.Plugin,
+				"status":  "succeeded",
+				"message": fmt.Sprintf("✅ %s completed", job.Plugin),
+			},
+		}}, jobLogger)
+	}
+
 	d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
@@ -708,6 +724,24 @@ func (d *Dispatcher) failOrRetry(
 			"final_error": deref(lastError),
 			"reason":      reason,
 		})
+	}
+
+	// Route system failure event through the pipeline router for root-level jobs.
+	if job.EventContextID == nil {
+		errMsg := ""
+		if lastError != nil {
+			errMsg = *lastError
+		}
+		_ = d.routeEvents(ctx, job, []protocol.Event{{
+			Type: "job.failed",
+			Payload: map[string]any{
+				"job_id":  job.ID,
+				"plugin":  job.Plugin,
+				"status":  string(status),
+				"error":   errMsg,
+				"message": fmt.Sprintf("❌ %s failed: %s", job.Plugin, errMsg),
+			},
+		}}, logger)
 	}
 
 	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, status, result, lastError, stderr)
