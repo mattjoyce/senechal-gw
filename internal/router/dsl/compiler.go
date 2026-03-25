@@ -42,16 +42,28 @@ func CompileSpecs(specs []PipelineSpec) (*Set, error) {
 func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 	name := strings.TrimSpace(spec.Name)
 	trigger := strings.TrimSpace(spec.On)
-	if trigger == "" {
-		return nil, fmt.Errorf("on is required")
+	hookSignal := strings.TrimSpace(spec.OnHook)
+
+	if trigger == "" && hookSignal == "" {
+		return nil, fmt.Errorf("on or on-hook is required")
+	}
+	if trigger != "" && hookSignal != "" {
+		return nil, fmt.Errorf("on and on-hook are mutually exclusive")
 	}
 	if len(spec.Steps) == 0 {
 		return nil, fmt.Errorf("steps must be non-empty")
 	}
 
+	isHook := hookSignal != ""
+	effectiveTrigger := trigger
+	if isHook {
+		effectiveTrigger = hookSignal
+	}
+
 	pipeline := &Pipeline{
 		Name:          name,
-		Trigger:       trigger,
+		Trigger:       effectiveTrigger,
+		IsHook:        isHook,
 		ExecutionMode: spec.ExecutionMode,
 		Timeout:       spec.Timeout,
 		Nodes:         make(map[string]Node),

@@ -48,6 +48,10 @@ type Dispatch struct {
 // Engine maps an emitted event to downstream dispatches.
 type Engine interface {
 	Next(ctx context.Context, req Request) ([]Dispatch, error)
+	// NextHook resolves hook pipeline dispatches for a lifecycle signal on a plugin.
+	// Hook pipelines declared with on-hook: are matched by signal name.
+	// plugin may be empty to match all hook pipelines for a signal.
+	NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error)
 	// GetPipelineByTrigger returns the first pipeline matched by a trigger event.
 	GetPipelineByTrigger(trigger string) *PipelineInfo
 	// GetPipelineByName returns a pipeline by its unique name.

@@ -17,6 +17,7 @@ import (
 type Router struct {
 	set          *dsl.Set
 	triggerIndex map[string][]string
+	hookIndex    map[string][]string            // signal -> hook pipeline names
 	successors   map[string]map[string][]string // pipeline -> from node -> to nodes
 	logger       *slog.Logger
 }
@@ -49,12 +50,17 @@ func New(set *dsl.Set, logger *slog.Logger) *Router {
 	r := &Router{
 		set:          set,
 		triggerIndex: make(map[string][]string),
+		hookIndex:    make(map[string][]string),
 		successors:   make(map[string]map[string][]string),
 		logger:       logger.With("component", "router"),
 	}
 
 	for name, pipeline := range set.Pipelines {
-		r.triggerIndex[pipeline.Trigger] = append(r.triggerIndex[pipeline.Trigger], name)
+		if pipeline.IsHook {
+			r.hookIndex[pipeline.Trigger] = append(r.hookIndex[pipeline.Trigger], name)
+		} else {
+			r.triggerIndex[pipeline.Trigger] = append(r.triggerIndex[pipeline.Trigger], name)
+		}
 
 		succ := make(map[string][]string)
 		for _, edge := range pipeline.Edges {
@@ -67,6 +73,9 @@ func New(set *dsl.Set, logger *slog.Logger) *Router {
 	}
 	for trigger := range r.triggerIndex {
 		sort.Strings(r.triggerIndex[trigger])
+	}
+	for signal := range r.hookIndex {
+		sort.Strings(r.hookIndex[signal])
 	}
 
 	return r
@@ -134,6 +143,59 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 
 	if len(out) > 0 {
 		r.logger.Info("routing event resulting in child jobs", "type", eventType, "jobs", len(out))
+	}
+
+	return dedupeDispatches(out), nil
+}
+
+// NextHook resolves hook pipeline dispatches for a lifecycle signal on a plugin.
+// Dispatches are root-level (no pipeline/step context) so hook jobs run independently.
+func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	signal = strings.TrimSpace(signal)
+	if signal == "" {
+		return nil, fmt.Errorf("signal is required")
+	}
+
+	pipelineNames, ok := r.hookIndex[signal]
+	if !ok || len(pipelineNames) == 0 {
+		return nil, nil
+	}
+
+	r.logger.Debug("resolving hook pipelines", "signal", signal, "plugin", plugin, "count", len(pipelineNames))
+
+	ev := protocol.Event{
+		Type:    signal,
+		Payload: payload,
+	}
+
+	var out []Dispatch
+	for _, pipelineName := range pipelineNames {
+		pipeline := r.set.Pipelines[pipelineName]
+		if pipeline == nil {
+			continue
+		}
+		r.logger.Info("triggering hook pipeline", "name", pipelineName, "signal", signal, "source_plugin", plugin)
+		for _, nodeID := range pipeline.EntryNodeIDs {
+			// Hook dispatches carry no pipeline/step context — they are root jobs.
+			node, ok := pipeline.Nodes[nodeID]
+			if !ok {
+				continue
+			}
+			if node.Kind == dsl.NodeKindUses {
+				out = append(out, Dispatch{
+					Plugin:  node.Uses,
+					Command: "handle",
+					Event:   cloneEvent(ev),
+				})
+			}
+		}
+	}
+
+	if len(out) > 0 {
+		r.logger.Info("hook signal resulting in jobs", "signal", signal, "jobs", len(out))
 	}
 
 	return dedupeDispatches(out), nil

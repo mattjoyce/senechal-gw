@@ -504,6 +504,13 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Mark job as succeeded
 	recordBlackBox(queue.StatusSucceeded, nil)
+	d.maybeFireHooks(ctx, job, "job.completed", map[string]any{
+		"job_id":  job.ID,
+		"plugin":  job.Plugin,
+		"command": job.Command,
+		"status":  "succeeded",
+		"result":  resp.Result,
+	})
 	d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusSucceeded, rawResp, nil, &stderr)
 }
 
@@ -710,6 +717,17 @@ func (d *Dispatcher) failOrRetry(
 		})
 	}
 
+	hookPayload := map[string]any{
+		"job_id":  job.ID,
+		"plugin":  job.Plugin,
+		"command": job.Command,
+		"status":  string(status),
+		"reason":  reason,
+	}
+	if lastError != nil {
+		hookPayload["error"] = *lastError
+	}
+	d.maybeFireHooks(ctx, job, "job.completed", hookPayload)
 	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, status, result, lastError, stderr)
 }
 
@@ -1207,6 +1225,45 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 
 	// Notify any synchronous waiters
 	d.notifyCompletion(jobID)
+}
+
+// maybeFireHooks fires on-hook lifecycle pipelines for a completed root job if the plugin
+// has notify_on_complete: true in its config. Pipeline steps and retried jobs are skipped.
+func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal string, payload map[string]any) {
+	if job.EventContextID != nil {
+		return // pipeline step — not a root job
+	}
+	pluginCfg, ok := d.cfg.Plugins[job.Plugin]
+	if !ok || pluginCfg.NotifyOnComplete == nil || !*pluginCfg.NotifyOnComplete {
+		return
+	}
+	if d.router == nil {
+		return
+	}
+	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload)
+	if err != nil {
+		d.logger.Error("hook routing error", "plugin", job.Plugin, "signal", signal, "error", err)
+		return
+	}
+	for _, disp := range dispatches {
+		payloadJSON, err := json.Marshal(disp.Event.Payload)
+		if err != nil {
+			d.logger.Error("failed to marshal hook payload", "plugin", disp.Plugin, "error", err)
+			continue
+		}
+		enqReq := queue.EnqueueRequest{
+			Plugin:      disp.Plugin,
+			Command:     disp.Command,
+			Payload:     payloadJSON,
+			SubmittedBy: "hook",
+		}
+		childID, err := d.queue.Enqueue(ctx, enqReq)
+		if err != nil {
+			d.logger.Error("failed to enqueue hook job", "plugin", disp.Plugin, "error", err)
+			continue
+		}
+		d.logger.Info("enqueued hook job", "signal", signal, "source_plugin", job.Plugin, "hook_plugin", disp.Plugin, "child_job_id", childID)
+	}
 }
 
 // WaitForJobTree blocks until the root job and all its descendants are complete or timeout.

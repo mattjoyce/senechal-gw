@@ -15,6 +15,7 @@ type FileSpec struct {
 type PipelineSpec struct {
 	Name          string        `yaml:"name"`
 	On            string        `yaml:"on"`
+	OnHook        string        `yaml:"on-hook,omitempty"`
 	Steps         []StepSpec    `yaml:"steps"`
 	ExecutionMode string        `yaml:"execution_mode,omitempty"`
 	Timeout       time.Duration `yaml:"timeout,omitempty"`
@@ -61,6 +62,7 @@ type Edge struct {
 type Pipeline struct {
 	Name            string
 	Trigger         string
+	IsHook          bool   // true when triggered by on-hook: (lifecycle signal) rather than on: (plugin event)
 	ExecutionMode   string
 	Timeout         time.Duration
 	Nodes           map[string]Node

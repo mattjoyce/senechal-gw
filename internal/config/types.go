@@ -89,6 +89,7 @@ type PluginConf struct {
 	CircuitBreaker      *CircuitBreakerConfig `yaml:"circuit_breaker,omitempty"`
 	MaxOutstandingPolls int                   `yaml:"max_outstanding_polls,omitempty"`
 	Parallelism         int                   `yaml:"parallelism,omitempty"`
+	NotifyOnComplete    *bool                 `yaml:"notify_on_complete,omitempty"` // opt-in to on-hook lifecycle signals; nil = false
 }
 
 // ScheduleConfig defines when a plugin command should be scheduled.
