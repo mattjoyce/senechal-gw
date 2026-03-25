@@ -218,6 +218,79 @@ func TestLoadAndCompileFilesLoadsMultipleYAMLFiles(t *testing.T) {
 	}
 }
 
+func TestCompileSpecsOnHookAccepted(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name:   "notify-on-done",
+		OnHook: "job.completed",
+		Steps:  []StepSpec{{ID: "notify", Uses: "discord-notifier"}},
+	}}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v, want nil", err)
+	}
+
+	p := set.Pipelines["notify-on-done"]
+	if p == nil {
+		t.Fatalf("pipeline not found")
+	}
+	if !p.IsHook {
+		t.Fatalf("IsHook = false, want true")
+	}
+	if p.Trigger != "job.completed" {
+		t.Fatalf("Trigger = %q, want %q", p.Trigger, "job.completed")
+	}
+}
+
+func TestCompileSpecsOnHookAndOnMutuallyExclusive(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name:   "bad-pipeline",
+		On:     "some.event",
+		OnHook: "job.completed",
+		Steps:  []StepSpec{{ID: "step", Uses: "plugin-a"}},
+	}}
+
+	_, err := CompileSpecs(specs)
+	if err == nil {
+		t.Fatalf("expected error for on+on-hook, got nil")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("error = %v, want mutually exclusive", err)
+	}
+}
+
+func TestCompileSpecsRequiresOnOrOnHook(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name:  "missing-trigger",
+		Steps: []StepSpec{{ID: "step", Uses: "plugin-a"}},
+	}}
+
+	_, err := CompileSpecs(specs)
+	if err == nil {
+		t.Fatalf("expected error when neither on nor on-hook set, got nil")
+	}
+	if !strings.Contains(err.Error(), "on or on-hook is required") {
+		t.Fatalf("error = %v, want 'on or on-hook is required'", err)
+	}
+}
+
+func TestCompileSpecsRegularPipelineIsNotHook(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name:  "regular",
+		On:    "plugin.event",
+		Steps: []StepSpec{{ID: "step", Uses: "plugin-a"}},
+	}}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
+	}
+	p := set.Pipelines["regular"]
+	if p.IsHook {
+		t.Fatalf("IsHook = true for regular pipeline, want false")
+	}
+}
+
 func hasEdge(edges []Edge, from, to string) bool {
 	for _, edge := range edges {
 		if edge.From == from && edge.To == to {

@@ -101,6 +101,125 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	}
 }
 
+func TestRouterNextHookDispatch(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:   "notify-on-complete",
+			OnHook: "job.completed",
+			Steps:  []dsl.StepSpec{{ID: "notify", Uses: "discord-notifier"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+
+	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "discord-notifier" || out[0].Command != "handle" {
+		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+	if out[0].Event.Type != "job.completed" {
+		t.Fatalf("event type = %q, want %q", out[0].Event.Type, "job.completed")
+	}
+	if out[0].Event.Payload["plugin"] != "claude_harvest" {
+		t.Fatalf("payload plugin = %v, want claude_harvest", out[0].Event.Payload["plugin"])
+	}
+	// Hook dispatches must have no pipeline/step context — they are root jobs.
+	if out[0].PipelineName != "" || out[0].StepID != "" {
+		t.Fatalf("hook dispatch must be root-level: pipeline=%q step=%q", out[0].PipelineName, out[0].StepID)
+	}
+}
+
+func TestRouterNextHookUnknownSignalReturnsEmpty(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:   "notify-on-complete",
+			OnHook: "job.completed",
+			Steps:  []dsl.StepSpec{{ID: "notify", Uses: "discord-notifier"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.NextHook(context.Background(), "", "job.failed", nil)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 for unregistered signal", len(out))
+	}
+}
+
+func TestRouterHookPipelineNotInTriggerIndex(t *testing.T) {
+	// Hook pipelines must not appear in the regular trigger index.
+	// A regular pipeline's on: event must not inadvertently match a hook signal.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:   "hook-pipeline",
+			OnHook: "job.completed",
+			Steps:  []dsl.StepSpec{{ID: "notify", Uses: "discord-notifier"}},
+		},
+		{
+			Name:  "regular-pipeline",
+			On:    "plugin.event",
+			Steps: []dsl.StepSpec{{ID: "step", Uses: "plugin-a"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+
+	// Emitting "job.completed" as a plugin event must not trigger the hook pipeline.
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{Type: "job.completed", Payload: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("Next dispatched %d jobs for hook signal — hook pipeline must not be in trigger index", len(out))
+	}
+}
+
+func TestRouterNextHookMultiplePipelines(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:   "notify-a",
+			OnHook: "job.completed",
+			Steps:  []dsl.StepSpec{{ID: "n", Uses: "discord-notifier"}},
+		},
+		{
+			Name:   "notify-b",
+			OnHook: "job.completed",
+			Steps:  []dsl.StepSpec{{ID: "n", Uses: "slack-notifier"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("dispatch count = %d, want 2", len(out))
+	}
+}
+
 func TestCloneEvent(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
