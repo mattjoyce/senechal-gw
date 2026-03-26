@@ -47,6 +47,17 @@ pipelines:
 *   **call:** Execute another named pipeline (reusable middleware).
 *   **split:** Branch execution into multiple parallel paths.
 *   **on:** The event that triggers the root of the pipeline.
+*   **on-hook:** The lifecycle signal that triggers the root of the pipeline (e.g., `job.completed`). Mutually exclusive with `on`.
+
+---
+
+## 2.3 Lifecycle Hooks
+
+Lifecycle hooks allow for out-of-band orchestration triggered by the **Dispatcher** rather than a plugin event.
+
+1.  **Opt-in:** A plugin must have `notify_on_complete: true` in its operator configuration.
+2.  **Signal:** When the job reaches a terminal state, the Dispatcher resolves any pipelines matching the signal (e.g., `job.completed`).
+3.  **Isolation:** Hook pipelines run as fresh root jobs with no context inheritance from the triggering job.
 
 ---
 
