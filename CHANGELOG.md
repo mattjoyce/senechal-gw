@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-03-26
+- Dedupe window shortened from 24h to 2h to keep deduping more current.
+- Reverts undo earlier dispatch changes: routing of job.completed and job.failed through the pipeline engine and the added message field for job.completed.
+- Added on-hook DSL support: new on-hook DSL keyword and notify_on_complete config, plus test fixtures for NextHook routing and fixes to hook envelopes and signals, with docs/spec updates.
+- Improve plugin and webhook tests: warn when plugin directories lack manifest.yaml and update webhook-ingress fixture checksums path.
+- Harden lifecycle hook routing and docs: update routing spec for lifecycle hooks, update JSON schemas for on-hook DSL and notify_on_complete config, and fix pipeline remap validation with accompanying docs.
+
 ## 2026-03-25
 - Dispatch now treats DedupeDropError as a skip rather than a routing failure, and pipeline steps with no events now emit a synthetic ductile.step.succeeded.
 - sys_exec now supports configurable success_exit_codes and emits events when exit codes match emit_event_on_exit_codes.
