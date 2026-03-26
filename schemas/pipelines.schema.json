@@ -25,8 +25,13 @@
         },
         "on": {
           "type": "string",
-          "description": "Event type that triggers this pipeline.",
+          "description": "Event type that triggers this pipeline (mutually exclusive with on-hook).",
           "minLength": 1
+        },
+        "on-hook": {
+          "type": "string",
+          "description": "Lifecycle signal that triggers this pipeline (mutually exclusive with on).",
+          "enum": ["job.completed"]
         },
         "steps": {
           "type": "array",

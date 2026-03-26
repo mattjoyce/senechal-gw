@@ -241,6 +241,11 @@
           "description": "Maximum concurrent jobs for this plugin. Runtime validation enforces parallelism <= service.max_workers (cross-field constraint).",
           "minimum": 1,
           "default": 1
+        },
+        "notify_on_complete": {
+          "type": "boolean",
+          "description": "Opt-in to job.completed lifecycle signals for this plugin.",
+          "default": false
         }
       },
       "required": ["enabled"],
