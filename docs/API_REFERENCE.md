@@ -553,6 +553,48 @@ Returns a summary of job statuses over the last 24 hours.
 
 ---
 
+### 12. System Configuration
+
+Retrieve the reconciled system configuration with sensitive values redacted. Requires `*` scope.
+
+**Endpoint**: `GET /config/view`
+
+**Response (200 OK)**:
+```json
+{
+  "service": {
+    "name": "ductile",
+    "log_level": "info"
+  },
+  "api": {
+    "enabled": true,
+    "listen": "127.0.0.1:8080",
+    "tokens": [
+      { "scopes": ["*"] }
+    ]
+  },
+  "plugins": {
+    "echo": {
+      "enabled": true,
+      "config": {
+        "api_key": "[REDACTED]",
+        "message": "Hello"
+      }
+    }
+  },
+  "pipelines": [
+    { "name": "my-workflow", "on": "my.event" }
+  ]
+}
+```
+
+Redaction rules:
+- Plugin config keys containing `secret`, `key`, `token`, `password`, etc., are replaced with `[REDACTED]`.
+- API token values are omitted (only scopes are shown).
+- High-security token keys are omitted.
+
+---
+
 ## Error Codes
 
 - `401 Unauthorized`: Missing or invalid Bearer token.

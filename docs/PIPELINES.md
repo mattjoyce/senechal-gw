@@ -153,6 +153,7 @@ Semantics:
 ### 4.3 Results & Payloads
 - The `result` (short string) and `payload` (JSON) from Step A are passed to Step B.
 - In `synchronous` mode, the final API response aggregates the results from every step.
+- **Synthetic events:** If a pipeline step completes successfully but emits no events, Ductile routes a synthetic `ductile.step.succeeded` event to ensure downstream sequential steps are still triggered.
 
 ---
 
@@ -233,7 +234,80 @@ The `reason` field is empty for `run` decisions, contains the condition failure 
 
 ---
 
-## 7. Validation
+## 8. Lifecycle Hooks (`on-hook`)
+
+Lifecycle hooks allow pipelines to trigger based on **system events** (e.g., job completion) rather than plugin-emitted events. Hook pipelines run as independent root jobs and do not inherit context from the job that triggered them.
+
+### 8.1 DSL Syntax
+
+Use the `on-hook:` keyword instead of `on:`. These keywords are mutually exclusive.
+
+```yaml
+pipelines:
+  - name: notify-on-failure
+    on-hook: job.completed
+    steps:
+      - uses: discord-notify
+        if:
+          path: payload.status
+          op: neq
+          value: succeeded
+```
+
+### 8.2 Supported Signals
+
+| Signal | Triggered When |
+|--------|----------------|
+| `job.completed` | A root job reaches a terminal state (`succeeded`, `failed`, `timed_out`, or `dead`). |
+
+### 8.3 Opt-in Configuration
+
+To prevent accidental infinite loops and reduce noise, plugins must explicitly opt-in to lifecycle hooks in their configuration.
+
+```yaml
+plugins:
+  my-important-plugin:
+    notify_on_complete: true  # Required for on-hook: job.completed to fire
+```
+
+---
+
+## 9. Failure States & Event Payloads
+
+When a job fails, times out, or becomes "dead" (exceeds retries), Ductile emits specialized events. These events include enhanced payloads to simplify downstream notifications.
+
+### 9.1 Enhanced Payload Fields
+
+In addition to standard fields like `job_id` and `duration_ms`, failure events (`job.failed`, `job.timed_out`, `job.dead`) include:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `plugin` | The name of the plugin that failed. | `git-sync` |
+| `message` | A human-readable summary of the failure. | `Job failed [git-sync]: connection reset` |
+| `text` | An alias for `message` (convenience for notification plugins). | `Job failed [git-sync]: connection reset` |
+| `error` | The raw error message (if available). | `connection reset` |
+
+### 9.2 Usage in Pipelines
+
+These fields enable simple notification steps without complex `if` logic or payload mapping:
+
+```yaml
+pipelines:
+  - name: failure-announcer
+    on-hook: job.completed
+    steps:
+      - uses: discord-notify
+        if:
+          path: payload.status
+          op: neq
+          value: succeeded
+        # discord-notify automatically uses payload.message if present
+```
+
+---
+
+## 10. Validation
+
 
 Ductile performs several checks when loading pipelines:
 - **Cycle Detection:** Refuses to start if a pipeline calls itself (directly or indirectly).

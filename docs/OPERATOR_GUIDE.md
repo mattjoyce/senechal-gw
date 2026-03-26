@@ -118,3 +118,4 @@ For a full list of endpoints and schemas, see the [API Reference](API_REFERENCE.
 -   **Plugin not running:** Ensure it is `enabled: true` in `config.yaml` and has a valid `schedule`.
 -   **Database is locked:** SQLite concurrency limit. Ductile uses WAL mode to mitigate this, but very high API volume may still trigger it.
 -   **Tampering detected:** Configuration file was modified without running `config lock`. Run `ductile config lock` if the change was intentional.
+-   **Plugin directory ignored:** If a subdirectory in your `plugin_roots` contains an entrypoint (like `run.py`) but no `manifest.yaml`, Ductile will log a warning and ignore it. Add a manifest to enable discovery.

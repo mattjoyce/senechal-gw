@@ -128,6 +128,7 @@ plugins:
   echo:
     enabled: true
     parallelism: 1
+    notify_on_complete: true # Opt-in to job.completed lifecycle signals
     schedules:   # Optional; omit for event-driven plugins
       - id: default
         every: 5m
