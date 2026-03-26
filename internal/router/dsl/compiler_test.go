@@ -162,6 +162,26 @@ func TestCompileSpecsAcceptsStructuredIfCondition(t *testing.T) {
 	}
 }
 
+func TestCompileSpecsRejectsWithOnCallStep(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "invalid-with",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:   "call-step",
+			Call: "other-pipeline",
+			With: map[string]string{"message": "{payload.message}"},
+		}},
+	}}
+
+	_, err := CompileSpecs(specs)
+	if err == nil {
+		t.Fatalf("expected invalid with usage error")
+	}
+	if !strings.Contains(err.Error(), "with is only supported on uses steps") {
+		t.Fatalf("error = %v, want with usage validation", err)
+	}
+}
+
 func TestCompileSpecsRejectsInvalidIfCondition(t *testing.T) {
 	specs := []PipelineSpec{{
 		Name: "conditional",

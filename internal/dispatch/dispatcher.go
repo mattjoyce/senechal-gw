@@ -369,6 +369,25 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			}
 		}
 
+		// WITH: Apply pipeline step's with: remap to override/add payload keys.
+		// requestContext["ductile_pipeline"] and ["ductile_step_id"] are set by loadRequestContext.
+		if d.router != nil {
+			if pName, ok1 := requestContext["ductile_pipeline"].(string); ok1 {
+				if sID, ok2 := requestContext["ductile_step_id"].(string); ok2 {
+					if node, found := d.router.GetNode(pName, sID); found && len(node.With) > 0 {
+						remappedPayload, err := applyWithRemap(event.Payload, node.With, requestContext)
+						if err != nil {
+							errMsg := fmt.Sprintf("apply with remap for %s/%s: %v", pName, sID, err)
+							jobLogger.Error(errMsg)
+							d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+							return
+						}
+						event.Payload = remappedPayload
+					}
+				}
+			}
+		}
+
 		req.Event = &event
 	}
 

@@ -136,6 +136,27 @@ Semantics:
 - missing paths resolve to absent for `exists`, otherwise compare as `null`
 - invalid conditions fail at pipeline load time
 
+### 3.6 `with` (Payload Remap for `uses` Steps)
+`with` lets a `uses` step add or override top-level payload keys immediately before the plugin is spawned.
+
+```yaml
+steps:
+  - id: notify
+    uses: discord_notify
+    with:
+      message: "{payload.stdout}"
+      channel: "{context.origin_channel_id}"
+      summary: "Build finished: {payload.status}"
+```
+
+Rules:
+- `with` is only valid on `uses` steps.
+- Each value is evaluated against a snapshot of the merged `payload.*` and `context.*` scope.
+- A pure reference such as `{payload.count}` preserves the original type.
+- A mixed template such as `Build: {payload.status}` produces a string.
+- `with` entries do not see each other's output. They all read from the same pre-remap snapshot.
+- Invalid paths or malformed templates fail the job. Ductile does not silently substitute `null` or `""`.
+
 ---
 
 ## 4. How Data Flows
@@ -188,6 +209,8 @@ Preflight executes three operations in order:
 2. **Ensure workspace** — Creates or inherits a workspace directory for the job. If a parent job exists, the workspace is cloned from it (zero-copy hard-link clone). If no parent exists, a fresh workspace is created. This runs *before* condition evaluation so that skipped steps still have a valid workspace for downstream inheritance.
 
 3. **Evaluate `if` condition** — If the job's pipeline step has an `if` condition, evaluates it against the available scope (`payload.*`, `context.*`, `config.*`). Only runs when the job is part of a pipeline with a router.
+
+After preflight, a `handle` job for a pipeline `uses` step applies any configured `with` remap to the event payload. This happens after the governance payload/context merge and before plugin spawn.
 
 ### 6.2 Preflight Outcomes
 

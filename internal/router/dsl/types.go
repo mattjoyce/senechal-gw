@@ -33,6 +33,7 @@ type StepSpec struct {
 	If    *conditions.Condition `yaml:"if,omitempty"`
 	Steps []StepSpec            `yaml:"steps,omitempty"`
 	Split []StepSpec            `yaml:"split,omitempty"`
+	With  map[string]string     `yaml:"with,omitempty"`
 }
 
 // NodeKind identifies the executable action represented by a DAG node.
@@ -50,6 +51,7 @@ type Node struct {
 	Uses      string
 	Call      string
 	Condition *conditions.Condition
+	With      map[string]string
 }
 
 // Edge defines a directed dependency between two nodes.

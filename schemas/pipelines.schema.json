@@ -105,9 +105,61 @@
           "type": "array",
           "description": "Parallel fan-out sub-steps.",
           "items": { "$ref": "#/$defs/StepEntry" }
+        },
+        "with": {
+          "type": "object",
+          "description": "Optional payload remap for a uses step. Values are templates resolved from payload.* or context.* before the plugin is spawned.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": ["uses"],
+          "not": {
+            "anyOf": [
+              { "required": ["call"] },
+              { "required": ["steps"] },
+              { "required": ["split"] }
+            ]
+          }
+        },
+        {
+          "required": ["call"],
+          "not": {
+            "anyOf": [
+              { "required": ["uses"] },
+              { "required": ["steps"] },
+              { "required": ["split"] },
+              { "required": ["with"] }
+            ]
+          }
+        },
+        {
+          "required": ["steps"],
+          "not": {
+            "anyOf": [
+              { "required": ["uses"] },
+              { "required": ["call"] },
+              { "required": ["split"] },
+              { "required": ["with"] }
+            ]
+          }
+        },
+        {
+          "required": ["split"],
+          "not": {
+            "anyOf": [
+              { "required": ["uses"] },
+              { "required": ["call"] },
+              { "required": ["steps"] },
+              { "required": ["with"] }
+            ]
+          }
+        }
+      ]
     }
   }
 }

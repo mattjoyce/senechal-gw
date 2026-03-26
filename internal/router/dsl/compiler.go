@@ -150,6 +150,9 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 	if modeCount != 1 {
 		return nil, nil, fmt.Errorf("step must define exactly one of uses, call, steps, or split")
 	}
+	if len(step.With) > 0 && strings.TrimSpace(step.Uses) == "" {
+		return nil, nil, fmt.Errorf("with is only supported on uses steps")
+	}
 
 	var cond *conditions.Condition
 	if step.If != nil {
@@ -171,6 +174,7 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 			Kind:      NodeKindUses,
 			Uses:      strings.TrimSpace(step.Uses),
 			Condition: cond,
+			With:      step.With,
 		}
 		b.pipeline.Nodes[id] = node
 		return []string{id}, []string{id}, nil

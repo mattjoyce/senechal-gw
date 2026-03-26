@@ -32,6 +32,7 @@ Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an 
 
 -   **Polyglot Runtime** — Write connectors in Python, Bash, Node.js, Go, or Rust. If it reads `stdin` and writes `stdout` JSON, it works.
 -   **Event-Driven Pipelines** — Chain connectors into multi-step workflows. Pass data downstream with automatic metadata (baggage) propagation.
+-   **Step-Level Payload Remap** — Use pipeline `with:` mappings to adapt downstream plugin inputs without creating one-off plugin aliases.
 -   **Smart Scheduling** — Support for `cron`, fuzzy intervals, and jitter to avoid thundering herds.
 -   **Secure Webhooks** — Inbound HMAC-verified endpoints for GitHub, Discord, or custom services.
 -   **Parallel Dispatch** — Bounded worker pool with per-plugin concurrency caps and "concurrency-safe" manifest hints.

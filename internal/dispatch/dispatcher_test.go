@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -356,6 +357,95 @@ echo 'not valid json'
 	if status != "failed" {
 		t.Errorf("expected status=failed, got %s", status)
 	}
+}
+
+func TestDispatcher_ExecuteJob_WithTemplateErrorFailsJob(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"ok"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "echo", script)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(echo): %v", err)
+	}
+
+	set, err := router.LoadFromConfigFiles([]string{writePipelineFile(t, t.TempDir(), `pipelines:
+  - name: with-pipeline
+    on: event.start
+    steps:
+      - id: notify
+        uses: echo
+        with:
+          message: "{payload.missing}"
+`)}, disp.registry, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+	disp.router = set
+
+	disp.cfg.Plugins["echo"] = config.PluginConf{
+		Enabled:  true,
+		Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second},
+	}
+
+	ctx := context.Background()
+	eventCtx, err := disp.contexts.Create(ctx, nil, "with-pipeline", "notify", []byte(`{"origin_channel_id":"chan-1"}`))
+	if err != nil {
+		t.Fatalf("ContextStore.Create(): %v", err)
+	}
+
+	payload, err := json.Marshal(protocol.Event{
+		Type:    "event.start",
+		Payload: map[string]any{"message": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(event): %v", err)
+	}
+
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:         "echo",
+		Command:        "handle",
+		Payload:        payload,
+		EventContextID: &eventCtx.ID,
+		SubmittedBy:    "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue(): %v", err)
+	}
+
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(): %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected queued job")
+	}
+
+	disp.executeJob(ctx, job)
+
+	var status, lastError string
+	if err := db.QueryRow("SELECT status, last_error FROM job_queue WHERE id = ?", jobID).Scan(&status, &lastError); err != nil {
+		t.Fatalf("query job status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("status = %q, want %q", status, "failed")
+	}
+	if !strings.Contains(lastError, `resolve "payload.missing": path not found`) {
+		t.Fatalf("last_error = %q, want path resolution failure", lastError)
+	}
+}
+
+func writePipelineFile(t *testing.T, dir, body string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, "pipelines.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+	return path
 }
 
 func TestCalculateBackoffDelay(t *testing.T) {
