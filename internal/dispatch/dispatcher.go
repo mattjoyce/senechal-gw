@@ -504,7 +504,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	// Mark job as succeeded
 	recordBlackBox(queue.StatusSucceeded, nil)
-	d.maybeFireHooks(ctx, job, "job.completed", map[string]any{
+	d.maybeFireHooks(ctx, job, hookSignalForStatus(queue.StatusSucceeded), map[string]any{
 		"job_id":  job.ID,
 		"plugin":  job.Plugin,
 		"command": job.Command,
@@ -727,8 +727,21 @@ func (d *Dispatcher) failOrRetry(
 	if lastError != nil {
 		hookPayload["error"] = *lastError
 	}
-	d.maybeFireHooks(ctx, job, "job.completed", hookPayload)
+	d.maybeFireHooks(ctx, job, hookSignalForStatus(status), hookPayload)
 	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, status, result, lastError, stderr)
+}
+
+func hookSignalForStatus(status queue.Status) string {
+	switch status {
+	case queue.StatusSucceeded:
+		return "job.completed"
+	case queue.StatusTimedOut:
+		return "job.timed_out"
+	case queue.StatusFailed, queue.StatusDead:
+		return "job.failed"
+	default:
+		return ""
+	}
 }
 
 func (d *Dispatcher) computeRetryDelay(retryCfg *config.RetryConfig, attempt int) time.Duration {
@@ -1230,6 +1243,9 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 // maybeFireHooks fires on-hook lifecycle pipelines for a completed root job if the plugin
 // has notify_on_complete: true in its config. Pipeline steps and retried jobs are skipped.
 func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal string, payload map[string]any) {
+	if strings.TrimSpace(signal) == "" {
+		return
+	}
 	if job.EventContextID != nil {
 		return // pipeline step — not a root job
 	}
@@ -1246,9 +1262,9 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 		return
 	}
 	for _, disp := range dispatches {
-		payloadJSON, err := json.Marshal(disp.Event.Payload)
+		payloadJSON, err := json.Marshal(disp.Event)
 		if err != nil {
-			d.logger.Error("failed to marshal hook payload", "plugin", disp.Plugin, "error", err)
+			d.logger.Error("failed to marshal hook event", "plugin", disp.Plugin, "signal", signal, "error", err)
 			continue
 		}
 		enqReq := queue.EnqueueRequest{
