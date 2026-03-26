@@ -151,6 +151,11 @@ func DiscoverManyWithOptions(pluginRoots []string, logger func(level, msg string
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan plugin root %s: %w", root, err)
 		}
+
+		// Warn on directories that look like plugins (contain a common entrypoint
+		// file) but have no manifest.yaml — these are silently skipped by the walk
+		// above and can cause confusing behaviour where edits go to the wrong copy.
+		warnOrphanPluginDirs(root, logger)
 	}
 
 	return registry, nil
@@ -348,6 +353,38 @@ func validateTrustInRoots(entrypointPath, pluginPath string, pluginRoots []strin
 	}
 
 	return nil
+}
+
+// warnOrphanPluginDirs warns when a subdirectory of root contains a common
+// plugin entrypoint file (run.py, run.sh, main.go, etc.) but no manifest.yaml.
+// These dirs are invisible to discovery and edits to them have no effect.
+func warnOrphanPluginDirs(root string, logger func(level, msg string, args ...any)) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	commonEntrypoints := map[string]struct{}{
+		"run.py": {}, "run.sh": {}, "main.go": {}, "main.py": {},
+		"index.js": {}, "index.ts": {}, "run.js": {}, "run.ts": {},
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name())
+		if _, err := os.Stat(filepath.Join(dir, manifestFilename)); err == nil {
+			continue // has manifest — already handled by main walk
+		}
+		// Check for any common entrypoint file
+		for name := range commonEntrypoints {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				logger("warn", "plugin directory missing manifest.yaml — directory will be ignored",
+					"path", dir,
+					"hint", "add a manifest.yaml or remove the directory from the plugin root")
+				break
+			}
+		}
+	}
 }
 
 func warnOrErrorOnSymlink(logger func(level, msg string, args ...any), kind, path, resolved string, allowSymlinks bool) error {
