@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-28
+- Use 'dev' as the default version instead of a hardcoded fallback.
+- Remove all protocol v1 references from docs and tests.
+
 ## 2026-03-26
 - Dedupe window shortened from 24h to 2h to keep deduping more current.
 - Reverts undo earlier dispatch changes: routing of job.completed and job.failed through the pipeline engine and the added message field for job.completed.
