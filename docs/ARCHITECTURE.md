@@ -282,7 +282,7 @@ manifest_spec: ductile.plugin
 manifest_version: 1
 name: withings
 version: 1.0.0
-protocol: 1
+protocol: 2
 entrypoint: run.py
 description: "Fetch health data from Withings API"
 commands:

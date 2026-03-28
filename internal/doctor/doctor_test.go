@@ -40,7 +40,7 @@ func registryWith(plugins ...*plugin.Plugin) *plugin.Registry {
 func echoPlugin() *plugin.Plugin {
 	return &plugin.Plugin{
 		Name:     "echo",
-		Protocol: 1,
+		Protocol: 2,
 		Commands: plugin.Commands{
 			{Name: "poll", Type: plugin.CommandTypeRead},
 			{Name: "handle", Type: plugin.CommandTypeWrite},

@@ -31,7 +31,7 @@ config, pipelines, and the REST API.
 
 2. **Plugin Lifecycle: Spawn-Per-Command** - No long-lived plugin processes:
    - Fork entrypoint → write JSON to stdin → read JSON from stdout → kill process
-   - Protocol v1: single request/response, process exits
+   - Protocol 2: single request/response, process exits
    - Timeouts enforced: SIGTERM → 5s grace → SIGKILL
 
 3. **State Model:**
@@ -57,22 +57,25 @@ ductile/
 ├── plugins/                    # Drop-in plugins (any language with shebang)
 │   └── example/
 │       ├── manifest.yaml      # name, protocol, entrypoint, commands, config_keys
-│       └── run.py             # Executable with protocol v1 JSON I/O
+│       └── run.py             # Executable with protocol 2 JSON I/O
 └── config.yaml                # Service config, plugin schedules, routes, webhooks
 ```
 
 **Internal packages are organized by concern, not by layer.** Each package owns a distinct responsibility.
 
-## Protocol v1 (docs/ARCHITECTURE.md §6)
+## Protocol 2 (docs/ARCHITECTURE.md §6)
 
 **Request envelope (core → plugin stdin):**
 ```json
 {
-  "protocol": 1,
+  "protocol": 2,
   "job_id": "uuid",
   "command": "poll | handle | health | init",
   "config": {},
   "state": {},
+  "payload": {},         // structured input (replaces event payload)
+  "context": {},         // baggage carried across multi-hop pipelines
+  "workspace_dir": "",   // per-job filesystem isolation (hardlink clone)
   "event": {},           // only for handle
   "deadline_at": "ISO8601"
 }
@@ -117,7 +120,7 @@ Environment variable interpolation via `${VAR}` syntax. Secrets never in config 
 **Current phase:** Pre-MVP (planning complete, no code yet)
 
 **MVP Scope (MVP.md):** Prove core loop works end-to-end:
-- Config loader, SQLite state, PID lock, scheduler tick, dispatch loop, protocol v1 codec
+- Config loader, SQLite state, PID lock, scheduler tick, dispatch loop, protocol 2 codec
 - Echo plugin for validation (bash script, reads stdin, writes stdout)
 - Crash recovery (orphaned `running` jobs → `dead` on restart, no retry in MVP)
 - Structured JSON logging
@@ -171,7 +174,7 @@ go test ./...
 
 **Validation checklist:**
 - Plugin spawned on schedule with jitter
-- Protocol v1 JSON valid on stdin
+- Protocol 2 JSON valid on stdin
 - Response parsed, state persisted to SQLite
 - Stderr captured and logged
 - Timeout kills hung plugin (test with `sleep 999`)
@@ -193,7 +196,7 @@ Tasks tracked as cards in `~/kanban/ductile/cards/` with YAML frontmatter:
 ## Deferred Decisions (docs/ARCHITECTURE.md §15)
 
 Do NOT implement these without explicit requirement:
-- Protocol v2 changes (response envelope `protocol` field)
+- Response envelope `protocol` field changes (protocol 2 is current and fixed)
 - Replay protection for webhooks (provider-specific)
 - Rate limiting on webhook listener (proxy responsibility)
 - Secret redaction in logs (fix plugins, don't bandage core)
