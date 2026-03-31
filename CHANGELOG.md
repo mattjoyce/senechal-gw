@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-03-31
+- Add MACOS_INSTALLATION.md with the first Mac (darwin/arm64) installation guide.
+
 ## 2026-03-28
 - Use 'dev' as the default version instead of a hardcoded fallback.
 - Remove all protocol v1 references from docs and tests.
