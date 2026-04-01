@@ -124,7 +124,12 @@ echo '{"status": "ok", "result": "notified"}'
 
 	// Test Case B: Pipeline step DOES NOT fire hook (to avoid recursion/noise)
 	t.Run("PipelineStepDoesNotFireHook", func(t *testing.T) {
-		ctxID := "ctx-1"
+		// Create a real event context so preflight validation passes.
+		pipelineCtx, err := disp.contexts.Create(ctx, nil, "test-pipeline", "test-step", nil)
+		if err != nil {
+			t.Fatalf("failed to create event context: %v", err)
+		}
+		ctxID := pipelineCtx.ID
 		jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
 			Plugin:         "echo",
 			Command:        "poll",
@@ -223,7 +228,7 @@ echo '{"status": "ok", "result": "notified"}'
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
 		{
 			Name:   "notify-on-complete",
-			OnHook: "job.completed",
+			OnHook: "job.failed",
 			Steps:  []dsl.StepSpec{{ID: "notify", Uses: "notifier"}},
 		},
 	})
