@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-01
+- Add PLUGIN_DIAGNOSTICS.md: structured runbook for plugin health investigation.
+- Fix two failing tests in the dispatch hook_test.go to improve test reliability.
+
 ## 2026-03-31
 - Add MACOS_INSTALLATION.md with the first Mac (darwin/arm64) installation guide.
 
