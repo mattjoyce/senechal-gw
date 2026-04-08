@@ -1,69 +1,82 @@
-# CLAUDE.md
+# CLAUDE.md — Ductile
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI agents working in this repository.
 
-## Project Overview
+## What is Ductile
 
-Ductile is a lightweight, YAML-configured integration gateway written in Go. It orchestrates polyglot plugins via a subprocess protocol (JSON over stdin/stdout). The system is designed for personal-scale automation (~50 jobs/day) with emphasis on simplicity, reliability, and predictable behavior under crash/retry/timeout conditions.
+Ductile is a lightweight, YAML-configured integration gateway written in Go. It orchestrates polyglot plugins via a subprocess protocol (JSON over stdin/stdout). Designed for personal-scale automation (~50–500 jobs/day) with emphasis on simplicity, reliability, and predictable behaviour under crash, retry, and timeout conditions.
 
-**Core Philosophy:** Simple enough to understand in an afternoon. Extensible enough to grow with new connectors. Plugins stay dumb; the core controls flow.
+**Core philosophy:** Plugins stay dumb; the core controls flow. Simple enough to understand in an afternoon. Extensible enough to grow with new connectors.
 
-## Claude Code Skill
-
-A pre-built Claude Code skill for operating ductile is included at `skills/ductile/`.
-
-**Install:**
-```bash
-cp -r skills/ductile/ ~/.claude/skills/ductile/
-```
-
-Once installed, Claude will automatically use it when working with ductile commands,
-config, pipelines, and the REST API.
+**Current status:** Production (v1.0.0-rc.1). Running on Thinkpad (`~/.local/bin/ductile`) and Unraid.
 
 ## Architecture
 
 ### Central Abstractions
 
-1. **Work Queue (SQLite-backed)** - All producers submit to a single FIFO queue:
-   - Producers: Scheduler (heartbeat ticks), Webhook receiver, Router (plugin output), CLI
-   - Serial dispatch (one job at a time, no concurrency)
-   - At-least-once delivery guarantee (plugins must be idempotent)
+1. **Work Queue (SQLite-backed)** — All producers submit to a single FIFO queue. Producers: Scheduler (heartbeat ticks), Webhook receiver, Router (plugin output), CLI/API. Serial dispatch by default (`max_workers: 1`); configurable per-plugin with `parallelism`.
 
-2. **Plugin Lifecycle: Spawn-Per-Command** - No long-lived plugin processes:
+2. **Plugin Lifecycle: Spawn-Per-Command** — No long-lived plugin processes:
    - Fork entrypoint → write JSON to stdin → read JSON from stdout → kill process
-   - Protocol 2: single request/response, process exits
+   - Protocol v2: request includes `context` (baggage) and `workspace_dir`
    - Timeouts enforced: SIGTERM → 5s grace → SIGKILL
 
 3. **State Model:**
-   - `config` - Static, from config.yaml, interpolated with env vars (credentials, endpoints)
-   - `state` - Dynamic, single JSON blob per plugin in SQLite, shallow-merged on updates
-   - Plugins manage their own OAuth lifecycle via state (access_token, refresh_token in state)
+   - `config` — Static, from config files, interpolated with env vars
+   - `state` — Dynamic, single JSON blob per plugin in SQLite, shallow-merged on updates
+   - `workspace` — Per-job directory on disk for file artifacts; inherited across pipeline steps
 
-### Project Structure (from docs/ARCHITECTURE.md §13)
+4. **Pipeline Engine** — YAML DSL for event-driven orchestration. Steps can `uses` a plugin, `call` another pipeline, `split` for parallel fan-out, gate with `if` conditions, and remap payload with `with`.
+
+### Project Structure
 
 ```
 ductile/
 ├── cmd/ductile/           # CLI entrypoint
-│   └── main.go
-├── internal/                   # Core components (not importable externally)
-│   ├── config/                # YAML parser, ${ENV} interpolation
-│   ├── queue/                 # SQLite work queue (enqueue/dequeue/state machine)
-│   ├── scheduler/             # Heartbeat tick, fuzzy intervals, poll guard
-│   ├── dispatch/              # Plugin spawn, stdin/stdout, timeout enforcement
-│   ├── plugin/                # Discovery, manifest validation, registry
-│   ├── state/                 # SQLite plugin_state table, shallow merge
-│   ├── webhook/               # HTTP listener, HMAC verification, /healthz
-│   └── router/                # Config-declared event routing, fan-out
-├── plugins/                    # Drop-in plugins (any language with shebang)
-│   └── example/
-│       ├── manifest.yaml      # name, protocol, entrypoint, commands, config_keys
-│       └── run.py             # Executable with protocol 2 JSON I/O
-└── config.yaml                # Service config, plugin schedules, routes, webhooks
+├── internal/              # Core packages (not importable externally)
+│   ├── api/               # REST API server
+│   ├── auth/              # Token auth, scopes
+│   ├── config/            # YAML parser, ${ENV} interpolation, integrity
+│   ├── dispatch/          # Plugin spawn, preflight, workspace, pipeline routing
+│   ├── doctor/            # Startup preflight checks
+│   ├── e2e/               # End-to-end test harness
+│   ├── events/            # Event hub
+│   ├── inspect/           # Job/baggage inspection
+│   ├── lock/              # PID lock
+│   ├── log/               # Structured logging
+│   ├── plugin/            # Discovery, manifest validation, registry
+│   ├── protocol/          # v2 codec (request/response envelopes)
+│   ├── queue/             # SQLite work queue, state machine
+│   ├── router/            # Config-declared event routing, fan-out
+│   ├── scheduler/         # Heartbeat tick, interval/cron, poll guard
+│   ├── scheduleexpr/      # Schedule expression parser
+│   ├── state/             # SQLite plugin_state table, shallow merge
+│   ├── storage/           # SQLite helpers
+│   ├── tui/               # Terminal UI (system watch)
+│   ├── webhook/           # HTTP listener, HMAC verification
+│   └── workspace/         # Workspace lifecycle (create, clone, shard)
+├── plugins/               # Bundled reference plugins
+│   ├── echo/              # Minimal bash reference plugin
+│   ├── fabric/            # Fabric pattern runner
+│   ├── fetch/             # HTTP fetch
+│   ├── file_handler/      # File write/copy
+│   ├── file_watch/        # File system watcher
+│   ├── folder_watch/      # Folder watcher
+│   ├── sys_exec/          # Shell command executor
+│   └── ...
+├── skills/ductile/        # Claude Code skill (install to ~/.claude/skills/ductile/)
+├── docs/                  # Canonical documentation
+│   ├── ARCHITECTURE.md    # Single source of truth — supersedes all RFCs
+│   ├── API_REFERENCE.md   # REST API endpoints and schemas
+│   ├── CONFIG_REFERENCE.md # Configuration spec
+│   ├── PIPELINES.md       # Pipeline DSL reference
+│   ├── PLUGIN_DEVELOPMENT.md # Plugin authoring guide
+│   └── OPERATOR_GUIDE.md  # Day-to-day operations
+├── config.yaml            # Example/template service config
+└── go.mod
 ```
 
-**Internal packages are organized by concern, not by layer.** Each package owns a distinct responsibility.
-
-## Protocol 2 (docs/ARCHITECTURE.md §6)
+## Protocol v2
 
 **Request envelope (core → plugin stdin):**
 ```json
@@ -73,10 +86,9 @@ ductile/
   "command": "poll | handle | health | init",
   "config": {},
   "state": {},
-  "payload": {},         // structured input (replaces event payload)
-  "context": {},         // baggage carried across multi-hop pipelines
-  "workspace_dir": "",   // per-job filesystem isolation (hardlink clone)
-  "event": {},           // only for handle
+  "context": {},
+  "workspace_dir": "/path/to/workspace",
+  "event": {},
   "deadline_at": "ISO8601"
 }
 ```
@@ -85,120 +97,173 @@ ductile/
 ```json
 {
   "status": "ok | error",
-  "error": "message",    // when status=error
-  "retry": true,         // default true; false = non-retryable
-  "events": [],          // array of {type, payload, dedupe_key}
-  "state_updates": {},   // shallow-merged into plugin state
-  "logs": []             // [{level, message}] - stored with job
+  "result": "short human-readable summary",
+  "error": "message",
+  "retry": true,
+  "events": [{"type": "...", "payload": {}}],
+  "state_updates": {},
+  "logs": [{"level": "info", "message": "..."}]
 }
 ```
 
-**Framing:** Single JSON object, not JSON Lines. One request, one response, process exits.
+`result` is required when `status: ok`. Events trigger downstream pipeline routing.
+
+## Configuration
+
+Ductile uses a tiered config directory (default `~/.config/ductile/`). Only `config.yaml` is implicitly loaded; everything else is pulled in via `include:`.
+
+**Typical layout:**
+```
+~/.config/ductile/
+├── config.yaml          # Service settings, plugin_roots, include list
+├── api.yaml             # API server config and tokens
+├── tokens.yaml          # Scoped API tokens (High Security — integrity enforced)
+├── webhooks.yaml        # Webhook endpoints and secrets (High Security)
+├── plugins/             # Per-group plugin configs (loaded via include: plugins/)
+│   ├── discord.yaml
+│   ├── web.yaml
+│   └── ...
+├── pipelines.yaml       # Pipeline DSL
+├── .checksums           # BLAKE3 integrity manifest (updated by ductile config lock)
+└── .env                 # Local env vars
+```
+
+**`config.yaml` structure:**
+```yaml
+service:
+  strict_mode: true        # Hard fail on any integrity/config check failure
+
+state:
+  path: ~/.config/ductile/ductile.db
+
+plugin_roots:
+  - ~/Projects/ductile/plugins
+  - ~/Projects/ductile-plugins
+
+webhooks:
+  listen: "0.0.0.0:8091"
+
+environment_vars:
+  include:
+    - .env
+    - ~/.config/secrets/anthropic/.env
+
+include:
+  - api.yaml
+  - tokens.yaml
+  - plugins/
+  - pipelines.yaml
+  - webhooks.yaml
+```
+
+**Plugin aliasing** — reuse a plugin implementation with a different identity and config:
+```yaml
+plugins:
+  github_interest_notify:
+    uses: discord_notify      # Inherits discord_notify's implementation
+    enabled: true
+    config:
+      webhook_url: "${DISCORD_WEBHOOK_URL}"
+      message_template: "⭐ {sender.login} starred {repository.full_name}"
+```
+
+**Schedules** — interval or cron:
+```yaml
+plugins:
+  discord_notify:
+    schedules:
+      - cron: "0 9 * * *"
+        command: poll
+        timezone: "Australia/Sydney"
+      # OR interval:
+      - every: 30m
+        jitter: 2m
+```
+
+## Pipeline DSL
+
+Pipelines are event-driven workflows defined in `pipelines.yaml`.
+
+```yaml
+pipelines:
+  - name: youtube-wisdom
+    on: youtube.url.detected        # Trigger event type (exact match)
+    steps:
+      - id: transcript
+        uses: youtube_transcript
+      - id: summarize
+        uses: fabric
+        with:
+          pattern: "{payload.pattern}"   # Payload remap before plugin spawn
+      - id: write
+        uses: file_handler
+        if:                              # Conditional execution
+          path: payload.status
+          op: eq
+          value: ok
+
+  - name: notify-on-failure
+    on-hook: job.completed             # Lifecycle hook (system event, not plugin event)
+    steps:
+      - uses: discord_notify
+        if:
+          path: payload.status
+          op: neq
+          value: succeeded
+```
+
+Step types: `uses` (invoke plugin), `call` (invoke pipeline), `split` (parallel fan-out).
+
+`if` operators: `exists`, `eq`, `neq`, `in`, `gt`, `gte`, `lt`, `lte`, `contains`, `startswith`, `endswith`, `regex`. Composable with `all`, `any`, `not`.
+
+Execution modes: `async` (default, fire-and-forget) or `synchronous` (API blocks for result, use with `timeout:`).
 
 ## Key Design Constraints
 
-1. **Serial Dispatch** - No concurrency, strictly FIFO. Revisit only if daily jobs > 500 or median wait > 30s.
-2. **No Streaming** - No WebSockets, long-polling, or persistent plugin connections. If it needs to stream, it's not a plugin (run as separate service pushing to webhook endpoint).
-3. **Exact Match Routing** - No wildcards, regexes, or payload filters. Conditional logic belongs in receiving plugins.
-4. **Spawn-Per-Command** - No daemon management. Process spawn overhead (~5ms) is irrelevant at this scale.
-5. **HMAC Mandatory** - All webhook endpoints require HMAC-SHA256 signature verification (docs/ARCHITECTURE.md §8.2).
-
-## Configuration Reference (docs/ARCHITECTURE.md §11)
-
-Environment variable interpolation via `${VAR}` syntax. Secrets never in config file.
-
-**Critical fields:**
-- `service.tick_interval` - Scheduler heartbeat (default 60s)
-- `service.dedupe_ttl` - Deduplication window (default 24h)
-- `plugins.<name>.schedule.every` - Supported: 5m, 15m, 30m, hourly, 2h, 6h, daily, weekly, monthly (no crontab)
-- `plugins.<name>.schedule.jitter` - Per-run randomization to avoid thundering herd
-- `plugins.<name>.circuit_breaker.threshold` - Consecutive failures before blocking scheduler (default 3)
-- `routes` - Array of `{from, event_type, to}` for plugin chaining (fan-out supported)
-
-## Implementation Status
-
-**Current phase:** Pre-MVP (planning complete, no code yet)
-
-**MVP Scope (MVP.md):** Prove core loop works end-to-end:
-- Config loader, SQLite state, PID lock, scheduler tick, dispatch loop, protocol 2 codec
-- Echo plugin for validation (bash script, reads stdin, writes stdout)
-- Crash recovery (orphaned `running` jobs → `dead` on restart, no retry in MVP)
-- Structured JSON logging
-
-**NOT in MVP:** Routing, webhooks, circuit breaker, deduplication, retry/backoff, config reload, health endpoint
-
-**Implementation phases (docs/ARCHITECTURE.md §14):**
-1. Skeleton (Go scaffold, CLI, config, SQLite, plugin discovery)
-2. Core Loop (queue, scheduler, dispatch, protocol)
-3. Routing (event fan-out, traceability)
-4. Webhooks (HTTP listener, HMAC, /healthz)
-5. CLI & Ops (status/reload/reset, systemd unit)
-6. First Plugins (port Withings/Garmin from existing Ductile)
-
-## Workflow
-
-See `CONTRIBUTING.md` for the full contributor workflow.
-
-**Quick Reference:**
-- **Branching:** `<component>/card<id>-<short-description>`
-- **Commits:** `<component>: <action> <what>` (never attribute Claude/AI)
-- **Rule:** One card → one branch → one PR → merge → next card
+1. **Serial Dispatch by default** — `max_workers: 1`. Increase only if daily jobs > 500 or median wait > 30s.
+2. **No Streaming** — No WebSockets or persistent plugin connections.
+3. **Exact Match Routing** — No wildcards. Conditional logic belongs in plugins or `if` predicates.
+4. **Spawn-Per-Command** — No daemon management. ~5ms spawn overhead is fine at this scale.
+5. **HMAC Mandatory** — All webhook endpoints require HMAC-SHA256.
+6. **Integrity on High-Security files** — `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` must pass BLAKE3 check or system refuses to start. Always run `ductile config lock` after editing these files.
 
 ## Development Commands
-
-**Note:** Project is pre-code. Commands below are from SPEC for when implementation begins.
 
 ```bash
 # Build
 go build -o ductile ./cmd/ductile
 
-# Run tests
+# Test
 go test ./...
 
-# Run service (foreground)
-./ductile start --config config.yaml
+# Run (foreground)
+./ductile system start --config ~/.config/ductile/config.yaml
 
-# Planned CLI commands (docs/ARCHITECTURE.md §9.6)
-./ductile run <plugin>     # manually trigger plugin once
-./ductile status           # plugin states, queue depth, last runs
-./ductile system monitor   # real-time TUI dashboard
-./ductile reload           # SIGHUP config reload
-./ductile reset <plugin>   # reset circuit breaker
-./ductile plugins          # list discovered plugins
-./ductile queue            # show pending/active jobs
+# After editing any config files
+ductile config lock
+ductile config check
 ```
 
-## Testing Strategy
+## Workflow
 
-**MVP test plugin (MVP.md):** `plugins/echo/run.sh` - Reads stdin, returns JSON with timestamp in `state_updates.last_run`.
+- **Branching:** `<component>/card<id>-<short-description>`
+- **Commits:** `<component>: <action> <what>` — never attribute Claude/AI
+- **Rule:** One card → one branch → one PR → merge → next card
+- **Issue tracking:** `bd` (beads) CLI — see `AGENTS.md`
 
-**Validation checklist:**
-- Plugin spawned on schedule with jitter
-- Protocol 2 JSON valid on stdin
-- Response parsed, state persisted to SQLite
-- Stderr captured and logged
-- Timeout kills hung plugin (test with `sleep 999`)
-- Crash recovery: kill -9 process, restart, orphaned job logged
+## Ductile Skill
 
-## Kanban Workflow
+A Claude Code skill for operating ductile is in `skills/ductile/`. Install it:
 
-Tasks tracked as cards in `~/kanban/ductile/cards/` with YAML frontmatter:
-- `id`, `status` (todo/doing/done), `priority`, `blocked_by`, `tags`
-- Use the `kanban-ai` skill to create, view, and manage cards
+```bash
+cp -r skills/ductile/ ~/.claude/skills/ductile/
+```
 
 ## Critical References
 
-- **docs/ARCHITECTURE.md** - Single source of truth, supersedes all RFCs
-- **MVP.md** - Minimal subset to prove architecture
-- **RFC/** - Multi-LLM design reviews (historical context, not authoritative)
-- **Go idioms:** Simple, explicit error handling, composition over inheritance, no panic/recover in plugins
-
-## Deferred Decisions (docs/ARCHITECTURE.md §15)
-
-Do NOT implement these without explicit requirement:
-- Response envelope `protocol` field changes (protocol 2 is current and fixed)
-- Replay protection for webhooks (provider-specific)
-- Rate limiting on webhook listener (proxy responsibility)
-- Secret redaction in logs (fix plugins, don't bandage core)
-- Priority queues / multi-lane dispatch (only if jobs > 500/day)
-- Router query language / payload filters (put logic in receiving plugin)
+- `docs/ARCHITECTURE.md` — Single source of truth, supersedes all RFCs
+- `docs/API_REFERENCE.md` — REST API
+- `docs/CONFIG_REFERENCE.md` — Config spec
+- `docs/PIPELINES.md` — Pipeline DSL
+- `docs/PLUGIN_DEVELOPMENT.md` — Plugin authoring
+- `docs/OPERATOR_GUIDE.md` — Day-to-day ops

@@ -16,11 +16,10 @@ Design philosophy: polyglot plugins, event-driven pipelines, LLM-first CLI.
 
 ## Runtime Context
 
-- **Binary**: `/home/matt/admin/ductile-test/ductile` (test) or `/home/matt/.local/bin/ductile` (local prod)
-- **Test env**: `/home/matt/admin/ductile-test/`
-- **Local prod config**: `~/.config/ductile/`
-- **Run from**: `/home/matt/admin`
+- **Binary**: `~/.local/bin/ductile` (Thinkpad prod), `ductile` if on PATH
+- **Config dir**: `~/.config/ductile/`
 - **Pattern**: `ductile <noun> <action> [flags]`
+- **Version**: v1.0.0-rc.1
 
 ## CLI Command Reference
 
@@ -28,6 +27,7 @@ Design philosophy: polyglot plugins, event-driven pipelines, LLM-first CLI.
 ```bash
 ductile system start                      # Start gateway (foreground)
 ductile system status [--json]            # Health: PID, state DB, plugins
+ductile system reload                     # Reload config in a running gateway (SIGHUP)
 ductile system watch                      # Real-time TUI monitor
 ductile system reset <plugin>             # Reset circuit breaker
 ductile system skills [--config <dir>]    # Export LLM skill manifest (Markdown)
@@ -53,13 +53,37 @@ ductile config webhook                    # Manage webhooks
 
 ### Job
 ```bash
-ductile job inspect <job_id> [-v]         # Lineage, baggage, workspace artifacts
+ductile job inspect <job_id> [--json]     # Lineage, baggage, workspace artifacts
+ductile job logs [--json]                 # Query stored job logs
+  # Filters: --plugin NAME, --command CMD, --status STATUS, --submitted-by NAME
+  #          --from TIME, --to TIME (RFC3339), --query TEXT, --limit N, --include-result
 ```
 
 ### Plugin
 ```bash
-ductile plugin list                       # Discover loaded plugins
-ductile plugin run <name>                 # Manual execution
+ductile plugin list [--api-url URL] [--json]   # Discover loaded plugins (via API)
+ductile plugin run <name>                      # Manual execution
+```
+
+### Workspace
+```bash
+ductile workspace migrate                 # Migrate flat workspace dirs to sharded layout
+```
+
+### API (direct gateway calls)
+```bash
+ductile api /jobs                                        # GET /jobs
+ductile api /plugin/echo/poll -f message="hello"         # POST with JSON field
+ductile api /pipeline/youtube-wisdom -f url="https://…"  # Trigger pipeline
+ductile api /system/reload -X POST                       # Force reload
+ductile api /healthz                                     # Health check
+# Flags: -X METHOD, -f key=value (repeatable), -H Header:val, -b BODY, --api-url, --api-key
+```
+
+### Top-level
+```bash
+ductile skills                            # Export capability registry as LLM Markdown
+ductile version                           # Show version + commit + build time
 ```
 
 ## Universal Flags
