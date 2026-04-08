@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-04-08
+- Rewrite CLAUDE.md to reflect rc1 state and update the skill CLI reference.
+
 ## 2026-04-01
 - Add PLUGIN_DIAGNOSTICS.md: structured runbook for plugin health investigation.
 - Fix two failing tests in the dispatch hook_test.go to improve test reliability.
