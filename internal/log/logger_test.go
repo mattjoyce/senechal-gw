@@ -56,38 +56,3 @@ func TestContextHelpers(t *testing.T) {
 	}
 }
 
-func TestWithPlugin(t *testing.T) {
-	var buf bytes.Buffer
-	h := slog.NewJSONHandler(&buf, nil)
-	logger = slog.New(h)
-
-	l2 := WithPlugin("my-plugin")
-	l2.Info("plugin msg")
-
-	var out map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
-		t.Fatalf("Failed to decode JSON: %v", err)
-	}
-
-	if out["plugin"] != "my-plugin" {
-		t.Errorf("Expected plugin 'my-plugin', got %v", out["plugin"])
-	}
-}
-
-func TestWithJob(t *testing.T) {
-	var buf bytes.Buffer
-	h := slog.NewJSONHandler(&buf, nil)
-	logger = slog.New(h)
-
-	l2 := WithJob("job-123")
-	l2.Info("job msg")
-
-	var out map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
-		t.Fatalf("Failed to decode JSON: %v", err)
-	}
-
-	if out["job_id"] != "job-123" {
-		t.Errorf("Expected job_id 'job-123', got %v", out["job_id"])
-	}
-}

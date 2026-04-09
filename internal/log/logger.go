@@ -50,12 +50,3 @@ func WithComponent(name string) *slog.Logger {
 	return Get().With(slog.String("component", name))
 }
 
-// WithPlugin returns a logger with the plugin field set.
-func WithPlugin(name string) *slog.Logger {
-	return Get().With(slog.String("plugin", name))
-}
-
-// WithJob returns a logger with the job_id field set.
-func WithJob(id string) *slog.Logger {
-	return Get().With(slog.String("job_id", id))
-}
