@@ -557,6 +557,14 @@ func applyConfigDefaults(cfg *Config) *Config {
 		cfg.API.MaxSyncTimeout = 5 * time.Minute
 	}
 
+	// Apply workspace defaults if not set
+	if cfg.Workspace.TTL == 0 {
+		cfg.Workspace.TTL = defaults.Workspace.TTL
+	}
+	if cfg.Workspace.JanitorInterval == 0 {
+		cfg.Workspace.JanitorInterval = defaults.Workspace.JanitorInterval
+	}
+
 	return cfg
 }
 
