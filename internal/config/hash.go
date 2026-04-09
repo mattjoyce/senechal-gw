@@ -190,38 +190,3 @@ func GenerateChecksumsFromDiscovery(files *ConfigFiles, dryRun bool) error {
 	return nil
 }
 
-// VerifyScopeFiles verifies all scope files against their checksums.
-// Returns error if any file hash doesn't match.
-func VerifyScopeFiles(configDir string, manifest *ChecksumManifest, scopeFiles []string) error {
-	for _, filename := range scopeFiles {
-		filePath := filepath.Join(configDir, filename)
-		absPath, err := filepath.Abs(filePath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve scope file path %s: %w", filePath, err)
-		}
-
-		// Skip if file doesn't exist (optional files like webhooks.yaml)
-		if _, err := os.Stat(absPath); os.IsNotExist(err) {
-			// But verify it's also not in the manifest
-			if _, hasHash := manifest.Hashes[absPath]; hasHash {
-				return fmt.Errorf("scope file %s is in checksums but missing from disk", filename)
-			}
-			continue
-		}
-
-		// File exists - must have hash in manifest
-		expectedHash, ok := manifest.Hashes[absPath]
-		if !ok {
-			return fmt.Errorf("scope file %s has no hash in checksums (run 'ductile config lock')", filename)
-		}
-
-		// Verify hash
-		if err := VerifyFileHash(absPath, expectedHash); err != nil {
-			return fmt.Errorf("scope file verification failed: %w\n"+
-				"This indicates tampering or unauthorized modification.\n"+
-				"If you edited this file intentionally, run: ductile config lock", err)
-		}
-	}
-
-	return nil
-}
