@@ -65,11 +65,6 @@ ductile plugin list [--api-url URL] [--json]   # Discover loaded plugins (via AP
 ductile plugin run <name>                      # Manual execution
 ```
 
-### Workspace
-```bash
-ductile workspace migrate                 # Migrate flat workspace dirs to sharded layout
-```
-
 ### API (direct gateway calls)
 ```bash
 ductile api /jobs                                        # GET /jobs

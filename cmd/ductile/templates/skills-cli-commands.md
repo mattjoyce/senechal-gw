@@ -47,6 +47,3 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json|tui> [flags="<...
 - plugin.run tier=WRITE mut=1 out=human|json flags="<name> [--command <c>] [--payload <json>]" d="Manually trigger a plugin command via API."
 - job.inspect tier=READ mut=0 out=human|json flags="<job_id>" d="Retrieve logs, baggage, and workspace artifacts for a job."
 - job.logs tier=READ mut=0 out=human|json flags="[--plugin <p>] [--query <text>] [--limit <n>]" d="Query stored job logs for audit and troubleshooting."
-
-### Maintenance
-- workspace.migrate tier=WRITE mut=1 out=human flags="[--dry-run]" d="Migrate workspace directories to sharded layout."
