@@ -393,18 +393,6 @@ func (cf *ConfigFiles) HighSecurityFiles() []string {
 	return files
 }
 
-// OperationalFiles returns only operational tier file paths.
-func (cf *ConfigFiles) OperationalFiles() []string {
-	var files []string
-	files = append(files, cf.Config)
-	files = append(files, cf.Plugins...)
-	files = append(files, cf.Pipelines...)
-	if cf.Routes != "" {
-		files = append(files, cf.Routes)
-	}
-	return files
-}
-
 // Defaults returns a Config with sensible defaults for MVP.
 func Defaults() *Config {
 	return &Config{
