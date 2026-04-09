@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-04-09
+- Fix: workspace janitor now runs even if the config omits the workspace section.
+- Cleanup: remove unused logging wrappers (package-level Info/Debug/Warn/Error) and helper functions.
+- Cleanup: remove a set of unused config/lock/plugin helpers and accessors (VerifyScopeFiles, ConfigFiles.OperationalFiles, PIDLock.Path, GenerateChecksums, Discover and DiscoverMany wrappers).
+- Chore: add deadcode as a project tool and bump Go to 1.25.
+- Docs: add workspace cleanup directives to CONFIG_REFERENCE and workspace cleanup fields to the config JSON schema.
+
 ## 2026-04-08
 - Rewrite CLAUDE.md to reflect rc1 state and update the skill CLI reference.
 
