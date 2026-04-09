@@ -52,19 +52,9 @@ type DiscoverOptions struct {
 	AllowSymlinks bool
 }
 
-// Discover scans a single pluginsDir for plugins with manifest.yaml and validates them.
-// Returns a registry of valid plugins. Invalid plugins are logged but not fatal.
-func Discover(pluginsDir string, logger func(level, msg string, args ...any)) (*Registry, error) {
-	return DiscoverMany([]string{pluginsDir}, logger)
-}
-
-// DiscoverMany scans multiple plugin roots for manifest.yaml files and validates plugins.
-// Roots are processed in input order; duplicate plugin names keep the first discovered plugin.
-func DiscoverMany(pluginRoots []string, logger func(level, msg string, args ...any)) (*Registry, error) {
-	return DiscoverManyWithOptions(pluginRoots, logger, DiscoverOptions{AllowSymlinks: true})
-}
-
-// DiscoverManyWithOptions scans multiple plugin roots with configurable settings.
+// DiscoverManyWithOptions scans multiple plugin roots for manifest.yaml files
+// and validates plugins. Roots are processed in input order; duplicate plugin
+// names keep the first discovered plugin.
 func DiscoverManyWithOptions(pluginRoots []string, logger func(level, msg string, args ...any), opts DiscoverOptions) (*Registry, error) {
 	if logger == nil {
 		logger = func(level, msg string, args ...any) {}

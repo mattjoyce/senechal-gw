@@ -283,7 +283,7 @@ read input
 echo '{"status":"ok","result":"B"}'
 `)
 
-	registry, err := plugin.Discover(pluginsDir, func(level, msg string, args ...any) {})
+	registry, err := plugin.DiscoverManyWithOptions([]string{pluginsDir}, func(level, msg string, args ...any) {}, plugin.DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}

@@ -89,7 +89,7 @@ print(json.dumps({"status":"ok","result":"verified"}))
 		t.Fatalf("failed to write pipeline: %v", err)
 	}
 
-	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...any) {})
+	registry, _ := plugin.DiscoverManyWithOptions([]string{pluginsDir}, func(l, m string, a ...any) {}, plugin.DiscoverOptions{AllowSymlinks: true})
 	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
 		t.Fatalf("failed to load router: %v", err)
@@ -233,7 +233,7 @@ except Exception as e:
 	}
 
 	// 4. Discover and Load
-	registry, _ := plugin.Discover(pluginsDir, func(l, m string, a ...any) {})
+	registry, _ := plugin.DiscoverManyWithOptions([]string{pluginsDir}, func(l, m string, a ...any) {}, plugin.DiscoverOptions{AllowSymlinks: true})
 	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
 	if err != nil {
 		t.Fatalf("failed to load router: %v", err)

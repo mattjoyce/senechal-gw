@@ -184,7 +184,7 @@ commands:
 				// Silent logger for tests
 			}
 
-			reg, err := Discover(pluginsDir, logger)
+			reg, err := DiscoverManyWithOptions([]string{pluginsDir}, logger, DiscoverOptions{AllowSymlinks: true})
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Discover() error = %v, wantErr %v", err, tt.wantErr)
@@ -236,7 +236,7 @@ commands:
 	makePlugin(rootB, "echo-alt", "echo") // duplicate manifest name; should be ignored
 	makePlugin(rootB, "from-b", "from-b")
 
-	reg, err := DiscoverMany([]string{rootA, rootB}, nil)
+	reg, err := DiscoverManyWithOptions([]string{rootA, rootB}, nil, DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("DiscoverMany() error = %v", err)
 	}
@@ -277,7 +277,7 @@ commands:
 		t.Fatalf("write entrypoint: %v", err)
 	}
 
-	reg, err := DiscoverMany([]string{root}, nil)
+	reg, err := DiscoverManyWithOptions([]string{root}, nil, DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("DiscoverMany() error = %v", err)
 	}
@@ -595,7 +595,7 @@ commands:
 	}
 
 	logger := func(level, msg string, args ...any) {}
-	reg, err := Discover(dir, logger)
+	reg, err := DiscoverManyWithOptions([]string{dir}, logger, DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
@@ -635,7 +635,7 @@ commands:
 		t.Fatalf("write entrypoint: %v", err)
 	}
 
-	reg, err := Discover(dir, func(level, msg string, args ...any) {})
+	reg, err := DiscoverManyWithOptions([]string{dir}, func(level, msg string, args ...any) {}, DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
@@ -673,7 +673,7 @@ commands:
 		t.Fatalf("write entrypoint: %v", err)
 	}
 
-	reg, err := Discover(dir, func(level, msg string, args ...any) {})
+	reg, err := DiscoverManyWithOptions([]string{dir}, func(level, msg string, args ...any) {}, DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}

@@ -105,7 +105,7 @@ commands:
 	}
 
 	// Load and validate plugin
-	reg, err := plugin.Discover(pluginsDir, func(level, msg string, args ...any) {})
+	reg, err := plugin.DiscoverManyWithOptions([]string{pluginsDir}, func(level, msg string, args ...any) {}, plugin.DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("failed to discover plugins: %v", err)
 	}

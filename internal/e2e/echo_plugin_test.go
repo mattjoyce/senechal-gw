@@ -18,7 +18,7 @@ func TestEchoPlugin_DiscoveryAndProtocolOK(t *testing.T) {
 
 	// Validate plugin discovery against the repo's ./plugins directory.
 	logger := func(level, msg string, args ...any) {}
-	reg, err := plugin.Discover(filepath.Join(root, "plugins"), logger)
+	reg, err := plugin.DiscoverManyWithOptions([]string{filepath.Join(root, "plugins")}, logger, plugin.DiscoverOptions{AllowSymlinks: true})
 	if err != nil {
 		t.Fatalf("Discover failed: %v", err)
 	}
