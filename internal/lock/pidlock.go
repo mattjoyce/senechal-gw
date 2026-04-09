@@ -10,8 +10,7 @@ import (
 // PIDLock is a single-instance lock implemented via a PID file + flock(2).
 // Keep the lock alive by keeping the file descriptor open.
 type PIDLock struct {
-	path string
-	f    *os.File
+	f *os.File
 }
 
 // AcquirePIDLock acquires an exclusive non-blocking lock at lockPath, writes the
@@ -61,10 +60,8 @@ func AcquirePIDLock(lockPath string) (*PIDLock, error) {
 		return nil, fmt.Errorf("sync lock file: %w", err)
 	}
 
-	return &PIDLock{path: lockPath, f: f}, nil
+	return &PIDLock{f: f}, nil
 }
-
-func (l *PIDLock) Path() string { return l.path }
 
 func (l *PIDLock) Release() error {
 	if l == nil || l.f == nil {
