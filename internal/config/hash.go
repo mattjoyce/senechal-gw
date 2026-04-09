@@ -54,12 +54,6 @@ func VerifyFileHash(filePath, expectedHash string) error {
 	return nil
 }
 
-// GenerateChecksums computes BLAKE3 hashes for scope files and writes .checksums.
-func GenerateChecksums(configDir string, scopeFiles []string) error {
-	_, err := GenerateChecksumsWithReport(configDir, scopeFiles, false)
-	return err
-}
-
 // GenerateChecksumsWithReport computes scope file hashes and optionally writes .checksums.
 // When dryRun is true, it computes hashes and returns report details without writing files.
 // Writes v2 manifests with absolute path keys.

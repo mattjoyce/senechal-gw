@@ -1356,7 +1356,7 @@ plugins:
 	}
 
 	// Generate checksums for tokens.yaml
-	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml"}); err != nil {
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1515,7 +1515,7 @@ webhooks:
 		t.Fatal(err)
 	}
 
-	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1570,7 +1570,7 @@ webhooks:
 	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "webhook.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1622,7 +1622,7 @@ webhooks:
 	if err := os.WriteFile(filepath.Join(tmpDir, "webhooks.yaml"), []byte(webhooksYAML), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := GenerateChecksums(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}); err != nil {
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml", "webhooks.yaml"}, false); err != nil {
 		t.Fatal(err)
 	}
 
