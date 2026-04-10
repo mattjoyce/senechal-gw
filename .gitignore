@@ -61,3 +61,6 @@ test-artifacts/
 
 # Dolt database files (added by bd init)
 .dolt/
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
