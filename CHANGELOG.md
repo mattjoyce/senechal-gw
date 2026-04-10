@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-04-10
+- Tests now explicitly set janitor_interval in the workspace-lifecycle fixture to make test behavior predictable.
+- Removed the obsolete workspace migrate command from the CLI to reduce confusion.
+- Add .beads-credential-key to gitignore to prevent committing credential files.
+
 ## 2026-04-09
 - Fix: workspace janitor now runs even if the config omits the workspace section.
 - Cleanup: remove unused logging wrappers (package-level Info/Debug/Warn/Error) and helper functions.
