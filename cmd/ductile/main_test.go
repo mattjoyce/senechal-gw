@@ -4,17 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
 
@@ -75,6 +78,51 @@ func setVersionMetadataForTest(t *testing.T, v, commit, built string) {
 		gitCommit = origCommit
 		buildDate = origBuildDate
 	})
+}
+
+func TestRuntimeStateStopIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sched := scheduler.New(
+		&config.Config{Service: config.ServiceConfig{TickInterval: time.Hour}},
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	rt := &runtimeState{
+		ctx:       ctx,
+		cancel:    cancel,
+		scheduler: sched,
+		stopDone:  make(chan struct{}),
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		rt.Stop()
+	}()
+	go func() {
+		defer wg.Done()
+		rt.Stop()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runtime stop did not complete")
+	}
+
+	if err := ctx.Err(); err == nil {
+		t.Fatal("runtime context was not cancelled")
+	}
 }
 
 func TestRunConfigHashUpdateVerboseDryRunShortFlag(t *testing.T) {

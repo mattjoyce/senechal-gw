@@ -1659,6 +1659,8 @@ type runtimeState struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	stopOnce     sync.Once
+	stopDone     chan struct{}
 	errCh        chan error
 	db           *sql.DB
 	configSource string
@@ -1677,16 +1679,40 @@ func (rt *runtimeState) Stop() {
 	if rt == nil {
 		return
 	}
-	if rt.scheduler != nil {
-		rt.scheduler.Stop()
+	if rt.stopDone == nil {
+		rt.stopDone = make(chan struct{})
 	}
-	if rt.cancel != nil {
-		rt.cancel()
+	rt.stopOnce.Do(func() {
+		defer close(rt.stopDone)
+		if rt.cancel != nil {
+			rt.cancel()
+		}
+		if rt.scheduler != nil {
+			rt.scheduler.Stop()
+		}
+		rt.wg.Wait()
+		if rt.db != nil {
+			_ = rt.db.Close()
+		}
+	})
+	<-rt.stopDone
+}
+
+func (rt *runtimeState) WaitListenersStopped(ctx context.Context) error {
+	if rt == nil {
+		return nil
 	}
-	rt.wg.Wait()
-	if rt.db != nil {
-		_ = rt.db.Close()
+	if rt.apiServer != nil {
+		if err := rt.apiServer.WaitServeStopped(ctx); err != nil {
+			return fmt.Errorf("api listener stopped: %w", err)
+		}
 	}
+	if rt.webhook != nil {
+		if err := rt.webhook.WaitServeStopped(ctx); err != nil {
+			return fmt.Errorf("webhook listener stopped: %w", err)
+		}
+	}
+	return nil
 }
 
 func (rm *reloadManager) Stop() {
@@ -1702,8 +1728,8 @@ func (rm *reloadManager) Stop() {
 
 func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error) {
 	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	oldRuntime := rm.runtime
-	rm.mu.Unlock()
 	if oldRuntime == nil {
 		return api.ReloadResponse{Status: "error", Message: "runtime not available"}, fmt.Errorf("runtime not available")
 	}
@@ -1721,23 +1747,34 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	}
 
 	oldRuntime.logger.Info("reloading config")
-	oldRuntime.Stop()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	go oldRuntime.Stop()
+
+	listenerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := oldRuntime.WaitListenersStopped(listenerCtx); err != nil {
+		rm.runtime = nil
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
 
 	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
 	if err != nil {
 		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
 		restored, restoreErr := buildRuntime(oldCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
 		if restoreErr == nil {
-			rm.mu.Lock()
 			rm.runtime = restored
-			rm.mu.Unlock()
+		} else {
+			rm.runtime = nil
+			err = fmt.Errorf("reload failed: %w; restore previous runtime: %v", err, restoreErr)
 		}
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 
-	rm.mu.Lock()
 	rm.runtime = runtime
-	rm.mu.Unlock()
 
 	return api.ReloadResponse{
 		Status:     "ok",
@@ -1965,6 +2002,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		logger:       logger,
 		registry:     registry,
 		router:       routerEngine,
+		stopDone:     make(chan struct{}),
 		errCh:        errCh,
 		db:           db,
 		configSource: configSource,

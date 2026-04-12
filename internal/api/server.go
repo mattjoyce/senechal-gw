@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/rs/cors"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
@@ -19,6 +18,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/state"
+	"github.com/rs/cors"
 )
 
 // JobQueuer defines the interface for job queue operations
@@ -83,6 +83,7 @@ type Server struct {
 	events        *events.Hub
 	syncSemaphore chan struct{}
 	reloadFunc    func(context.Context) (ReloadResponse, error)
+	serveDone     chan struct{}
 }
 
 // New creates a new API server instance
@@ -102,6 +103,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		events:        hub,
 		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
 		reloadFunc:    config.ReloadFunc,
+		serveDone:     make(chan struct{}),
 	}
 }
 
@@ -122,6 +124,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Run server in a goroutine
 	errCh := make(chan error, 1)
 	go func() {
+		defer close(s.serveDone)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -131,7 +134,7 @@ func (s *Server) Start(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		s.logger.Info("API server shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := s.server.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("server shutdown failed: %w", err)
@@ -139,6 +142,16 @@ func (s *Server) Start(ctx context.Context) error {
 		return ctx.Err()
 	case err := <-errCh:
 		return fmt.Errorf("server error: %w", err)
+	}
+}
+
+// WaitServeStopped waits until the server's listener has stopped serving.
+func (s *Server) WaitServeStopped(ctx context.Context) error {
+	select {
+	case <-s.serveDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

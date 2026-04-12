@@ -20,6 +20,7 @@ type Server struct {
 	queue  JobQueuer
 	logger *slog.Logger
 	server *http.Server
+	done   chan struct{}
 
 	// endpoints maps URL paths to their configurations
 	endpoints map[string]*EndpointConfig
@@ -48,6 +49,7 @@ func New(config Config, queue JobQueuer, logger *slog.Logger) *Server {
 		queue:     queue,
 		logger:    logger,
 		endpoints: endpoints,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -68,6 +70,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Run server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
+		defer close(s.done)
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -85,6 +88,16 @@ func (s *Server) Start(ctx context.Context) error {
 		return ctx.Err()
 	case err := <-errCh:
 		return fmt.Errorf("webhook server error: %w", err)
+	}
+}
+
+// WaitServeStopped waits until the server's listener has stopped serving.
+func (s *Server) WaitServeStopped(ctx context.Context) error {
+	select {
+	case <-s.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
