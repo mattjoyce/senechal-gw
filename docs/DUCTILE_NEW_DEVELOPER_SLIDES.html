@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ductile for New Developers</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2328; --muted: #5d6673; --paper: #fbfbf7; --panel: #fff;
+      --line: #d7dde4; --green: #147d64; --teal: #087f8c; --red: #c2413b;
+      --yellow: #b08900; --black: #111;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--paper); color: var(--ink); letter-spacing: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .deck { min-height: 100vh; display: grid; grid-template-rows: 1fr auto; }
+    .slide {
+      display: none; min-height: calc(100vh - 4.5rem); align-content: center; gap: 1.5rem;
+      padding: 4rem clamp(1rem, 5%, 4.5rem) 2.5rem;
+    }
+    .slide.active { display: grid; }
+    .slide > * { width: min(72rem, 100%); margin-left: auto; margin-right: auto; }
+    .eyebrow { margin: 0 0 .5rem; color: var(--green); font-weight: 800; text-transform: uppercase; font-size: .8rem; }
+    h1, h2 { margin: 0; line-height: 1.05; max-width: 16ch; }
+    h1 { font-size: 5rem; }
+    h2 { font-size: 3.6rem; }
+    p { margin: 0; color: var(--muted); font-size: 1.2rem; line-height: 1.55; max-width: 62rem; }
+    .lead { color: var(--ink); font-size: 1.45rem; max-width: 50rem; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card, .flow, .lane { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1.2rem; }
+    .card { min-height: 9rem; }
+    .card strong, .label { display: block; color: var(--ink); font-size: 1.05rem; margin-bottom: .5rem; }
+    .card p, li { font-size: 1rem; line-height: 1.45; }
+    ul { margin: 0; padding-left: 1.2rem; color: var(--muted); }
+    code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .95em; color: #8f2f28; }
+    pre {
+      margin: 0; white-space: pre-wrap; background: var(--black); color: #f2f2f2; border-radius: 8px;
+      padding: 1.2rem; font-size: .95rem; line-height: 1.45; overflow: auto;
+    }
+    .flow-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .7rem; align-items: stretch; }
+    .node { border: 2px solid var(--line); border-top: .35rem solid var(--teal); border-radius: 8px; padding: .9rem; min-height: 6rem; background: #fff; }
+    .node:nth-child(2) { border-top-color: var(--yellow); }
+    .node:nth-child(3) { border-top-color: var(--green); }
+    .node:nth-child(4) { border-top-color: var(--red); }
+    .node small { display: block; color: var(--muted); margin-top: .35rem; line-height: 1.35; }
+    .diagram { display: block; width: 100%; height: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+    .diagram text { font-family: Inter, ui-sans-serif, system-ui, sans-serif; fill: var(--ink); font-size: 16px; font-weight: 700; }
+    .diagram .muted { fill: var(--muted); font-size: 13px; font-weight: 500; }
+    .diagram .box { fill: #fff; stroke: var(--line); stroke-width: 2; }
+    .diagram .core { fill: #eef8f4; stroke: var(--green); }
+    .diagram .edge { stroke: var(--teal); stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    .screenshot { display: block; width: min(64rem, 100%); border: 1px solid var(--line); border-radius: 8px; background: #111; }
+    .chrome {
+      position: sticky; bottom: 0; display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center;
+      padding: .8rem clamp(1rem, 5%, 4.5rem); background: rgba(251, 251, 247, .96); border-top: 1px solid var(--line);
+    }
+    button { appearance: none; border: 1px solid var(--ink); background: var(--ink); color: #fff; border-radius: 8px; padding: .65rem .9rem; font: inherit; cursor: pointer; }
+    button.secondary { background: transparent; color: var(--ink); }
+    .progress { height: .45rem; background: #e5e9ee; border-radius: 6px; overflow: hidden; }
+    .bar { height: 100%; width: 0; background: var(--green); }
+    .count { color: var(--muted); font-size: .95rem; }
+    @media (max-width: 780px) {
+      .slide { padding-top: 2rem; align-content: start; }
+      .grid, .grid.two, .flow-row { grid-template-columns: 1fr; }
+      h1 { font-size: 2.8rem; } h2 { font-size: 2.2rem; } .lead { font-size: 1.2rem; }
+      .chrome { grid-template-columns: 1fr; }
+    }
+    @media print { .deck { display: block; } .slide { display: grid; min-height: 100vh; page-break-after: always; } .chrome { display: none; } }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-live="polite">
+    <section class="slide active" aria-label="Title slide">
+      <div><p class="eyebrow">New developer orientation</p><h1>Ductile in one sitting</h1></div>
+      <p class="lead">A lightweight Go integration gateway that turns local scripts into reliable, event-driven pipelines.</p>
+      <div class="flow"><div class="flow-row">
+        <div class="node"><strong>Trigger</strong><small>schedule, webhook, CLI, API</small></div>
+        <div class="node"><strong>Event</strong><small>typed payload plus context</small></div>
+        <div class="node"><strong>Pipeline</strong><small>ordered steps and branches</small></div>
+        <div class="node"><strong>Plugin</strong><small>subprocess JSON protocol</small></div>
+        <div class="node"><strong>State</strong><small>SQLite queue, logs, baggage</small></div>
+      </div></div>
+    </section>
+
+    <section class="slide" aria-label="What Ductile is">
+      <div><p class="eyebrow">Mental model</p><h2>Small core, replaceable edges</h2></div>
+      <div class="grid">
+        <div class="card"><strong>The core</strong><p>One Go binary owns scheduling, routing, queueing, retries, state, authentication, and operator APIs.</p></div>
+        <div class="card"><strong>The edges</strong><p>Plugins are ordinary executables. Python, Bash, Node, Go, and Rust all fit if they speak JSON on stdin/stdout.</p></div>
+        <div class="card"><strong>The contract</strong><p>YAML describes plugins and pipelines. The runtime turns those declarations into queued jobs and routed events.</p></div>
+      </div>
+    </section>
+
+    <section class="slide" aria-label="Architecture diagram">
+      <div><p class="eyebrow">Runtime shape</p><h2>Everything enters the queue</h2></div>
+      <svg class="diagram" viewBox="0 0 1000 470" role="img" aria-label="Ductile architecture diagram">
+        <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#087f8c"></path></marker></defs>
+        <rect class="box" x="40" y="40" width="210" height="72" rx="8"></rect><text x="145" y="72" text-anchor="middle">Scheduler</text><text class="muted" x="145" y="94" text-anchor="middle">poll jobs</text>
+        <rect class="box" x="40" y="150" width="210" height="72" rx="8"></rect><text x="145" y="182" text-anchor="middle">Webhook</text><text class="muted" x="145" y="204" text-anchor="middle">signed HTTP events</text>
+        <rect class="box" x="40" y="260" width="210" height="72" rx="8"></rect><text x="145" y="292" text-anchor="middle">CLI / API</text><text class="muted" x="145" y="314" text-anchor="middle">manual triggers</text>
+        <rect class="box core" x="365" y="125" width="270" height="150" rx="8"></rect><text x="500" y="178" text-anchor="middle">SQLite-backed queue</text><text class="muted" x="500" y="204" text-anchor="middle">jobs, retries, dedupe, crash recovery</text><text class="muted" x="500" y="230" text-anchor="middle">worker pool respects plugin caps</text>
+        <rect class="box" x="750" y="55" width="210" height="72" rx="8"></rect><text x="855" y="87" text-anchor="middle">Dispatcher</text><text class="muted" x="855" y="109" text-anchor="middle">preflight and spawn</text>
+        <rect class="box" x="750" y="165" width="210" height="72" rx="8"></rect><text x="855" y="197" text-anchor="middle">Plugin process</text><text class="muted" x="855" y="219" text-anchor="middle">stdin/stdout JSON</text>
+        <rect class="box" x="750" y="275" width="210" height="72" rx="8"></rect><text x="855" y="307" text-anchor="middle">Router</text><text class="muted" x="855" y="329" text-anchor="middle">events to pipelines</text>
+        <path class="edge" d="M250 76 C300 76 310 160 365 180"></path><path class="edge" d="M250 186 C305 186 315 196 365 200"></path><path class="edge" d="M250 296 C315 296 320 235 365 220"></path><path class="edge" d="M635 180 C690 145 710 95 750 91"></path><path class="edge" d="M855 127 L855 165"></path><path class="edge" d="M855 237 L855 275"></path><path class="edge" d="M750 311 C690 380 545 378 500 275"></path>
+      </svg>
+    </section>
+
+    <section class="slide" aria-label="Job lifecycle">
+      <div><p class="eyebrow">Job lifecycle</p><h2>At-least-once delivery is the default promise</h2></div>
+      <div class="grid two">
+        <div class="card"><strong>Happy path</strong><p><code>queued -&gt; running -&gt; succeeded</code>. Results land in the job log. Emitted events route downstream work.</p></div>
+        <div class="card"><strong>Retry path</strong><p><code>failed</code> and <code>timed_out</code> jobs return to the queue until max attempts are exhausted, then become <code>dead</code>.</p></div>
+        <div class="card"><strong>Dedupe</strong><p>Producers can set <code>dedupe_key</code>. The queue prevents repeated work inside the effective TTL.</p></div>
+        <div class="card"><strong>Plugin duty</strong><p>Plugins should be idempotent because a job can run more than once after a retry or crash recovery.</p></div>
+      </div>
+    </section>
+
+    <section class="slide" aria-label="Pipeline flow">
+      <div><p class="eyebrow">Pipelines</p><h2>YAML turns events into orchestration</h2></div>
+      <pre><code>pipelines:
+  - name: playlist-to-knowledge-base
+    on: youtube.playlist_item
+    steps:
+      - uses: youtube_transcript
+      - uses: fabric
+      - uses: file_handler
+      - uses: discord_notify
+        if:
+          path: payload.status
+          op: eq
+          value: ready</code></pre>
+      <p>Sequential steps, nested steps, pipeline calls, splits, <code>if</code> gates, and <code>with</code> remaps live in the pipeline DSL. Plugins emit events; the router decides which pipeline or step is next.</p>
+    </section>
+
+    <section class="slide" aria-label="Data and control planes">
+      <div><p class="eyebrow">Data flow</p><h2>Payloads move separately from artifacts</h2></div>
+      <div class="grid">
+        <div class="card"><strong>Payload</strong><p>Small JSON values flow from plugin results into downstream events and step inputs.</p></div>
+        <div class="card"><strong>Baggage</strong><p>Execution metadata lives in <code>event_context</code> and follows the whole pipeline. <code>origin_*</code> keys are immutable.</p></div>
+        <div class="card"><strong>Workspace</strong><p>Each job receives a filesystem workspace. Branches inherit files through zero-copy hard-link clones.</p></div>
+      </div>
+      <div class="lane"><p><strong>Preflight:</strong> load context, ensure workspace, evaluate <code>if</code>, apply <code>with</code>, then spawn the plugin only when the step should run.</p></div>
+    </section>
+
+    <section class="slide" aria-label="Plugin protocol">
+      <div><p class="eyebrow">Plugin contract</p><h2>A plugin is just an executable with a manifest</h2></div>
+      <div class="grid two">
+        <pre><code>{
+  "protocol": 2,
+  "job_id": "uuid",
+  "command": "poll | handle | health | init",
+  "config": {},
+  "state": {},
+  "context": {},
+  "workspace_dir": "/path/to/workspace",
+  "event": {},
+  "deadline_at": "ISO8601"
+}</code></pre>
+        <pre><code>{
+  "status": "ok | error",
+  "result": "short summary",
+  "retry": true,
+  "events": [],
+  "state_updates": {},
+  "logs": []
+}</code></pre>
+      </div>
+    </section>
+
+    <section class="slide" aria-label="Configuration">
+      <div><p class="eyebrow">Configuration</p><h2>Config compiles into one runtime model</h2></div>
+      <div class="grid">
+        <div class="card"><strong><code>config.yaml</code></strong><p>Service settings, state path, API listener, worker limits, strict mode, includes, plugin roots.</p></div>
+        <div class="card"><strong>Included YAML</strong><p><code>plugins.yaml</code>, <code>pipelines.yaml</code>, <code>webhooks.yaml</code>, and related files merge in order.</p></div>
+        <div class="card"><strong>Discovery</strong><p>Plugin roots are scanned in order. The first plugin name found wins; later duplicates are ignored.</p></div>
+      </div>
+    </section>
+
+    <section class="slide" aria-label="Developer map">
+      <div><p class="eyebrow">Code map</p><h2>Where to look first</h2></div>
+      <div class="grid">
+        <div class="card"><strong><code>internal/queue</code></strong><p>Job model, enqueue semantics, retry state, and SQLite persistence.</p></div>
+        <div class="card"><strong><code>internal/dispatch</code></strong><p>Preflight, worker execution, plugin spawn, hooks, and result handling.</p></div>
+        <div class="card"><strong><code>internal/router</code></strong><p>Pipeline DSL compile and event-to-step routing.</p></div>
+        <div class="card"><strong><code>internal/config</code></strong><p>YAML loading, includes, integrity checks, validation, and discovery configuration.</p></div>
+        <div class="card"><strong><code>internal/api</code></strong><p>HTTP handlers, OpenAPI, auth, events, scheduler, and runtime inspection.</p></div>
+        <div class="card"><strong><code>plugins/</code></strong><p>Reference plugin manifests and executable examples.</p></div>
+      </div>
+    </section>
+
+    <section class="slide" aria-label="Operations view">
+      <div><p class="eyebrow">Operations view</p><h2>The TUI watches the same events developers debug</h2></div>
+      <img class="screenshot" src="Ductile-system-watch-screenshot.png" alt="Ductile system watch terminal dashboard">
+      <p>The runtime records queue state, job logs, stderr, plugin state, schedules, and event context in SQLite. The watch UI and API expose that state for diagnosis.</p>
+    </section>
+
+    <section class="slide" aria-label="Developer workflow">
+      <div><p class="eyebrow">First week workflow</p><h2>Change behaviour at the boundary that owns it</h2></div>
+      <div class="grid two">
+        <div class="card"><strong>Adding a connector</strong><p>Create a plugin directory with <code>manifest.yaml</code> and an executable. Use real local fixtures and the protocol envelopes.</p></div>
+        <div class="card"><strong>Changing orchestration</strong><p>Update pipeline DSL, router compilation, or dispatcher preflight based on whether the decision is structural or domain-specific.</p></div>
+        <div class="card"><strong>Changing reliability</strong><p>Start in queue, storage, scheduler, or dispatch. Keep tests observable and avoid mocks when a real SQLite-backed path is available.</p></div>
+        <div class="card"><strong>Before merging</strong><p>Use the repo scripts: <code>scripts/test-fast</code>, <code>scripts/test-docker</code>, <code>scripts/test-premerge</code>, and the configured linters/security checks.</p></div>
+      </div>
+    </section>
+
+    <section class="slide" aria-label="Takeaways">
+      <div><p class="eyebrow">Takeaways</p><h2>Ductile is small on purpose</h2></div>
+      <div class="grid">
+        <div class="card"><strong>Keep plugins dumb</strong><p>They do domain work and emit events. The Go core owns orchestration and reliability.</p></div>
+        <div class="card"><strong>Keep contracts explicit</strong><p>YAML, manifests, request envelopes, response envelopes, and database state are the main integration points.</p></div>
+        <div class="card"><strong>Keep failures visible</strong><p>Every job should be inspectable, retryable, and explainable through logs, state, and operator surfaces.</p></div>
+      </div>
+    </section>
+
+    <nav class="chrome" aria-label="Slide navigation">
+      <button class="secondary" id="prev" type="button">Previous</button>
+      <div class="progress" aria-hidden="true"><div class="bar" id="bar"></div></div>
+      <div><span class="count" id="count"></span> <button id="next" type="button">Next</button></div>
+    </nav>
+  </main>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const bar = document.getElementById("bar");
+    const count = document.getElementById("count");
+    const prev = document.getElementById("prev");
+    const next = document.getElementById("next");
+    let index = Math.max(0, Number(location.hash.replace("#", "")) - 1 || 0);
+    function show(nextIndex) {
+      index = Math.min(Math.max(nextIndex, 0), slides.length - 1);
+      slides.forEach((slide, current) => slide.classList.toggle("active", current === index));
+      bar.style.width = `${((index + 1) / slides.length) * 100}%`;
+      count.textContent = `${index + 1} / ${slides.length}`;
+      prev.disabled = index === 0;
+      next.disabled = index === slides.length - 1;
+      history.replaceState(null, "", `#${index + 1}`);
+    }
+    prev.addEventListener("click", () => show(index - 1));
+    next.addEventListener("click", () => show(index + 1));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") show(index + 1);
+      if (event.key === "ArrowLeft" || event.key === "PageUp") show(index - 1);
+      if (event.key === "Home") show(0);
+      if (event.key === "End") show(slides.length - 1);
+    });
+    show(index);
+  </script>
+</body>
+</html>

@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -870,7 +873,11 @@ func runAPINoun(args []string) int {
 		bodyReader = bytes.NewReader(data)
 	}
 
-	fullURL := strings.TrimRight(apiURL, "/") + endpoint
+	fullURL, err := buildValidatedGatewayAPIURL(apiURL, endpoint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid API URL: %v\n", err)
+		return 1
+	}
 	req, err := http.NewRequest(method, fullURL, bodyReader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
@@ -1146,6 +1153,59 @@ func runSystemReload(actionArgs []string) int {
 	}
 	fmt.Printf("Reload signal sent to PID %d\n", pid)
 	return 0
+}
+
+func buildValidatedGatewayAPIURL(base, endpoint string) (string, error) {
+	if strings.TrimSpace(base) == "" {
+		return "", fmt.Errorf("base URL is required")
+	}
+	if endpoint == "" || !strings.HasPrefix(endpoint, "/") || strings.HasPrefix(endpoint, "//") {
+		return "", fmt.Errorf("endpoint must be an absolute path")
+	}
+
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse base URL: %w", err)
+	}
+	if baseURL.Scheme != "http" && baseURL.Scheme != "https" {
+		return "", fmt.Errorf("scheme must be http or https")
+	}
+	if baseURL.Hostname() == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	if err := validateGatewayAPIHost(baseURL.Hostname()); err != nil {
+		return "", err
+	}
+
+	relative, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse endpoint: %w", err)
+	}
+	if relative.IsAbs() || relative.Host != "" {
+		return "", fmt.Errorf("endpoint must not include a host")
+	}
+
+	baseURL.Path = path.Join(baseURL.Path, relative.Path)
+	if strings.HasSuffix(relative.Path, "/") && !strings.HasSuffix(baseURL.Path, "/") {
+		baseURL.Path += "/"
+	}
+	baseURL.RawQuery = relative.RawQuery
+	baseURL.Fragment = ""
+	return baseURL.String(), nil
+}
+
+func validateGatewayAPIHost(host string) error {
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("host must be localhost or an IP address")
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return nil
+	}
+	return fmt.Errorf("host must be loopback, private, or link-local")
 }
 
 func runSystemSkills(args []string) int {

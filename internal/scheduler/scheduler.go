@@ -176,7 +176,9 @@ func (s *Scheduler) tick(ctx context.Context) {
 	if s.workspaceManager != nil && s.workspaceTTL > 0 {
 		period := uint64(1)
 		if s.janitorInterval > 0 && s.cfg.Service.TickInterval > 0 {
-			if p := uint64(s.janitorInterval / s.cfg.Service.TickInterval); p > 1 {
+			ticksPerCleanup := s.janitorInterval / s.cfg.Service.TickInterval
+			if ticksPerCleanup > 1 {
+				p := uint64(ticksPerCleanup)
 				period = p
 			}
 		}

@@ -1356,3 +1356,69 @@ func TestResolveConfigDirFromDirectoryPath(t *testing.T) {
 		t.Fatalf("resolveConfigDir(dir) = %q, want %q", resolved, tmpDir)
 	}
 }
+
+func TestBuildValidatedGatewayAPIURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		base     string
+		endpoint string
+		want     string
+		wantErr  string
+	}{
+		{
+			name:     "joins localhost base and endpoint",
+			base:     "http://localhost:8080/api",
+			endpoint: "/jobs?limit=10",
+			want:     "http://localhost:8080/api/jobs?limit=10",
+		},
+		{
+			name:     "allows private gateway IP",
+			base:     "https://192.168.1.20:8443",
+			endpoint: "/healthz",
+			want:     "https://192.168.1.20:8443/healthz",
+		},
+		{
+			name:     "rejects public gateway host",
+			base:     "https://example.com",
+			endpoint: "/jobs",
+			wantErr:  "host must be localhost or an IP address",
+		},
+		{
+			name:     "rejects endpoint with host",
+			base:     "http://localhost:8080",
+			endpoint: "//example.com/jobs",
+			wantErr:  "endpoint must be an absolute path",
+		},
+		{
+			name:     "rejects unsupported scheme",
+			base:     "file:///tmp/ductile.sock",
+			endpoint: "/jobs",
+			wantErr:  "scheme must be http or https",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := buildValidatedGatewayAPIURL(tc.base, tc.endpoint)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildValidatedGatewayAPIURL() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("buildValidatedGatewayAPIURL() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
