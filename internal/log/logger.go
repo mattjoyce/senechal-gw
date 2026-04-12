@@ -49,4 +49,3 @@ func Get() *slog.Logger {
 func WithComponent(name string) *slog.Logger {
 	return Get().With(slog.String("component", name))
 }
-

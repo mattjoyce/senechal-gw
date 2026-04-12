@@ -55,4 +55,3 @@ func TestContextHelpers(t *testing.T) {
 		t.Errorf("Expected msg 'hello', got %v", out["msg"])
 	}
 }
-

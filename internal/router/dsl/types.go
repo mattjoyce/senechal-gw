@@ -64,7 +64,7 @@ type Edge struct {
 type Pipeline struct {
 	Name            string
 	Trigger         string
-	IsHook          bool   // true when triggered by on-hook: (lifecycle signal) rather than on: (plugin event)
+	IsHook          bool // true when triggered by on-hook: (lifecycle signal) rather than on: (plugin event)
 	ExecutionMode   string
 	Timeout         time.Duration
 	Nodes           map[string]Node

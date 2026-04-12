@@ -184,12 +184,12 @@ type JobSummary struct {
 
 // QueueMetrics provides high-frequency state metrics for the queue.
 type QueueMetrics struct {
-	QueueDepth   int           `json:"queue_depth"`
-	RunningCount int           `json:"running_count"`
-	DelayedCount int           `json:"delayed_count"`
-	DeadCount    int           `json:"dead_count"`
-	ActiveJobs   []ActiveJob   `json:"active_jobs,omitempty"`
-	PluginLanes  []PluginLane  `json:"plugin_lanes,omitempty"`
+	QueueDepth   int          `json:"queue_depth"`
+	RunningCount int          `json:"running_count"`
+	DelayedCount int          `json:"delayed_count"`
+	DeadCount    int          `json:"dead_count"`
+	ActiveJobs   []ActiveJob  `json:"active_jobs,omitempty"`
+	PluginLanes  []PluginLane `json:"plugin_lanes,omitempty"`
 }
 
 type ActiveJob struct {
