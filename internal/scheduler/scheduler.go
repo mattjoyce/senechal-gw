@@ -19,6 +19,12 @@ import (
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
+// RecoveryHookFunc is called by the scheduler when a job reaches a terminal
+// state during crash recovery. The dispatcher wires this to its hook-firing
+// machinery so that on-hook pipelines (e.g. discord_notify) are triggered for
+// recovered dead jobs.
+type RecoveryHookFunc func(ctx context.Context, job *queue.Job, signal string, payload map[string]any)
+
 // Scheduler manages the scheduling and recovery of plugin jobs.
 type Scheduler struct {
 	cfg              *config.Config
@@ -32,6 +38,7 @@ type Scheduler struct {
 	workspaceTTL     time.Duration
 	janitorInterval  time.Duration
 	tickCount        uint64
+	recoveryHook     RecoveryHookFunc
 }
 
 const (
@@ -62,6 +69,17 @@ func WithWorkspaceJanitor(wm workspace.Manager, ttl, janitorInterval time.Durati
 		s.workspaceTTL = ttl
 		s.janitorInterval = janitorInterval
 	}
+}
+
+// SetRecoveryHook sets the callback invoked when crash recovery marks a job as
+// dead. This must be called before Start. The typical wiring is:
+//
+//	sched := scheduler.New(...)
+//	disp := dispatch.New(...)
+//	sched.SetRecoveryHook(disp.FireRecoveryHook)
+//	sched.Start(ctx)
+func (s *Scheduler) SetRecoveryHook(fn RecoveryHookFunc) {
+	s.recoveryHook = fn
 }
 
 // New creates a new Scheduler instance.
@@ -1032,8 +1050,6 @@ func (s *Scheduler) recoverOrphanedJobs(ctx context.Context) error {
 
 		if job.Attempt <= job.MaxAttempts {
 			newStatus = queue.StatusQueued
-			// For MVP, backoff is not explicitly implemented as a delay, just re-queue.
-			// NextRetryAt could be set here for future backoff implementation.
 			s.logger.Warn(
 				"Re-queueing orphaned job",
 				"job_id", job.ID,
@@ -1042,6 +1058,15 @@ func (s *Scheduler) recoverOrphanedJobs(ctx context.Context) error {
 				"new_attempt", job.Attempt,
 				"status", newStatus,
 			)
+
+			err := s.queue.UpdateJobForRecovery(ctx, job.ID, newStatus, job.Attempt, nextRetryAt, lastErrorMsg)
+			if err != nil {
+				s.logger.Error(
+					"Failed to re-queue orphaned job during recovery",
+					"job_id", job.ID,
+					"error", err,
+				)
+			}
 		} else {
 			newStatus = queue.StatusDead
 			lastErrorMsg = fmt.Sprintf("Job marked dead during crash recovery: max attempts (%d) reached", job.MaxAttempts)
@@ -1054,17 +1079,47 @@ func (s *Scheduler) recoverOrphanedJobs(ctx context.Context) error {
 				"status", newStatus,
 				"error", lastErrorMsg,
 			)
-		}
 
-		err := s.queue.UpdateJobForRecovery(ctx, job.ID, newStatus, job.Attempt, nextRetryAt, lastErrorMsg)
-		if err != nil {
-			s.logger.Error(
-				"Failed to update orphaned job during recovery",
-				"job_id", job.ID,
-				"error", err,
-				"desired_status", newStatus,
-				"desired_attempt", job.Attempt,
-			)
+			// Update the attempt counter first, then use CompleteWithResult
+			// to set completed_at and write the job_log entry — the same
+			// terminal-state path as normally-failed jobs.
+			if err := s.queue.UpdateJobForRecovery(ctx, job.ID, newStatus, job.Attempt, nil, lastErrorMsg); err != nil {
+				s.logger.Error(
+					"Failed to update orphaned job during recovery",
+					"job_id", job.ID,
+					"error", err,
+				)
+				continue
+			}
+			if err := s.queue.CompleteWithResult(ctx, job.ID, newStatus, nil, &lastErrorMsg, nil); err != nil {
+				s.logger.Error(
+					"Failed to complete dead orphaned job",
+					"job_id", job.ID,
+					"error", err,
+				)
+			}
+
+			// Publish event to the hub so subscribers see the terminal transition.
+			s.events.Publish("job.failed", map[string]any{
+				"job_id":   job.ID,
+				"plugin":   job.Plugin,
+				"command":  job.Command,
+				"status":   string(newStatus),
+				"error":    lastErrorMsg,
+				"recovery": true,
+			})
+
+			// Fire on-hook pipelines (e.g. job-failure-notify → discord_notify).
+			if s.recoveryHook != nil {
+				s.recoveryHook(ctx, job, "job.failed", map[string]any{
+					"job_id":   job.ID,
+					"plugin":   job.Plugin,
+					"command":  job.Command,
+					"status":   string(newStatus),
+					"error":    lastErrorMsg,
+					"recovery": true,
+				})
+			}
 		}
 	}
 

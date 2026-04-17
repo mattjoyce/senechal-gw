@@ -1986,6 +1986,11 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
 	rt.dispatcher = disp
 
+	// Wire recovery hooks: when the scheduler marks a dead orphan during crash
+	// recovery, delegate to the dispatcher's hook-firing machinery so on-hook
+	// pipelines (e.g. job-failure-notify → discord_notify) are triggered.
+	sched.SetRecoveryHook(disp.FireRecoveryHook)
+
 	if err := sched.Start(rt.ctx); err != nil && err != context.Canceled {
 		return nil, fmt.Errorf("scheduler: %w", err)
 	}

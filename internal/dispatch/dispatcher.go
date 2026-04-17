@@ -1301,6 +1301,13 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 	}
 }
 
+// FireRecoveryHook is the callback the scheduler uses when crash recovery marks
+// a job as dead. It delegates to maybeFireHooks with the recovered job's
+// metadata. This is wired via scheduler.SetRecoveryHook(disp.FireRecoveryHook).
+func (d *Dispatcher) FireRecoveryHook(ctx context.Context, job *queue.Job, signal string, payload map[string]any) {
+	d.maybeFireHooks(ctx, job, signal, payload)
+}
+
 // WaitForJobTree blocks until the root job and all its descendants are complete or timeout.
 func (d *Dispatcher) WaitForJobTree(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error) {
 	// Create completion channel

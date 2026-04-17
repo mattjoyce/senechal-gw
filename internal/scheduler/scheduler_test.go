@@ -3,7 +3,9 @@ package scheduler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -185,6 +187,9 @@ func (s *stubQueueService) FindJobsByStatus(_ context.Context, _ queue.Status) (
 func (s *stubQueueService) UpdateJobForRecovery(_ context.Context, _ string, _ queue.Status, _ int, _ *time.Time, _ string) error {
 	return nil
 }
+func (s *stubQueueService) CompleteWithResult(_ context.Context, _ string, _ queue.Status, _ json.RawMessage, _, _ *string) error {
+	return nil
+}
 func (s *stubQueueService) PruneJobLogs(_ context.Context, _ time.Duration) error { return nil }
 
 func TestSchedulerJanitorCalledOnTick(t *testing.T) {
@@ -249,4 +254,120 @@ func TestSchedulerJanitorNotCalledWhenNotConfigured(t *testing.T) {
 	ctx := context.Background()
 	sched.tick(ctx)
 	// Just verify no panic; no Cleanup to assert.
+}
+
+// recoveryQueueStub records calls for recovery-path assertions.
+type recoveryQueueStub struct {
+	stubQueueService
+	mu               sync.Mutex
+	jobs             []*queue.Job
+	completedJobIDs  []string
+	completedStatus  []queue.Status
+	recoveredJobIDs  []string
+	recoveredStatus  []queue.Status
+}
+
+func (r *recoveryQueueStub) FindJobsByStatus(_ context.Context, status queue.Status) ([]*queue.Job, error) {
+	if status == queue.StatusRunning {
+		return r.jobs, nil
+	}
+	return nil, nil
+}
+
+func (r *recoveryQueueStub) UpdateJobForRecovery(_ context.Context, jobID string, newStatus queue.Status, _ int, _ *time.Time, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recoveredJobIDs = append(r.recoveredJobIDs, jobID)
+	r.recoveredStatus = append(r.recoveredStatus, newStatus)
+	return nil
+}
+
+func (r *recoveryQueueStub) CompleteWithResult(_ context.Context, jobID string, status queue.Status, _ json.RawMessage, _, _ *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.completedJobIDs = append(r.completedJobIDs, jobID)
+	r.completedStatus = append(r.completedStatus, status)
+	return nil
+}
+
+func TestRecoverOrphanedJobs_DeadJobFiresHook(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+
+	stub := &recoveryQueueStub{
+		jobs: []*queue.Job{{
+			ID:          "dead-job-1",
+			Plugin:      "email_handler",
+			Command:     "handle",
+			Attempt:     4,
+			MaxAttempts: 4, // attempt will be incremented to 5 > max → dead
+		}},
+	}
+
+	var hookCalls []map[string]any
+	var hookMu sync.Mutex
+
+	sched := New(cfg, stub, nil, logger)
+	sched.SetRecoveryHook(func(_ context.Context, job *queue.Job, signal string, payload map[string]any) {
+		hookMu.Lock()
+		defer hookMu.Unlock()
+		hookCalls = append(hookCalls, map[string]any{
+			"job_id": job.ID,
+			"signal": signal,
+			"payload": payload,
+		})
+	})
+
+	ctx := context.Background()
+	err := sched.recoverOrphanedJobs(ctx)
+	assert.NoError(t, err)
+
+	// Should have called CompleteWithResult for the dead job.
+	assert.Equal(t, 1, len(stub.completedJobIDs), "expected 1 CompleteWithResult call")
+	assert.Equal(t, "dead-job-1", stub.completedJobIDs[0])
+	assert.Equal(t, queue.StatusDead, stub.completedStatus[0])
+
+	// Recovery hook should have fired exactly once.
+	hookMu.Lock()
+	defer hookMu.Unlock()
+	assert.Equal(t, 1, len(hookCalls), "expected 1 recovery hook call")
+	assert.Equal(t, "dead-job-1", hookCalls[0]["job_id"])
+	assert.Equal(t, "job.failed", hookCalls[0]["signal"])
+
+	payload := hookCalls[0]["payload"].(map[string]any)
+	assert.Equal(t, true, payload["recovery"], "hook payload must include recovery=true")
+	assert.Equal(t, "email_handler", payload["plugin"])
+}
+
+func TestRecoverOrphanedJobs_RequeuedJobDoesNotFireHook(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+
+	stub := &recoveryQueueStub{
+		jobs: []*queue.Job{{
+			ID:          "retry-job-1",
+			Plugin:      "email_handler",
+			Command:     "handle",
+			Attempt:     1,
+			MaxAttempts: 4, // attempt will be incremented to 2 ≤ max → re-queue
+		}},
+	}
+
+	hookCalled := false
+	sched := New(cfg, stub, nil, logger)
+	sched.SetRecoveryHook(func(_ context.Context, _ *queue.Job, _ string, _ map[string]any) {
+		hookCalled = true
+	})
+
+	ctx := context.Background()
+	err := sched.recoverOrphanedJobs(ctx)
+	assert.NoError(t, err)
+
+	// Should have re-queued, not completed.
+	assert.Equal(t, 0, len(stub.completedJobIDs), "dead-path CompleteWithResult should not be called")
+	assert.Equal(t, 1, len(stub.recoveredJobIDs))
+	assert.Equal(t, queue.StatusQueued, stub.recoveredStatus[0])
+
+	// Hook must NOT fire for re-queued jobs.
+	assert.False(t, hookCalled, "recovery hook must not fire for re-queued jobs")
 }

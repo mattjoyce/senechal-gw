@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/queue"
@@ -22,5 +23,6 @@ type QueueService interface {
 	UpsertScheduleEntryState(ctx context.Context, state queue.ScheduleEntryState) error
 	FindJobsByStatus(ctx context.Context, status queue.Status) ([]*queue.Job, error)
 	UpdateJobForRecovery(ctx context.Context, jobID string, newStatus queue.Status, newAttempt int, nextRetryAt *time.Time, lastError string) error
+	CompleteWithResult(ctx context.Context, jobID string, status queue.Status, result json.RawMessage, lastError, stderr *string) error
 	PruneJobLogs(ctx context.Context, retention time.Duration) error
 }
