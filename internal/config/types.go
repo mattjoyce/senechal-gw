@@ -212,11 +212,32 @@ type TokensConfig struct {
 	Tokens map[string]string `yaml:",inline"` // Flat key-value map
 }
 
-// ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml).
+// ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml)
+// and plugin identity fingerprints (manifest.yaml + entrypoint bytes) for each
+// configured plugin when the operator runs `ductile config lock`.
 type ChecksumManifest struct {
-	Version     int               `yaml:"version"`
-	GeneratedAt string            `yaml:"generated_at"`
-	Hashes      map[string]string `yaml:"hashes"` // filename -> BLAKE3 hash
+	Version            int                 `yaml:"version"`
+	GeneratedAt        string              `yaml:"generated_at"`
+	Hashes             map[string]string   `yaml:"hashes"` // filename -> BLAKE3 hash
+	PluginFingerprints []PluginFingerprint `yaml:"plugin_fingerprints,omitempty"`
+}
+
+// PluginFingerprint records the authorized identity of a configured plugin at
+// lock time. Manifest and entrypoint bytes are hashed with BLAKE3. Paths are
+// stored post-symlink resolution (matching the plugin loader's trust policy).
+// Aliases (config `uses:` key) record the alias Name together with the base
+// plugin's paths, and Uses carries the base plugin name; non-aliases have an
+// empty Uses field.
+type PluginFingerprint struct {
+	Name                   string `yaml:"name"`
+	Enabled                bool   `yaml:"enabled"`
+	Uses                   string `yaml:"uses,omitempty"`
+	ManifestPath           string `yaml:"manifest_path"`
+	ManifestResolvedPath   string `yaml:"manifest_resolved_path,omitempty"`
+	ManifestHash           string `yaml:"manifest_hash"`
+	EntrypointPath         string `yaml:"entrypoint_path"`
+	EntrypointResolvedPath string `yaml:"entrypoint_resolved_path,omitempty"`
+	EntrypointHash         string `yaml:"entrypoint_hash"`
 }
 
 // PluginsFileConfig is the structure of plugins.yaml.

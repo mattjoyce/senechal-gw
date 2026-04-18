@@ -1889,6 +1889,9 @@ func verifyReloadIntegrity(configPath string) error {
 	if err != nil || !result.Passed {
 		return fmt.Errorf("config reload rejected: unlocked changes detected")
 	}
+	if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
+		return fmt.Errorf("config reload rejected: %v", err)
+	}
 	return nil
 }
 
@@ -1989,6 +1992,11 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 				logger.Error("integrity check failed (strict mode)", "errors", result.Errors)
 				return nil, fmt.Errorf("integrity check failed")
 			}
+		}
+
+		if err := verifyPluginFingerprintsForConfig(configPath); err != nil {
+			logger.Error("plugin fingerprint check failed (strict mode)", "error", err)
+			return nil, fmt.Errorf("plugin fingerprint check failed: %w", err)
 		}
 
 		doc := doctor.New(cfg, registry)
@@ -2856,7 +2864,23 @@ func runConfigHashUpdate(args []string) int {
 				}
 			}
 
-			if err := config.GenerateChecksumsFromDiscovery(files, dryRun); err != nil {
+			cfg, err := config.LoadForLock(configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to load config for plugin locking in %s: %v\n", dir, err)
+				return 1
+			}
+			resolved, err := resolveConfiguredPluginFingerprints(cfg, configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to resolve plugin fingerprints in %s: %v\n", dir, err)
+				return 1
+			}
+			if isVerbose {
+				for _, rp := range resolved {
+					fmt.Printf("  DISCOVER [plugin] %s manifest=%s entrypoint=%s enabled=%t\n",
+						rp.Name, rp.ManifestPath, rp.EntrypointPath, rp.Enabled)
+				}
+			}
+			if err := config.GenerateChecksumsWithPlugins(files, resolved, dryRun); err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
 				return 1
 			}

@@ -930,6 +930,116 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 	return registry, nil
 }
 
+// resolveConfiguredPluginFingerprints enumerates every configured plugin in
+// cfg.Plugins, resolves it through the live plugin registry (honoring aliases),
+// and returns a []config.ResolvedPlugin suitable for config.GenerateChecksumsWithPlugins.
+//
+// Configured plugins that do not resolve in any plugin_root produce a hard error:
+// the operator cannot lock what the binary will be unable to load.
+func resolveConfiguredPluginFingerprints(cfg *config.Config, configPath string) ([]config.ResolvedPlugin, error) {
+	if len(cfg.Plugins) == 0 {
+		return nil, nil
+	}
+	pluginRoots, err := resolvePluginRoots(cfg, configPath)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := plugin.DiscoverManyWithOptions(
+		pluginRoots,
+		func(level, msg string, args ...any) {},
+		plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("plugin discovery: %w", err)
+	}
+	if _, err := plugin.ApplyAliases(registry, cfg.Plugins); err != nil {
+		return nil, fmt.Errorf("plugin aliases: %w", err)
+	}
+
+	resolved := make([]config.ResolvedPlugin, 0, len(cfg.Plugins))
+	var missing []string
+	for name, pc := range cfg.Plugins {
+		p, ok := registry.Get(name)
+		if !ok {
+			missing = append(missing, name)
+			continue
+		}
+		resolved = append(resolved, config.ResolvedPlugin{
+			Name:           name,
+			Enabled:        pc.Enabled,
+			Uses:           pc.Uses,
+			ManifestPath:   filepath.Join(p.Path, "manifest.yaml"),
+			EntrypointPath: p.Entrypoint,
+		})
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("configured plugins not found in any plugin_root: %s", strings.Join(missing, ", "))
+	}
+	return resolved, nil
+}
+
+// verifyPluginFingerprintsForConfig runs VerifyPluginFingerprints against the
+// configured plugin set and live plugin registry for configPath. Returns nil
+// when .checksums has no plugin_fingerprints section (downgrade-safe) or when
+// recorded fingerprints match current bytes. Returns an error describing hard
+// mismatches otherwise. Warnings from VerifyPluginFingerprints are intentionally
+// silent here; the caller may upgrade to logger-aware reporting in a future
+// revision.
+func verifyPluginFingerprintsForConfig(configPath string) error {
+	configDir := resolveConfigDir(configPath)
+	manifest, err := config.LoadChecksums(configDir)
+	if err != nil {
+		return nil
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config for plugin verify: %w", err)
+	}
+	if len(manifest.PluginFingerprints) == 0 {
+		if len(cfg.Plugins) == 0 {
+			return nil
+		}
+		return fmt.Errorf("plugin fingerprints missing from .checksums; run 'ductile config lock' to authorize configured plugins")
+	}
+	pluginRoots, err := resolvePluginRoots(cfg, configPath)
+	if err != nil {
+		return fmt.Errorf("resolve plugin roots: %w", err)
+	}
+	registry, err := plugin.DiscoverManyWithOptions(
+		pluginRoots,
+		func(level, msg string, args ...any) {},
+		plugin.DiscoverOptions{AllowSymlinks: cfg.Service.AllowSymlinks},
+	)
+	if err != nil {
+		return fmt.Errorf("plugin discovery for verify: %w", err)
+	}
+	if _, err := plugin.ApplyAliases(registry, cfg.Plugins); err != nil {
+		return fmt.Errorf("plugin aliases for verify: %w", err)
+	}
+	configured := make(map[string]bool, len(cfg.Plugins))
+	current := make(map[string]config.ResolvedPlugin, len(cfg.Plugins))
+	for name, pc := range cfg.Plugins {
+		configured[name] = pc.Enabled
+		p, ok := registry.Get(name)
+		if !ok {
+			continue
+		}
+		current[name] = config.ResolvedPlugin{
+			Name:           name,
+			Enabled:        pc.Enabled,
+			Uses:           pc.Uses,
+			ManifestPath:   filepath.Join(p.Path, "manifest.yaml"),
+			EntrypointPath: p.Entrypoint,
+		}
+	}
+	result := config.VerifyPluginFingerprints(manifest.PluginFingerprints, configured, current)
+	if !result.Passed {
+		return fmt.Errorf("plugin fingerprint mismatch: %s", strings.Join(result.Errors, "; "))
+	}
+	return nil
+}
+
 func resolvePluginRoots(cfg *config.Config, configPath string) ([]string, error) {
 	roots := cfg.EffectivePluginRoots()
 	if len(roots) == 0 {
