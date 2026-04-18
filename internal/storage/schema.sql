@@ -26,6 +26,32 @@ CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, 
 CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);
 CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;
 
+-- Hickey Sprint 1 branch hickey-sprint-1-job-lineage:
+-- append-only job lineage facts. job_queue.status and job_queue.attempt
+-- remain the compatibility/cache fields.
+CREATE TABLE IF NOT EXISTS job_transitions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id      TEXT NOT NULL,
+  from_status TEXT,
+  to_status   TEXT NOT NULL,
+  reason      TEXT,
+  created_at  TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES job_queue(id)
+);
+
+CREATE INDEX IF NOT EXISTS job_transitions_job_created_at_idx ON job_transitions(job_id, created_at);
+
+CREATE TABLE IF NOT EXISTS job_attempts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id     TEXT NOT NULL,
+  attempt    INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(job_id) REFERENCES job_queue(id),
+  UNIQUE(job_id, attempt)
+);
+
+CREATE INDEX IF NOT EXISTS job_attempts_job_created_at_idx ON job_attempts(job_id, created_at);
+
 -- Plugin State: Persistent key-value store for plugins.
 CREATE TABLE IF NOT EXISTS plugin_state (
   plugin_name TEXT PRIMARY KEY,

@@ -39,6 +39,37 @@ type Job struct {
 	EventContextID *string
 }
 
+// JobTransition records one append-only status change for a job.
+type JobTransition struct {
+	ID         int64
+	JobID      string
+	FromStatus *Status
+	ToStatus   Status
+	Reason     *string
+	CreatedAt  time.Time
+}
+
+// JobAttempt records one actual execution start for a job.
+type JobAttempt struct {
+	ID        int64
+	JobID     string
+	Attempt   int
+	CreatedAt time.Time
+}
+
+// JobLineage reports append-only execution facts alongside cached queue fields.
+type JobLineage struct {
+	JobID                string
+	CachedStatus         Status
+	CachedAttempt        int
+	Transitions          []JobTransition
+	Attempts             []JobAttempt
+	LatestStatus         *Status
+	StatusMatchesLatest  bool
+	AttemptFactsMatch    bool
+	HasLegacyMissingData bool
+}
+
 type EnqueueRequest struct {
 	Plugin         string
 	Command        string

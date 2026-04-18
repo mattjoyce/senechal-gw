@@ -13,6 +13,10 @@ import (
 	"github.com/mattjoyce/ductile/internal/storage"
 )
 
+func statusPtr(status Status) *Status {
+	return &status
+}
+
 func TestQueueEnqueueDequeueFIFO(t *testing.T) {
 	t.Parallel()
 
@@ -120,6 +124,152 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 	}
 	if gotJobID != id {
 		t.Fatalf("job_id: got %q want %q", gotJobID, id)
+	}
+}
+
+func TestQueueRecordsJobLineageLifecycle(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := New(db)
+
+	id, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	first, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue first: %v", err)
+	}
+	if first == nil {
+		t.Fatal("expected first dequeue")
+	}
+
+	retryReason := "temporary failure"
+	if err := q.UpdateJobForRecovery(ctx, id, StatusQueued, 2, nil, retryReason); err != nil {
+		t.Fatalf("UpdateJobForRecovery: %v", err)
+	}
+
+	second, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue second: %v", err)
+	}
+	if second == nil {
+		t.Fatal("expected second dequeue")
+	}
+	if second.Attempt != 2 {
+		t.Fatalf("second attempt=%d want 2", second.Attempt)
+	}
+
+	if err := q.CompleteWithResult(ctx, id, StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+		t.Fatalf("CompleteWithResult: %v", err)
+	}
+
+	lineage, err := q.GetJobLineage(ctx, id)
+	if err != nil {
+		t.Fatalf("GetJobLineage: %v", err)
+	}
+
+	wantTransitions := []struct {
+		from *Status
+		to   Status
+	}{
+		{nil, StatusQueued},
+		{statusPtr(StatusQueued), StatusRunning},
+		{statusPtr(StatusRunning), StatusQueued},
+		{statusPtr(StatusQueued), StatusRunning},
+		{statusPtr(StatusRunning), StatusSucceeded},
+	}
+	if len(lineage.Transitions) != len(wantTransitions) {
+		t.Fatalf("transitions len=%d want %d: %+v", len(lineage.Transitions), len(wantTransitions), lineage.Transitions)
+	}
+	for i, want := range wantTransitions {
+		got := lineage.Transitions[i]
+		if want.from == nil {
+			if got.FromStatus != nil {
+				t.Fatalf("transition %d from=%v want nil", i, *got.FromStatus)
+			}
+		} else if got.FromStatus == nil || *got.FromStatus != *want.from {
+			t.Fatalf("transition %d from=%v want %v", i, got.FromStatus, *want.from)
+		}
+		if got.ToStatus != want.to {
+			t.Fatalf("transition %d to=%q want %q", i, got.ToStatus, want.to)
+		}
+	}
+	if lineage.Transitions[2].Reason == nil || *lineage.Transitions[2].Reason != retryReason {
+		t.Fatalf("retry transition reason=%v want %q", lineage.Transitions[2].Reason, retryReason)
+	}
+
+	if len(lineage.Attempts) != 2 {
+		t.Fatalf("attempts len=%d want 2: %+v", len(lineage.Attempts), lineage.Attempts)
+	}
+	if lineage.Attempts[0].Attempt != 1 || lineage.Attempts[1].Attempt != 2 {
+		t.Fatalf("attempt facts=%+v want attempts 1,2", lineage.Attempts)
+	}
+	if lineage.CachedStatus != StatusSucceeded {
+		t.Fatalf("cached status=%q want %q", lineage.CachedStatus, StatusSucceeded)
+	}
+	if lineage.CachedAttempt != 2 {
+		t.Fatalf("cached attempt=%d want 2", lineage.CachedAttempt)
+	}
+	if !lineage.StatusMatchesLatest {
+		t.Fatal("expected cached status to match latest transition")
+	}
+	if !lineage.AttemptFactsMatch {
+		t.Fatal("expected cached attempt to match latest attempt fact")
+	}
+	if lineage.HasLegacyMissingData {
+		t.Fatal("did not expect legacy missing data")
+	}
+}
+
+func TestQueueLineageToleratesLegacyJobWithoutFacts(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	id, err := q.Enqueue(context.Background(), EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM job_transitions WHERE job_id = ?", id); err != nil {
+		t.Fatalf("delete transitions: %v", err)
+	}
+
+	lineage, err := q.GetJobLineage(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJobLineage: %v", err)
+	}
+	if len(lineage.Transitions) != 0 {
+		t.Fatalf("transitions len=%d want 0", len(lineage.Transitions))
+	}
+	if !lineage.HasLegacyMissingData {
+		t.Fatal("expected legacy missing data")
+	}
+	if lineage.LatestStatus != nil {
+		t.Fatalf("latest status=%q want nil", *lineage.LatestStatus)
 	}
 }
 
@@ -570,6 +720,21 @@ func TestQueueCancelOutstandingJobs(t *testing.T) {
 	}
 	if !completed.Valid || completed.String == "" {
 		t.Fatalf("completed_at=%v want non-empty", completed)
+	}
+
+	lineage, err := q.GetJobLineage(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJobLineage: %v", err)
+	}
+	if len(lineage.Transitions) != 3 {
+		t.Fatalf("transitions len=%d want 3: %+v", len(lineage.Transitions), lineage.Transitions)
+	}
+	last := lineage.Transitions[len(lineage.Transitions)-1]
+	if last.FromStatus == nil || *last.FromStatus != StatusRunning || last.ToStatus != StatusDead {
+		t.Fatalf("last transition=%+v want running -> dead", last)
+	}
+	if last.Reason == nil || *last.Reason != "cancelled by test" {
+		t.Fatalf("last reason=%v want cancelled by test", last.Reason)
 	}
 }
 

@@ -57,6 +57,34 @@ func (q *Queue) GetDB() *sql.DB {
 	return q.db
 }
 
+func (q *Queue) recordJobTransition(ctx context.Context, tx *sql.Tx, jobID string, fromStatus *Status, toStatus Status, reason *string, createdAt string) error {
+	var from any
+	if fromStatus != nil {
+		from = *fromStatus
+	}
+	var reasonVal any
+	if reason != nil && strings.TrimSpace(*reason) != "" {
+		reasonVal = *reason
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO job_transitions(job_id, from_status, to_status, reason, created_at)
+VALUES(?, ?, ?, ?, ?);
+`, jobID, from, toStatus, reasonVal, createdAt); err != nil {
+		return fmt.Errorf("record job transition: %w", err)
+	}
+	return nil
+}
+
+func (q *Queue) recordJobAttempt(ctx context.Context, tx *sql.Tx, jobID string, attempt int, createdAt string) error {
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO job_attempts(job_id, attempt, created_at)
+VALUES(?, ?, ?);
+`, jobID, attempt, createdAt); err != nil {
+		return fmt.Errorf("record job attempt: %w", err)
+	}
+	return nil
+}
+
 // Depth returns the number of outstanding jobs (queued or running).
 // Used by /healthz for quick operational visibility.
 func (q *Queue) Depth(ctx context.Context) (int, error) {
@@ -173,7 +201,50 @@ func (q *Queue) CancelOutstandingJobs(ctx context.Context, plugin, command, reas
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := q.db.ExecContext(ctx, `
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin cancel outstanding jobs tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, status
+FROM job_queue
+WHERE plugin = ? AND command = ? AND status IN (?, ?);
+`, plugin, command, StatusQueued, StatusRunning)
+	if err != nil {
+		return 0, fmt.Errorf("select outstanding jobs to cancel: %w", err)
+	}
+	type cancelledJob struct {
+		id     string
+		status Status
+	}
+	var jobs []cancelledJob
+	for rows.Next() {
+		var job cancelledJob
+		var statusS string
+		if err := rows.Scan(&job.id, &statusS); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan outstanding job to cancel: %w", err)
+		}
+		job.status = Status(statusS)
+		jobs = append(jobs, job)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close outstanding jobs rows: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate outstanding jobs to cancel: %w", err)
+	}
+
+	for _, job := range jobs {
+		fromStatus := job.status
+		if err := q.recordJobTransition(ctx, tx, job.id, &fromStatus, StatusDead, &reason, now); err != nil {
+			return 0, err
+		}
+	}
+
+	res, err := tx.ExecContext(ctx, `
 UPDATE job_queue
 SET status = ?, completed_at = ?, last_error = ?
 WHERE plugin = ? AND command = ? AND status IN (?, ?);
@@ -184,6 +255,12 @@ WHERE plugin = ? AND command = ? AND status IN (?, ?);
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("cancel outstanding jobs rows affected: %w", err)
+	}
+	if affected != int64(len(jobs)) {
+		return 0, fmt.Errorf("cancel outstanding jobs: selected %d jobs but updated %d", len(jobs), affected)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit cancel outstanding jobs tx: %w", err)
 	}
 	return int(affected), nil
 }
@@ -259,7 +336,13 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 		payload = req.Payload
 	}
 
-	_, err := q.db.ExecContext(ctx, `
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin enqueue tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO job_queue(
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
   created_at, parent_job_id, source_event_id, event_context_id
@@ -268,6 +351,20 @@ VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?);
 `, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
 	if err != nil {
 		return "", fmt.Errorf("enqueue job: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("enqueue job rows affected: %w", err)
+	}
+	if affected > 0 {
+		if err := q.recordJobTransition(ctx, tx, id, nil, StatusQueued, nil, now); err != nil {
+			return "", err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit enqueue tx: %w", err)
 	}
 
 	return id, nil
@@ -373,7 +470,33 @@ RETURNING
 
 	args = append(args, StatusRunning, nowS)
 
-	return q.scanDequeuedJob(q.db.QueryRowContext(ctx, query, args...))
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin dequeue tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	job, err := q.scanDequeuedJob(tx.QueryRowContext(ctx, query, args...))
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, nil
+	}
+
+	fromStatus := StatusQueued
+	if err := q.recordJobTransition(ctx, tx, job.ID, &fromStatus, StatusRunning, nil, nowS); err != nil {
+		return nil, err
+	}
+	if err := q.recordJobAttempt(ctx, tx, job.ID, job.Attempt, nowS); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit dequeue tx: %w", err)
+	}
+
+	return job, nil
 }
 
 // scanDequeuedJob scans a single RETURNING row from a dequeue CTE into a Job.
@@ -1074,13 +1197,46 @@ func (q *Queue) UpdateJobForRecovery(ctx context.Context, jobID string, newStatu
 		lastErrorS = &lastError
 	}
 
-	_, err := q.db.ExecContext(ctx, `
+	tx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin recovery tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var currentStatusS string
+	if err := tx.QueryRowContext(ctx, `
+SELECT status
+FROM job_queue
+WHERE id = ?;
+`, jobID).Scan(&currentStatusS); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrJobNotFound
+		}
+		return fmt.Errorf("load job %s for recovery: %w", jobID, err)
+	}
+
+	currentStatus := Status(currentStatusS)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if currentStatus != newStatus {
+		var reason *string
+		if lastErrorS != nil {
+			reason = lastErrorS
+		}
+		if err := q.recordJobTransition(ctx, tx, jobID, &currentStatus, newStatus, reason, now); err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `
 UPDATE job_queue
 SET status = ?, attempt = ?, next_retry_at = ?, last_error = ?
 WHERE id = ?;
 `, newStatus, newAttempt, nextRetryAtS, lastErrorS, jobID)
 	if err != nil {
 		return fmt.Errorf("update job %s for recovery: %w", jobID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit recovery tx: %w", err)
 	}
 	return nil
 }
@@ -1127,6 +1283,7 @@ func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Sta
 	var (
 		plugin         string
 		command        string
+		currentStatus  string
 		attempt        int
 		submittedBy    string
 		createdAt      string
@@ -1135,14 +1292,20 @@ func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Sta
 		eventContextID sql.NullString
 	)
 	if err := tx.QueryRowContext(ctx, `
-SELECT plugin, command, attempt, submitted_by, created_at, parent_job_id, source_event_id, event_context_id
+SELECT plugin, command, status, attempt, submitted_by, created_at, parent_job_id, source_event_id, event_context_id
 FROM job_queue
 WHERE id = ?;
-`, jobID).Scan(&plugin, &command, &attempt, &submittedBy, &createdAt, &parentJobID, &sourceEventID, &eventContextID); err != nil {
+`, jobID).Scan(&plugin, &command, &currentStatus, &attempt, &submittedBy, &createdAt, &parentJobID, &sourceEventID, &eventContextID); err != nil {
 		return fmt.Errorf("load job for completion: %w", err)
 	}
 
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	fromStatus := Status(currentStatus)
+	if fromStatus != status {
+		if err := q.recordJobTransition(ctx, tx, jobID, &fromStatus, status, lastError, completedAt); err != nil {
+			return err
+		}
+	}
 
 	_, err = tx.ExecContext(ctx, `
 UPDATE job_queue
@@ -1354,4 +1517,120 @@ WHERE q.id = ?;
 		StartedAt:   startedAt,
 		CompletedAt: completedAtT,
 	}, nil
+}
+
+// GetJobLineage retrieves append-only execution facts for a job and compares
+// them with the current compatibility/cache fields in job_queue.
+func (q *Queue) GetJobLineage(ctx context.Context, jobID string) (*JobLineage, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("jobID is empty")
+	}
+
+	var (
+		statusS string
+		attempt int
+	)
+	if err := q.db.QueryRowContext(ctx, `
+SELECT status, attempt
+FROM job_queue
+WHERE id = ?;
+`, jobID).Scan(&statusS, &attempt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrJobNotFound
+		}
+		return nil, fmt.Errorf("load job lineage cache fields: %w", err)
+	}
+
+	lineage := &JobLineage{
+		JobID:         jobID,
+		CachedStatus:  Status(statusS),
+		CachedAttempt: attempt,
+		Transitions:   make([]JobTransition, 0),
+		Attempts:      make([]JobAttempt, 0),
+	}
+
+	transitionRows, err := q.db.QueryContext(ctx, `
+SELECT id, job_id, from_status, to_status, reason, created_at
+FROM job_transitions
+WHERE job_id = ?
+ORDER BY created_at ASC, id ASC;
+`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("query job transitions: %w", err)
+	}
+	defer func() { _ = transitionRows.Close() }()
+
+	for transitionRows.Next() {
+		var (
+			transition JobTransition
+			fromS      sql.NullString
+			toS        string
+			reasonS    sql.NullString
+			createdAtS string
+		)
+		if err := transitionRows.Scan(&transition.ID, &transition.JobID, &fromS, &toS, &reasonS, &createdAtS); err != nil {
+			return nil, fmt.Errorf("scan job transition: %w", err)
+		}
+		if fromS.Valid {
+			from := Status(fromS.String)
+			transition.FromStatus = &from
+		}
+		transition.ToStatus = Status(toS)
+		if reasonS.Valid {
+			transition.Reason = &reasonS.String
+		}
+		if t, err := time.Parse(time.RFC3339Nano, createdAtS); err == nil {
+			transition.CreatedAt = t
+		}
+		lineage.Transitions = append(lineage.Transitions, transition)
+	}
+	if err := transitionRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job transitions: %w", err)
+	}
+
+	attemptRows, err := q.db.QueryContext(ctx, `
+SELECT id, job_id, attempt, created_at
+FROM job_attempts
+WHERE job_id = ?
+ORDER BY created_at ASC, id ASC;
+`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("query job attempts: %w", err)
+	}
+	defer func() { _ = attemptRows.Close() }()
+
+	for attemptRows.Next() {
+		var (
+			attemptFact JobAttempt
+			createdAtS  string
+		)
+		if err := attemptRows.Scan(&attemptFact.ID, &attemptFact.JobID, &attemptFact.Attempt, &createdAtS); err != nil {
+			return nil, fmt.Errorf("scan job attempt: %w", err)
+		}
+		if t, err := time.Parse(time.RFC3339Nano, createdAtS); err == nil {
+			attemptFact.CreatedAt = t
+		}
+		lineage.Attempts = append(lineage.Attempts, attemptFact)
+	}
+	if err := attemptRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job attempts: %w", err)
+	}
+
+	if len(lineage.Transitions) > 0 {
+		latest := lineage.Transitions[len(lineage.Transitions)-1].ToStatus
+		lineage.LatestStatus = &latest
+		lineage.StatusMatchesLatest = latest == lineage.CachedStatus
+	} else {
+		lineage.HasLegacyMissingData = true
+	}
+
+	switch {
+	case len(lineage.Attempts) == 0:
+		lineage.AttemptFactsMatch = lineage.CachedAttempt == 1
+	default:
+		latestAttempt := lineage.Attempts[len(lineage.Attempts)-1].Attempt
+		lineage.AttemptFactsMatch = latestAttempt == lineage.CachedAttempt
+	}
+
+	return lineage, nil
 }

@@ -182,3 +182,68 @@ func TestBuildJSONReportWithoutContextID(t *testing.T) {
 		t.Errorf("steps = %d, want 0", len(report.Steps))
 	}
 }
+
+func TestBuildJSONReportIncludesExecutionHistory(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := queue.New(db)
+
+	jobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if _, err := q.Dequeue(ctx); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if err := q.CompleteWithResult(ctx, jobID, queue.StatusSucceeded, json.RawMessage(`{"status":"ok"}`), nil, nil); err != nil {
+		t.Fatalf("CompleteWithResult: %v", err)
+	}
+
+	out, err := BuildJSONReport(ctx, db, dbPath, jobID)
+	if err != nil {
+		t.Fatalf("BuildJSONReport: %v", err)
+	}
+
+	var report Report
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v", err)
+	}
+
+	if report.Attempt != 1 {
+		t.Fatalf("attempt=%d want 1", report.Attempt)
+	}
+	if len(report.Transitions) != 3 {
+		t.Fatalf("transitions len=%d want 3: %+v", len(report.Transitions), report.Transitions)
+	}
+	if report.Transitions[0].From != "" || report.Transitions[0].To != string(queue.StatusQueued) {
+		t.Fatalf("first transition=%+v want NULL -> queued", report.Transitions[0])
+	}
+	if report.Transitions[2].From != string(queue.StatusRunning) || report.Transitions[2].To != string(queue.StatusSucceeded) {
+		t.Fatalf("last transition=%+v want running -> succeeded", report.Transitions[2])
+	}
+	if len(report.Attempts) != 1 || report.Attempts[0].Attempt != 1 {
+		t.Fatalf("attempt facts=%+v want attempt 1", report.Attempts)
+	}
+	if !report.Consistency.CachedStatusMatches {
+		t.Fatal("expected cached status to match latest transition")
+	}
+	if !report.Consistency.AttemptFactsMatch {
+		t.Fatal("expected attempt facts to match cache")
+	}
+	if report.Consistency.LegacyMissingData {
+		t.Fatal("did not expect legacy missing data")
+	}
+}

@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/state"
 )
 
@@ -19,18 +21,45 @@ type jobInfo struct {
 	plugin    string
 	command   string
 	status    string
+	attempt   int
 	contextID sql.NullString
 }
 
 // Report is the structured JSON representation of a lineage report.
 type Report struct {
-	JobID     string `json:"job_id"`
-	Plugin    string `json:"plugin"`
-	Command   string `json:"command"`
-	Status    string `json:"status"`
-	ContextID string `json:"context_id"`
-	Hops      int    `json:"hops"`
-	Steps     []Step `json:"steps"`
+	JobID       string             `json:"job_id"`
+	Plugin      string             `json:"plugin"`
+	Command     string             `json:"command"`
+	Status      string             `json:"status"`
+	Attempt     int                `json:"attempt"`
+	ContextID   string             `json:"context_id"`
+	Transitions []Transition       `json:"transitions"`
+	Attempts    []Attempt          `json:"attempts"`
+	Consistency LineageConsistency `json:"consistency"`
+	Hops        int                `json:"hops"`
+	Steps       []Step             `json:"steps"`
+}
+
+// Transition is one observed job status transition.
+type Transition struct {
+	From   string `json:"from,omitempty"`
+	To     string `json:"to"`
+	At     string `json:"at"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// Attempt is one observed execution start.
+type Attempt struct {
+	Attempt int    `json:"attempt"`
+	At      string `json:"at"`
+}
+
+// LineageConsistency compares cached queue state to append-only facts.
+type LineageConsistency struct {
+	LatestTransitionStatus string `json:"latest_transition_status,omitempty"`
+	CachedStatusMatches    bool   `json:"cached_status_matches"`
+	AttemptFactsMatch      bool   `json:"attempt_facts_match"`
+	LegacyMissingData      bool   `json:"legacy_missing_data"`
 }
 
 // Step is one entry in the execution lineage.
@@ -62,8 +91,41 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 	fmt.Fprintf(&out, "Plugin      : %s\n", report.Plugin)
 	fmt.Fprintf(&out, "Command     : %s\n", report.Command)
 	fmt.Fprintf(&out, "Status      : %s\n", report.Status)
+	fmt.Fprintf(&out, "Attempt     : %d\n", report.Attempt)
 	fmt.Fprintf(&out, "Context ID  : %s\n", report.ContextID)
 	fmt.Fprintf(&out, "Hops        : %d\n", report.Hops)
+	fmt.Fprintf(&out, "\n")
+
+	fmt.Fprintf(&out, "Execution History\n")
+	if len(report.Transitions) == 0 {
+		fmt.Fprintf(&out, "  transitions : <none>\n")
+	} else {
+		fmt.Fprintf(&out, "  transitions :\n")
+		for _, transition := range report.Transitions {
+			from := transition.From
+			if from == "" {
+				from = "NULL"
+			}
+			if transition.Reason != "" {
+				fmt.Fprintf(&out, "    - %s -> %s at %s (%s)\n", from, transition.To, transition.At, transition.Reason)
+			} else {
+				fmt.Fprintf(&out, "    - %s -> %s at %s\n", from, transition.To, transition.At)
+			}
+		}
+	}
+	if len(report.Attempts) == 0 {
+		fmt.Fprintf(&out, "  attempts    : <none>\n")
+	} else {
+		fmt.Fprintf(&out, "  attempts    :\n")
+		for _, attempt := range report.Attempts {
+			fmt.Fprintf(&out, "    - attempt %d at %s\n", attempt.Attempt, attempt.At)
+		}
+	}
+	fmt.Fprintf(&out, "  consistency : cached_status_matches=%t attempt_facts_match=%t legacy_missing_data=%t\n",
+		report.Consistency.CachedStatusMatches,
+		report.Consistency.AttemptFactsMatch,
+		report.Consistency.LegacyMissingData,
+	)
 	fmt.Fprintf(&out, "\n")
 
 	for _, step := range report.Steps {
@@ -132,10 +194,20 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 		Plugin:    rootJob.plugin,
 		Command:   rootJob.command,
 		Status:    rootJob.status,
+		Attempt:   rootJob.attempt,
 		ContextID: "",
 		Hops:      0,
 		Steps:     make([]Step, 0),
 	}
+
+	jobLineage, err := queue.New(db).GetJobLineage(ctx, rootJob.id)
+	if err != nil {
+		return nil, fmt.Errorf("load job lineage facts: %w", err)
+	}
+	report.Transitions = renderTransitions(jobLineage.Transitions)
+	report.Attempts = renderAttempts(jobLineage.Attempts)
+	report.Consistency = renderConsistency(jobLineage)
+
 	if !rootJob.contextID.Valid {
 		return report, nil
 	}
@@ -143,15 +215,15 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 	report.ContextID = rootJob.contextID.String
 
 	contextStore := state.NewContextStore(db)
-	lineage, err := contextStore.Lineage(ctx, rootJob.contextID.String)
+	contextLineage, err := contextStore.Lineage(ctx, rootJob.contextID.String)
 	if err != nil {
 		return nil, fmt.Errorf("load context lineage: %w", err)
 	}
-	report.Hops = len(lineage)
-	report.Steps = make([]Step, 0, len(lineage))
+	report.Hops = len(contextLineage)
+	report.Steps = make([]Step, 0, len(contextLineage))
 
 	workspaceBaseDir := workspaceBaseDirFromStatePath(statePath)
-	for idx, node := range lineage {
+	for idx, node := range contextLineage {
 		stepJob, _ := lookupFirstJobByContext(ctx, db, node.ID)
 		step := Step{
 			Hop:       idx + 1,
@@ -183,11 +255,11 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 func lookupJob(ctx context.Context, db *sql.DB, jobID string) (*jobInfo, error) {
 	var info jobInfo
 	row := db.QueryRowContext(ctx, `
-SELECT id, plugin, command, status, event_context_id
+SELECT id, plugin, command, status, attempt, event_context_id
 FROM job_queue
 WHERE id = ?;
 `, jobID)
-	if err := row.Scan(&info.id, &info.plugin, &info.command, &info.status, &info.contextID); err != nil {
+	if err := row.Scan(&info.id, &info.plugin, &info.command, &info.status, &info.attempt, &info.contextID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("job %q not found", jobID)
 		}
@@ -199,19 +271,60 @@ WHERE id = ?;
 func lookupFirstJobByContext(ctx context.Context, db *sql.DB, contextID string) (*jobInfo, error) {
 	var info jobInfo
 	row := db.QueryRowContext(ctx, `
-SELECT id, plugin, command, status, event_context_id
+SELECT id, plugin, command, status, attempt, event_context_id
 FROM job_queue
 WHERE event_context_id = ?
 ORDER BY created_at ASC, rowid ASC
 LIMIT 1;
 `, contextID)
-	if err := row.Scan(&info.id, &info.plugin, &info.command, &info.status, &info.contextID); err != nil {
+	if err := row.Scan(&info.id, &info.plugin, &info.command, &info.status, &info.attempt, &info.contextID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("query job by context %q: %w", contextID, err)
 	}
 	return &info, nil
+}
+
+func renderTransitions(transitions []queue.JobTransition) []Transition {
+	out := make([]Transition, 0, len(transitions))
+	for _, transition := range transitions {
+		rendered := Transition{
+			To: string(transition.ToStatus),
+			At: transition.CreatedAt.Format(time.RFC3339Nano),
+		}
+		if transition.FromStatus != nil {
+			rendered.From = string(*transition.FromStatus)
+		}
+		if transition.Reason != nil {
+			rendered.Reason = *transition.Reason
+		}
+		out = append(out, rendered)
+	}
+	return out
+}
+
+func renderAttempts(attempts []queue.JobAttempt) []Attempt {
+	out := make([]Attempt, 0, len(attempts))
+	for _, attempt := range attempts {
+		out = append(out, Attempt{
+			Attempt: attempt.Attempt,
+			At:      attempt.CreatedAt.Format(time.RFC3339Nano),
+		})
+	}
+	return out
+}
+
+func renderConsistency(lineage *queue.JobLineage) LineageConsistency {
+	consistency := LineageConsistency{
+		CachedStatusMatches: lineage.StatusMatchesLatest,
+		AttemptFactsMatch:   lineage.AttemptFactsMatch,
+		LegacyMissingData:   lineage.HasLegacyMissingData,
+	}
+	if lineage.LatestStatus != nil {
+		consistency.LatestTransitionStatus = string(*lineage.LatestStatus)
+	}
+	return consistency
 }
 
 func prettyJSON(raw json.RawMessage) string {
