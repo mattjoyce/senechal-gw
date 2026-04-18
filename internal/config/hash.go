@@ -109,19 +109,58 @@ func GenerateChecksumsWithReport(configDir string, scopeFiles []string, dryRun b
 		return report, nil
 	}
 
-	// Write .checksums file
-	data, err := yaml.Marshal(manifest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal checksums: %w", err)
-	}
-
-	// Write with restrictive permissions (contains expected hashes)
-	if err := os.WriteFile(report.ChecksumPath, data, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write checksums: %w", err)
+	if err := writeChecksumsAtomic(report.ChecksumPath, manifest); err != nil {
+		return nil, err
 	}
 	report.Written = true
 
 	return report, nil
+}
+
+// writeChecksumsAtomic marshals the manifest and writes it to path via a
+// temp file + fsync + rename so a crash mid-write cannot corrupt the existing
+// .checksums file. Perms are 0600 (contains expected hashes).
+func writeChecksumsAtomic(path string, manifest ChecksumManifest) error {
+	data, err := yaml.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to marshal checksums: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".checksums.tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create checksums temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+
+	cleanup := func() {
+		_ = os.Remove(tmpPath)
+	}
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to write checksums temp: %w", err)
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to chmod checksums temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to fsync checksums temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to close checksums temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to rename checksums: %w", err)
+	}
+	return nil
 }
 
 // LoadChecksums reads the .checksums file from a config directory.
@@ -171,15 +210,6 @@ func GenerateChecksumsFromDiscovery(files *ConfigFiles, dryRun bool) error {
 		return nil
 	}
 
-	data, err := yaml.Marshal(manifest)
-	if err != nil {
-		return fmt.Errorf("failed to marshal checksums: %w", err)
-	}
-
 	checksumPath := filepath.Join(files.Root, ".checksums")
-	if err := os.WriteFile(checksumPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write checksums: %w", err)
-	}
-
-	return nil
+	return writeChecksumsAtomic(checksumPath, manifest)
 }
