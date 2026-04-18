@@ -8,15 +8,18 @@ ARTIFACT_ROOT="${ARTIFACT_ROOT:?}"
 source "$ROOT_DIR/scripts/test-docker-lib"
 fixture_init
 
-CONFIG_DIR="$FIXTURE_DIR/config"
+CONFIG_SRC="$FIXTURE_DIR/config"
+CONFIG_DIR="$ARTIFACT_DIR/runtime-config"
 STATE_DIR="$CONFIG_DIR/state"
 PID=""
+rm -rf "$CONFIG_DIR"
+mkdir -p "$CONFIG_DIR"
+cp -R "$CONFIG_SRC"/. "$CONFIG_DIR/"
 mkdir -p "$STATE_DIR"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1
 
 cleanup() {
-  fixture_capture_tree "$CONFIG_DIR" config
   fixture_capture_tree "$STATE_DIR" state-dir
   if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
     kill "$PID" 2>/dev/null || true
@@ -24,6 +27,9 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+fixture_log "refreshing fixture checksums"
+"$ROOT_DIR/ductile" config lock --config-dir "$CONFIG_DIR" >"$ARTIFACT_DIR/config-lock.log" 2>&1
 
 fixture_log "starting ductile process"
 "$ROOT_DIR/ductile" system start --config "$CONFIG_DIR" >"$ARTIFACT_DIR/ductile.log" 2>&1 &

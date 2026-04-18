@@ -4,17 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
 
@@ -75,6 +78,51 @@ func setVersionMetadataForTest(t *testing.T, v, commit, built string) {
 		gitCommit = origCommit
 		buildDate = origBuildDate
 	})
+}
+
+func TestRuntimeStateStopIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sched := scheduler.New(
+		&config.Config{Service: config.ServiceConfig{TickInterval: time.Hour}},
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	rt := &runtimeState{
+		ctx:       ctx,
+		cancel:    cancel,
+		scheduler: sched,
+		stopDone:  make(chan struct{}),
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		rt.Stop()
+	}()
+	go func() {
+		defer wg.Done()
+		rt.Stop()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runtime stop did not complete")
+	}
+
+	if err := ctx.Err(); err == nil {
+		t.Fatal("runtime context was not cancelled")
+	}
 }
 
 func TestRunConfigHashUpdateVerboseDryRunShortFlag(t *testing.T) {
@@ -1306,5 +1354,71 @@ func TestResolveConfigDirFromDirectoryPath(t *testing.T) {
 	resolved := resolveConfigDir(tmpDir)
 	if resolved != tmpDir {
 		t.Fatalf("resolveConfigDir(dir) = %q, want %q", resolved, tmpDir)
+	}
+}
+
+func TestBuildValidatedGatewayAPIURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		base     string
+		endpoint string
+		want     string
+		wantErr  string
+	}{
+		{
+			name:     "joins localhost base and endpoint",
+			base:     "http://localhost:8080/api",
+			endpoint: "/jobs?limit=10",
+			want:     "http://localhost:8080/api/jobs?limit=10",
+		},
+		{
+			name:     "allows private gateway IP",
+			base:     "https://192.168.1.20:8443",
+			endpoint: "/healthz",
+			want:     "https://192.168.1.20:8443/healthz",
+		},
+		{
+			name:     "rejects public gateway host",
+			base:     "https://example.com",
+			endpoint: "/jobs",
+			wantErr:  "host must be localhost or an IP address",
+		},
+		{
+			name:     "rejects endpoint with host",
+			base:     "http://localhost:8080",
+			endpoint: "//example.com/jobs",
+			wantErr:  "endpoint must be an absolute path",
+		},
+		{
+			name:     "rejects unsupported scheme",
+			base:     "file:///tmp/ductile.sock",
+			endpoint: "/jobs",
+			wantErr:  "scheme must be http or https",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := buildValidatedGatewayAPIURL(tc.base, tc.endpoint)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %q, want to contain %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildValidatedGatewayAPIURL() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("buildValidatedGatewayAPIURL() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

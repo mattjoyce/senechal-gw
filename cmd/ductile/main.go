@@ -11,9 +11,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -870,7 +873,11 @@ func runAPINoun(args []string) int {
 		bodyReader = bytes.NewReader(data)
 	}
 
-	fullURL := strings.TrimRight(apiURL, "/") + endpoint
+	fullURL, err := buildValidatedGatewayAPIURL(apiURL, endpoint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid API URL: %v\n", err)
+		return 1
+	}
 	req, err := http.NewRequest(method, fullURL, bodyReader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
@@ -1146,6 +1153,59 @@ func runSystemReload(actionArgs []string) int {
 	}
 	fmt.Printf("Reload signal sent to PID %d\n", pid)
 	return 0
+}
+
+func buildValidatedGatewayAPIURL(base, endpoint string) (string, error) {
+	if strings.TrimSpace(base) == "" {
+		return "", fmt.Errorf("base URL is required")
+	}
+	if endpoint == "" || !strings.HasPrefix(endpoint, "/") || strings.HasPrefix(endpoint, "//") {
+		return "", fmt.Errorf("endpoint must be an absolute path")
+	}
+
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("parse base URL: %w", err)
+	}
+	if baseURL.Scheme != "http" && baseURL.Scheme != "https" {
+		return "", fmt.Errorf("scheme must be http or https")
+	}
+	if baseURL.Hostname() == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	if err := validateGatewayAPIHost(baseURL.Hostname()); err != nil {
+		return "", err
+	}
+
+	relative, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse endpoint: %w", err)
+	}
+	if relative.IsAbs() || relative.Host != "" {
+		return "", fmt.Errorf("endpoint must not include a host")
+	}
+
+	baseURL.Path = path.Join(baseURL.Path, relative.Path)
+	if strings.HasSuffix(relative.Path, "/") && !strings.HasSuffix(baseURL.Path, "/") {
+		baseURL.Path += "/"
+	}
+	baseURL.RawQuery = relative.RawQuery
+	baseURL.Fragment = ""
+	return baseURL.String(), nil
+}
+
+func validateGatewayAPIHost(host string) error {
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("host must be localhost or an IP address")
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return nil
+	}
+	return fmt.Errorf("host must be loopback, private, or link-local")
 }
 
 func runSystemSkills(args []string) int {
@@ -1659,6 +1719,8 @@ type runtimeState struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	stopOnce     sync.Once
+	stopDone     chan struct{}
 	errCh        chan error
 	db           *sql.DB
 	configSource string
@@ -1677,15 +1739,46 @@ func (rt *runtimeState) Stop() {
 	if rt == nil {
 		return
 	}
-	if rt.scheduler != nil {
-		rt.scheduler.Stop()
+	if rt.stopDone == nil {
+		rt.stopDone = make(chan struct{})
 	}
-	if rt.cancel != nil {
-		rt.cancel()
+	rt.stopOnce.Do(func() {
+		defer close(rt.stopDone)
+		if rt.cancel != nil {
+			rt.cancel()
+		}
+		if rt.scheduler != nil {
+			rt.scheduler.Stop()
+		}
+		rt.wg.Wait()
+		if rt.db != nil {
+			_ = rt.db.Close()
+		}
+	})
+	<-rt.stopDone
+}
+
+func (rt *runtimeState) WaitListenersStopped(ctx context.Context) error {
+	if rt == nil {
+		return nil
 	}
-	rt.wg.Wait()
-	if rt.db != nil {
-		_ = rt.db.Close()
+	if rt.apiServer != nil {
+		if err := rt.apiServer.WaitServeStopped(ctx); err != nil {
+			return fmt.Errorf("api listener stopped: %w", err)
+		}
+	}
+	if rt.webhook != nil {
+		if err := rt.webhook.WaitServeStopped(ctx); err != nil {
+			return fmt.Errorf("webhook listener stopped: %w", err)
+		}
+	}
+	return nil
+}
+
+func newRuntimeContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	return ctx, func() {
+		cancel(nil)
 	}
 }
 
@@ -1702,8 +1795,8 @@ func (rm *reloadManager) Stop() {
 
 func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error) {
 	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	oldRuntime := rm.runtime
-	rm.mu.Unlock()
 	if oldRuntime == nil {
 		return api.ReloadResponse{Status: "error", Message: "runtime not available"}, fmt.Errorf("runtime not available")
 	}
@@ -1721,23 +1814,34 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 	}
 
 	oldRuntime.logger.Info("reloading config")
-	oldRuntime.Stop()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	go oldRuntime.Stop()
+
+	listenerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := oldRuntime.WaitListenersStopped(listenerCtx); err != nil {
+		rm.runtime = nil
+		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
+	}
 
 	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
 	if err != nil {
 		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
 		restored, restoreErr := buildRuntime(oldCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
 		if restoreErr == nil {
-			rm.mu.Lock()
 			rm.runtime = restored
-			rm.mu.Unlock()
+		} else {
+			rm.runtime = nil
+			err = fmt.Errorf("reload failed: %w; restore previous runtime: %v", err, restoreErr)
 		}
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 
-	rm.mu.Lock()
 	rm.runtime = runtime
-	rm.mu.Unlock()
 
 	return api.ReloadResponse{
 		Status:     "ok",
@@ -1965,12 +2069,13 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		logger:       logger,
 		registry:     registry,
 		router:       routerEngine,
+		stopDone:     make(chan struct{}),
 		errCh:        errCh,
 		db:           db,
 		configSource: configSource,
 	}
 
-	rt.ctx, rt.cancel = context.WithCancel(context.Background())
+	rt.ctx, rt.cancel = newRuntimeContext()
 
 	sched := scheduler.New(cfg, q, hub, logger,
 		scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {

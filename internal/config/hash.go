@@ -183,4 +183,3 @@ func GenerateChecksumsFromDiscovery(files *ConfigFiles, dryRun bool) error {
 
 	return nil
 }
-

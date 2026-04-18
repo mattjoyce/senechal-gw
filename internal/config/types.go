@@ -19,7 +19,7 @@ type Config struct {
 	API             APIConfig             `yaml:"api,omitempty"`
 	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
 	Plugins         map[string]PluginConf `yaml:"plugins"`
-	Workspace       WorkspaceConfig        `yaml:"workspace,omitempty"`
+	Workspace       WorkspaceConfig       `yaml:"workspace,omitempty"`
 	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
 	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates

@@ -40,14 +40,14 @@ func sanitizePluginConfig(cfg map[string]any) map[string]any {
 // -- Sanitized view types ----------------------------------------------------
 
 type configViewPlugin struct {
-	Enabled        bool                        `json:"enabled"`
-	Uses           string                      `json:"uses,omitempty"`
-	Schedules      []config.ScheduleConfig     `json:"schedules,omitempty"`
-	Config         map[string]any              `json:"config,omitempty"`
-	Retry          *config.RetryConfig         `json:"retry,omitempty"`
-	Timeouts       *config.TimeoutsConfig      `json:"timeouts,omitempty"`
+	Enabled        bool                         `json:"enabled"`
+	Uses           string                       `json:"uses,omitempty"`
+	Schedules      []config.ScheduleConfig      `json:"schedules,omitempty"`
+	Config         map[string]any               `json:"config,omitempty"`
+	Retry          *config.RetryConfig          `json:"retry,omitempty"`
+	Timeouts       *config.TimeoutsConfig       `json:"timeouts,omitempty"`
 	CircuitBreaker *config.CircuitBreakerConfig `json:"circuit_breaker,omitempty"`
-	Parallelism    int                         `json:"parallelism,omitempty"`
+	Parallelism    int                          `json:"parallelism,omitempty"`
 }
 
 type configViewToken struct {
@@ -84,8 +84,8 @@ type configViewResponse struct {
 }
 
 type configViewAPI struct {
-	Enabled bool               `json:"enabled"`
-	Listen  string             `json:"listen"`
+	Enabled bool                 `json:"enabled"`
+	Listen  string               `json:"listen"`
 	Tokens  []configViewAPIToken `json:"tokens,omitempty"`
 }
 

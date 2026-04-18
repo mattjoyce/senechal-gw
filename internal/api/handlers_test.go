@@ -782,3 +782,34 @@ func TestHandleSystemReload_Error(t *testing.T) {
 		t.Fatalf("expected error response, got: %s", resp.Body.String())
 	}
 }
+
+func TestServerWaitServeStoppedAfterCancel(t *testing.T) {
+	t.Parallel()
+
+	db := setupTestDB(t)
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.config.Listen = "127.0.0.1:0"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Start(ctx)
+	}()
+
+	cancel()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	defer waitCancel()
+	if err := server.WaitServeStopped(waitCtx); err != nil {
+		t.Fatalf("wait for serve stop: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Start() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server Start did not return")
+	}
+}

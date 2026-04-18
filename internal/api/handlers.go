@@ -65,7 +65,9 @@ func (s *Server) handleSystemReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.reloadFunc(r.Context())
+	// Reload replaces the runtime that owns this handler's server. Do not bind
+	// that lifecycle to a client disconnect once the protected operation starts.
+	resp, err := s.reloadFunc(context.Background())
 	if err != nil {
 		s.writeError(w, http.StatusConflict, err.Error())
 		return
@@ -757,7 +759,7 @@ func (s *Server) handleGetJobTree(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
 	// Simple summary of job statuses in the last 24h
 	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
-	
+
 	rows, err := s.queue.(*queue.Queue).GetDB().QueryContext(r.Context(), `
 SELECT status, COUNT(*)
 FROM job_log
