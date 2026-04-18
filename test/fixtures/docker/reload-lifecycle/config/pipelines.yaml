@@ -1,0 +1,6 @@
+pipelines:
+  - name: reload-smoke
+    on: reload.smoke
+    steps:
+      - id: entry
+        uses: echo

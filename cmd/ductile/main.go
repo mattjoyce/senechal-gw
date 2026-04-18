@@ -1775,6 +1775,13 @@ func (rt *runtimeState) WaitListenersStopped(ctx context.Context) error {
 	return nil
 }
 
+func newRuntimeContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	return ctx, func() {
+		cancel(nil)
+	}
+}
+
 func (rm *reloadManager) Stop() {
 	rm.mu.Lock()
 	rt := rm.runtime
@@ -2068,7 +2075,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		configSource: configSource,
 	}
 
-	rt.ctx, rt.cancel = context.WithCancel(context.Background())
+	rt.ctx, rt.cancel = newRuntimeContext()
 
 	sched := scheduler.New(cfg, q, hub, logger,
 		scheduler.WithCommandSupportChecker(func(pluginName, commandName string) bool {
