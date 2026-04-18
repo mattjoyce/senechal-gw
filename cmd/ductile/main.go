@@ -1906,16 +1906,61 @@ func verifyReloadIntegrity(configPath string) error {
 	return nil
 }
 
-func loadLockedPluginFingerprints(configPath string) []config.PluginFingerprint {
+func loadPluginFingerprintRecords(configPath string, cfg *config.Config, registry *plugin.Registry) []configsnapshot.PluginFingerprintRecord {
 	manifest, err := config.LoadChecksums(resolveConfigDir(configPath))
-	if err != nil || len(manifest.PluginFingerprints) == 0 {
+	if err != nil || cfg == nil || len(cfg.Plugins) == 0 {
 		return nil
 	}
-	fingerprints := append([]config.PluginFingerprint(nil), manifest.PluginFingerprints...)
-	sort.Slice(fingerprints, func(i, j int) bool {
-		return fingerprints[i].Name < fingerprints[j].Name
-	})
-	return fingerprints
+	locked := make(map[string]config.PluginFingerprint, len(manifest.PluginFingerprints))
+	for _, fp := range manifest.PluginFingerprints {
+		locked[fp.Name] = fp
+	}
+
+	names := make([]string, 0, len(cfg.Plugins))
+	for name := range cfg.Plugins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	records := make([]configsnapshot.PluginFingerprintRecord, 0, len(names))
+	for _, name := range names {
+		pluginConf := cfg.Plugins[name]
+		fp, lockedOK := locked[name]
+		discovered := false
+		if registry != nil {
+			_, discovered = registry.Get(name)
+		}
+		if lockedOK && discovered {
+			record := configsnapshot.PluginFingerprintRecordFromLock(fp)
+			record.Enabled = pluginConf.Enabled
+			record.Uses = pluginConf.Uses
+			records = append(records, record)
+			continue
+		}
+
+		record := configsnapshot.PluginFingerprintRecord{
+			Plugin:    name,
+			Enabled:   pluginConf.Enabled,
+			Uses:      pluginConf.Uses,
+			Available: false,
+		}
+		switch {
+		case !discovered:
+			record.UnavailableReason = "configured plugin was not discovered"
+		case !lockedOK:
+			record.UnavailableReason = "configured plugin missing from .checksums plugin_fingerprints"
+		}
+		if lockedOK {
+			record.ManifestPath = fp.ManifestPath
+			record.ManifestResolvedPath = fp.ManifestResolvedPath
+			record.ManifestHash = fp.ManifestHash
+			record.EntrypointPath = fp.EntrypointPath
+			record.EntrypointResolvedPath = fp.EntrypointResolvedPath
+			record.EntrypointHash = fp.EntrypointHash
+		}
+		records = append(records, record)
+	}
+	return records
 }
 
 func snapshotVersion() string {
@@ -2108,7 +2153,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		if reason == "" {
 			reason = configsnapshot.ReasonStartup
 		}
-		pluginFingerprints := loadLockedPluginFingerprints(configPath)
+		pluginFingerprints := loadPluginFingerprintRecords(configPath, cfg, registry)
 		snapshot, err := configsnapshot.Build(configsnapshot.BuildInput{
 			Config:             cfg,
 			ConfigPath:         configPath,

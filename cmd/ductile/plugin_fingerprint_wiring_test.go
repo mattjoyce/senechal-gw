@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/configsnapshot"
+	"github.com/mattjoyce/ductile/internal/plugin"
 )
 
 // buildFingerprintFixture writes a minimal config directory with service.allow_symlinks=true
@@ -183,6 +186,55 @@ func TestVerifyPluginFingerprintsForConfigHappyPath(t *testing.T) {
 
 	if err := verifyPluginFingerprintsForConfig(filepath.Join(tmp, "config.yaml")); err != nil {
 		t.Fatalf("verify should pass on unchanged bytes: %v", err)
+	}
+}
+
+func TestLoadPluginFingerprintRecordsDisabledMissingPlugin(t *testing.T) {
+	tmp := buildFingerprintFixture(t, false)
+	if code, _, stderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmp}); code != 0 {
+		t.Fatalf("lock failed: %s", stderr)
+	}
+	if err := os.RemoveAll(filepath.Join(tmp, "plugins", "gmail")); err != nil {
+		t.Fatalf("remove plugin files: %v", err)
+	}
+
+	cfg, err := config.Load(filepath.Join(tmp, "config.yaml"))
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	registry := plugin.NewRegistry()
+
+	records := loadPluginFingerprintRecords(filepath.Join(tmp, "config.yaml"), cfg, registry)
+	if len(records) != 1 {
+		t.Fatalf("expected one plugin fingerprint record, got %+v", records)
+	}
+	record := records[0]
+	if record.Plugin != "gmail" {
+		t.Fatalf("record plugin = %q, want gmail", record.Plugin)
+	}
+	if record.Enabled {
+		t.Fatal("disabled plugin was recorded as enabled")
+	}
+	if record.Available {
+		t.Fatal("missing plugin files should be recorded as unavailable")
+	}
+	if !strings.Contains(record.UnavailableReason, "not discovered") {
+		t.Fatalf("unexpected unavailable reason: %q", record.UnavailableReason)
+	}
+	if record.ManifestHash == "" || record.EntrypointHash == "" {
+		t.Fatalf("locked hashes should be retained for unavailable disabled plugin: %+v", record)
+	}
+
+	raw, err := json.Marshal(records)
+	if err != nil {
+		t.Fatalf("marshal records: %v", err)
+	}
+	if !strings.Contains(string(raw), `"available":false`) {
+		t.Fatalf("snapshot JSON does not mark unavailable plugin: %s", raw)
+	}
+	var decoded []configsnapshot.PluginFingerprintRecord
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal records: %v", err)
 	}
 }
 

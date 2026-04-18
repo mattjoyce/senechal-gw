@@ -54,6 +54,37 @@ type SecretUse struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
+// PluginFingerprintRecord captures current plugin identity availability.
+type PluginFingerprintRecord struct {
+	Plugin                 string `json:"plugin"`
+	Enabled                bool   `json:"enabled"`
+	Uses                   string `json:"uses,omitempty"`
+	Available              bool   `json:"available"`
+	UnavailableReason      string `json:"unavailable_reason,omitempty"`
+	ManifestPath           string `json:"manifest_path,omitempty"`
+	ManifestResolvedPath   string `json:"manifest_resolved_path,omitempty"`
+	ManifestHash           string `json:"manifest_hash,omitempty"`
+	EntrypointPath         string `json:"entrypoint_path,omitempty"`
+	EntrypointResolvedPath string `json:"entrypoint_resolved_path,omitempty"`
+	EntrypointHash         string `json:"entrypoint_hash,omitempty"`
+}
+
+// PluginFingerprintRecordFromLock converts a verified lock entry into snapshot JSON shape.
+func PluginFingerprintRecordFromLock(fp config.PluginFingerprint) PluginFingerprintRecord {
+	return PluginFingerprintRecord{
+		Plugin:                 fp.Name,
+		Enabled:                fp.Enabled,
+		Uses:                   fp.Uses,
+		Available:              true,
+		ManifestPath:           fp.ManifestPath,
+		ManifestResolvedPath:   fp.ManifestResolvedPath,
+		ManifestHash:           fp.ManifestHash,
+		EntrypointPath:         fp.EntrypointPath,
+		EntrypointResolvedPath: fp.EntrypointResolvedPath,
+		EntrypointHash:         fp.EntrypointHash,
+	}
+}
+
 // BuildInput contains runtime facts needed to create a snapshot.
 type BuildInput struct {
 	Config             *config.Config
@@ -62,7 +93,7 @@ type BuildInput struct {
 	Reason             string
 	DuctileVersion     string
 	BinaryPath         string
-	PluginFingerprints []config.PluginFingerprint
+	PluginFingerprints []PluginFingerprintRecord
 	LoadedAt           time.Time
 }
 
