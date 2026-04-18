@@ -213,8 +213,8 @@ type TokensConfig struct {
 }
 
 // ChecksumManifest stores BLAKE3 hashes for scope files (tokens.yaml, webhooks.yaml)
-// and, optionally, plugin identity fingerprints (manifest.yaml + entrypoint bytes)
-// for each configured plugin when the operator runs `ductile config lock --plugins`.
+// and plugin identity fingerprints (manifest.yaml + entrypoint bytes) for each
+// configured plugin when the operator runs `ductile config lock`.
 type ChecksumManifest struct {
 	Version            int                 `yaml:"version"`
 	GeneratedAt        string              `yaml:"generated_at"`
@@ -229,13 +229,15 @@ type ChecksumManifest struct {
 // plugin's paths, and Uses carries the base plugin name; non-aliases have an
 // empty Uses field.
 type PluginFingerprint struct {
-	Name           string `yaml:"name"`
-	Enabled        bool   `yaml:"enabled"`
-	Uses           string `yaml:"uses,omitempty"`
-	ManifestPath   string `yaml:"manifest_path"`
-	ManifestHash   string `yaml:"manifest_hash"`
-	EntrypointPath string `yaml:"entrypoint_path"`
-	EntrypointHash string `yaml:"entrypoint_hash"`
+	Name                   string `yaml:"name"`
+	Enabled                bool   `yaml:"enabled"`
+	Uses                   string `yaml:"uses,omitempty"`
+	ManifestPath           string `yaml:"manifest_path"`
+	ManifestResolvedPath   string `yaml:"manifest_resolved_path,omitempty"`
+	ManifestHash           string `yaml:"manifest_hash"`
+	EntrypointPath         string `yaml:"entrypoint_path"`
+	EntrypointResolvedPath string `yaml:"entrypoint_resolved_path,omitempty"`
+	EntrypointHash         string `yaml:"entrypoint_hash"`
 }
 
 // PluginsFileConfig is the structure of plugins.yaml.

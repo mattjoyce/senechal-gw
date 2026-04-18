@@ -43,6 +43,12 @@ func TestComputePluginFingerprintHappyPath(t *testing.T) {
 	if fp.ManifestPath != manifest || fp.EntrypointPath != entry {
 		t.Fatalf("paths not preserved: %+v", fp)
 	}
+	if fp.ManifestResolvedPath == "" || fp.EntrypointResolvedPath == "" {
+		t.Fatalf("resolved paths not recorded: %+v", fp)
+	}
+	if fp.ManifestResolvedPath != manifest || fp.EntrypointResolvedPath != entry {
+		t.Fatalf("unexpected resolved paths: %+v", fp)
+	}
 	if len(fp.ManifestHash) != 64 || len(fp.EntrypointHash) != 64 {
 		t.Fatalf("hashes not BLAKE3 hex (len != 64): %+v", fp)
 	}
@@ -358,17 +364,30 @@ func lockAndCurrent(t *testing.T, dir, name string, enabled bool, uses string) (
 }
 
 func TestVerifyPluginFingerprintsEmptyIsPassNoOp(t *testing.T) {
-	r := VerifyPluginFingerprints(nil, map[string]ResolvedPlugin{})
+	r := VerifyPluginFingerprints(nil, nil, map[string]ResolvedPlugin{})
 	if r == nil || !r.Passed || len(r.Errors) != 0 || len(r.Warnings) != 0 {
 		t.Fatalf("expected clean pass, got %+v", r)
 	}
+}
+
+func configuredPlugins(current map[string]ResolvedPlugin) map[string]bool {
+	out := make(map[string]bool, len(current))
+	for name, plugin := range current {
+		out[name] = plugin.Enabled
+	}
+	return out
+}
+
+func verifyPluginFingerprintsForTest(fingerprints []PluginFingerprint, current map[string]ResolvedPlugin) *IntegrityResult {
+	return VerifyPluginFingerprints(fingerprints, configuredPlugins(current), current)
 }
 
 func TestVerifyPluginFingerprintsHappyPath(t *testing.T) {
 	tmp := t.TempDir()
 	fp, cur := lockAndCurrent(t, tmp, "gmail", true, "")
 
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"gmail": cur})
+	current := map[string]ResolvedPlugin{"gmail": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if !r.Passed || len(r.Errors) != 0 || len(r.Warnings) != 0 {
 		t.Fatalf("expected clean verify, got %+v", r)
 	}
@@ -382,7 +401,8 @@ func TestVerifyPluginFingerprintsEnabledManifestMismatchErrors(t *testing.T) {
 		t.Fatalf("tamper manifest: %v", err)
 	}
 
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"gmail": cur})
+	current := map[string]ResolvedPlugin{"gmail": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if r.Passed {
 		t.Fatal("expected Passed=false for enabled manifest mismatch")
 	}
@@ -390,7 +410,7 @@ func TestVerifyPluginFingerprintsEnabledManifestMismatchErrors(t *testing.T) {
 		t.Fatalf("want 1 error, got %d: %+v", len(r.Errors), r)
 	}
 	msg := r.Errors[0]
-	for _, want := range []string{"gmail", "manifest", "mismatch", cur.ManifestPath, "ductile config lock --plugins"} {
+	for _, want := range []string{"gmail", "manifest", "mismatch", cur.ManifestPath, "ductile config lock"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error missing %q: %s", want, msg)
 		}
@@ -404,7 +424,8 @@ func TestVerifyPluginFingerprintsEnabledEntrypointMismatchErrors(t *testing.T) {
 		t.Fatalf("tamper entrypoint: %v", err)
 	}
 
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"gmail": cur})
+	current := map[string]ResolvedPlugin{"gmail": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if r.Passed {
 		t.Fatal("expected Passed=false for enabled entrypoint mismatch")
 	}
@@ -423,7 +444,8 @@ func TestVerifyPluginFingerprintsDisabledMismatchIsWarning(t *testing.T) {
 		t.Fatalf("tamper: %v", err)
 	}
 
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"legacy": cur})
+	current := map[string]ResolvedPlugin{"legacy": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if !r.Passed {
 		t.Fatal("disabled mismatch must not fail verify")
 	}
@@ -438,8 +460,7 @@ func TestVerifyPluginFingerprintsDisabledMismatchIsWarning(t *testing.T) {
 func TestVerifyPluginFingerprintsStaleRecordIsWarning(t *testing.T) {
 	tmp := t.TempDir()
 	fp, _ := lockAndCurrent(t, tmp, "removed", true, "")
-	// currentPlugins no longer carries "removed"
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{})
+	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]bool{}, map[string]ResolvedPlugin{})
 	if !r.Passed {
 		t.Fatal("stale entry must not fail verify")
 	}
@@ -458,7 +479,8 @@ func TestVerifyPluginFingerprintsMissingFileEnabledErrors(t *testing.T) {
 		t.Fatalf("rm entrypoint: %v", err)
 	}
 
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"gmail": cur})
+	current := map[string]ResolvedPlugin{"gmail": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if r.Passed {
 		t.Fatal("missing enabled entrypoint must fail verify")
 	}
@@ -474,7 +496,8 @@ func TestVerifyPluginFingerprintsMissingFileDisabledWarns(t *testing.T) {
 		t.Fatalf("rm: %v", err)
 	}
 
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"legacy": cur})
+	current := map[string]ResolvedPlugin{"legacy": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if !r.Passed {
 		t.Fatal("missing disabled entrypoint must not fail verify")
 	}
@@ -509,7 +532,8 @@ func TestVerifyPluginFingerprintsPathDriftBytesMatchIsInformational(t *testing.T
 		ManifestPath:   newMan,
 		EntrypointPath: newEntry,
 	}
-	r := VerifyPluginFingerprints([]PluginFingerprint{fp}, map[string]ResolvedPlugin{"gmail": currentShifted})
+	current := map[string]ResolvedPlugin{"gmail": currentShifted}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
 	if !r.Passed {
 		t.Fatalf("path drift with identical bytes must not fail verify: %+v", r)
 	}
@@ -518,6 +542,110 @@ func TestVerifyPluginFingerprintsPathDriftBytesMatchIsInformational(t *testing.T
 	}
 	if len(r.Warnings) != 2 {
 		t.Fatalf("expected 2 informational path-drift warnings (manifest + entrypoint), got %+v", r.Warnings)
+	}
+}
+
+func TestComputePluginFingerprintRecordsConfiguredAndResolvedPaths(t *testing.T) {
+	tmp := t.TempDir()
+	realDir := filepath.Join(tmp, "real")
+	manifest, entry := writePluginFixture(t, realDir, "gmail", "name: gmail\n", "#!/bin/sh\necho hi\n")
+	linkDir := filepath.Join(tmp, "link")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	configuredManifest := filepath.Join(linkDir, "gmail", "manifest.yaml")
+	configuredEntry := filepath.Join(linkDir, "gmail", "gmail")
+
+	fp, err := ComputePluginFingerprint(ResolvedPlugin{
+		Name:           "gmail",
+		Enabled:        true,
+		ManifestPath:   configuredManifest,
+		EntrypointPath: configuredEntry,
+	})
+	if err != nil {
+		t.Fatalf("ComputePluginFingerprint: %v", err)
+	}
+	if fp.ManifestPath != configuredManifest || fp.EntrypointPath != configuredEntry {
+		t.Fatalf("configured paths not preserved: %+v", fp)
+	}
+	if fp.ManifestResolvedPath != manifest || fp.EntrypointResolvedPath != entry {
+		t.Fatalf("resolved paths not recorded correctly: %+v", fp)
+	}
+}
+
+func TestVerifyPluginFingerprintsDisabledAtLockEnabledNowMismatchErrors(t *testing.T) {
+	tmp := t.TempDir()
+	fp, cur := lockAndCurrent(t, tmp, "gmail", false, "")
+	cur.Enabled = true
+	if err := os.WriteFile(cur.EntrypointPath, []byte("new-binary\n"), 0755); err != nil {
+		t.Fatalf("tamper entrypoint: %v", err)
+	}
+
+	current := map[string]ResolvedPlugin{"gmail": cur}
+	r := verifyPluginFingerprintsForTest([]PluginFingerprint{fp}, current)
+	if r.Passed {
+		t.Fatal("current enabled state must make mismatch fatal even if lock recorded disabled")
+	}
+	if len(r.Errors) != 1 {
+		t.Fatalf("want 1 error, got %+v", r)
+	}
+	if len(r.Warnings) == 0 {
+		t.Fatal("expected warning about enabled state drift")
+	}
+}
+
+func TestVerifyPluginFingerprintsConfiguredButNotDiscoveredErrorsWhenEnabled(t *testing.T) {
+	tmp := t.TempDir()
+	fp, _ := lockAndCurrent(t, tmp, "gmail", true, "")
+
+	r := VerifyPluginFingerprints(
+		[]PluginFingerprint{fp},
+		map[string]bool{"gmail": true},
+		map[string]ResolvedPlugin{},
+	)
+	if r.Passed {
+		t.Fatal("configured enabled plugin missing from registry must fail verify")
+	}
+	if len(r.Errors) != 1 || !strings.Contains(r.Errors[0], "configured but was not discovered") {
+		t.Fatalf("unexpected errors: %+v", r.Errors)
+	}
+}
+
+func TestVerifyPluginFingerprintsConfiguredButNotDiscoveredWarnsWhenDisabled(t *testing.T) {
+	tmp := t.TempDir()
+	fp, _ := lockAndCurrent(t, tmp, "legacy", false, "")
+
+	r := VerifyPluginFingerprints(
+		[]PluginFingerprint{fp},
+		map[string]bool{"legacy": false},
+		map[string]ResolvedPlugin{},
+	)
+	if !r.Passed {
+		t.Fatalf("configured disabled missing plugin should warn only: %+v", r)
+	}
+	if len(r.Warnings) != 1 {
+		t.Fatalf("want 1 warning, got %+v", r)
+	}
+}
+
+func TestVerifyPluginFingerprintsConfiguredPluginMissingFromLockErrorsWhenEnabled(t *testing.T) {
+	current := map[string]ResolvedPlugin{
+		"gmail": {
+			Name:    "gmail",
+			Enabled: true,
+		},
+	}
+
+	r := VerifyPluginFingerprints(
+		[]PluginFingerprint{{Name: "other", Enabled: true}},
+		configuredPlugins(current),
+		current,
+	)
+	if r.Passed {
+		t.Fatal("configured enabled plugin missing from lock must fail verify")
+	}
+	if len(r.Errors) == 0 || !strings.Contains(r.Errors[len(r.Errors)-1], "missing from .checksums plugin_fingerprints") {
+		t.Fatalf("missing-lock error not reported: %+v", r.Errors)
 	}
 }
 

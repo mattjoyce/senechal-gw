@@ -937,6 +937,9 @@ func discoverRegistry(cfg *config.Config, configPath string) (*plugin.Registry, 
 // Configured plugins that do not resolve in any plugin_root produce a hard error:
 // the operator cannot lock what the binary will be unable to load.
 func resolveConfiguredPluginFingerprints(cfg *config.Config, configPath string) ([]config.ResolvedPlugin, error) {
+	if len(cfg.Plugins) == 0 {
+		return nil, nil
+	}
 	pluginRoots, err := resolvePluginRoots(cfg, configPath)
 	if err != nil {
 		return nil, err
@@ -977,23 +980,27 @@ func resolveConfiguredPluginFingerprints(cfg *config.Config, configPath string) 
 }
 
 // verifyPluginFingerprintsForConfig runs VerifyPluginFingerprints against the
-// live plugin registry for configPath. Returns nil when .checksums has no
-// plugin_fingerprints section (downgrade-safe) or when recorded fingerprints
-// match current bytes. Returns an error describing hard mismatches otherwise.
-// Warnings from VerifyPluginFingerprints are intentionally silent here; the
-// caller may upgrade to logger-aware reporting in a future revision.
+// configured plugin set and live plugin registry for configPath. Returns nil
+// when .checksums has no plugin_fingerprints section (downgrade-safe) or when
+// recorded fingerprints match current bytes. Returns an error describing hard
+// mismatches otherwise. Warnings from VerifyPluginFingerprints are intentionally
+// silent here; the caller may upgrade to logger-aware reporting in a future
+// revision.
 func verifyPluginFingerprintsForConfig(configPath string) error {
 	configDir := resolveConfigDir(configPath)
 	manifest, err := config.LoadChecksums(configDir)
 	if err != nil {
 		return nil
 	}
-	if len(manifest.PluginFingerprints) == 0 {
-		return nil
-	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("load config for plugin verify: %w", err)
+	}
+	if len(manifest.PluginFingerprints) == 0 {
+		if len(cfg.Plugins) == 0 {
+			return nil
+		}
+		return fmt.Errorf("plugin fingerprints missing from .checksums; run 'ductile config lock' to authorize configured plugins")
 	}
 	pluginRoots, err := resolvePluginRoots(cfg, configPath)
 	if err != nil {
@@ -1010,8 +1017,10 @@ func verifyPluginFingerprintsForConfig(configPath string) error {
 	if _, err := plugin.ApplyAliases(registry, cfg.Plugins); err != nil {
 		return fmt.Errorf("plugin aliases for verify: %w", err)
 	}
+	configured := make(map[string]bool, len(cfg.Plugins))
 	current := make(map[string]config.ResolvedPlugin, len(cfg.Plugins))
 	for name, pc := range cfg.Plugins {
+		configured[name] = pc.Enabled
 		p, ok := registry.Get(name)
 		if !ok {
 			continue
@@ -1024,7 +1033,7 @@ func verifyPluginFingerprintsForConfig(configPath string) error {
 			EntrypointPath: p.Entrypoint,
 		}
 	}
-	result := config.VerifyPluginFingerprints(manifest.PluginFingerprints, current)
+	result := config.VerifyPluginFingerprints(manifest.PluginFingerprints, configured, current)
 	if !result.Passed {
 		return fmt.Errorf("plugin fingerprint mismatch: %s", strings.Join(result.Errors, "; "))
 	}

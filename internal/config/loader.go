@@ -21,6 +21,17 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 // Load reads and parses configuration from a file.
 // Supports both single-file mode (all config in one file) and multi-file mode (via include array).
 func Load(configPath string) (*Config, error) {
+	return load(configPath, true, true)
+}
+
+// LoadForLock reads configuration for `ductile config lock`. It intentionally
+// skips existing .checksums verification so an operator can create or refresh
+// the lock manifest from an unlocked state.
+func LoadForLock(configPath string) (*Config, error) {
+	return load(configPath, false, false)
+}
+
+func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, error) {
 	// Resolve to absolute path for consistent relative path resolution
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
@@ -73,27 +84,31 @@ func Load(configPath string) (*Config, error) {
 	cfg = applyConfigDefaults(cfg)
 	resolveStatePath(cfg, filepath.Dir(absPath))
 
-	// Hash-verify scope files (tokens.yaml, webhooks.yaml)
-	if err := verifyScopeFilesRecursively(includedPaths); err != nil {
-		return nil, err
-	}
-
-	// Validate configuration (including cross-file references if multi-file mode)
-	if len(cfg.Include) > 0 {
-		// Multi-file mode: extract tokens for cross-validation
-		tokens := extractTokensFromConfig(cfg)
-		validator := &ConfigValidator{
-			config: cfg,
-			tokens: tokens,
-		}
-		if err := validator.ValidateCrossReferences(); err != nil {
-			return nil, fmt.Errorf("configuration validation failed: %w", err)
+	if verifyScopes {
+		// Hash-verify scope files (tokens.yaml, webhooks.yaml)
+		if err := verifyScopeFilesRecursively(includedPaths); err != nil {
+			return nil, err
 		}
 	}
 
-	// Standard validation
-	if err := validate(cfg); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+	if validateConfig {
+		// Validate configuration (including cross-file references if multi-file mode)
+		if len(cfg.Include) > 0 {
+			// Multi-file mode: extract tokens for cross-validation
+			tokens := extractTokensFromConfig(cfg)
+			validator := &ConfigValidator{
+				config: cfg,
+				tokens: tokens,
+			}
+			if err := validator.ValidateCrossReferences(); err != nil {
+				return nil, fmt.Errorf("configuration validation failed: %w", err)
+			}
+		}
+
+		// Standard validation
+		if err := validate(cfg); err != nil {
+			return nil, fmt.Errorf("invalid configuration: %w", err)
+		}
 	}
 
 	// Apply plugin defaults

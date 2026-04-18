@@ -413,6 +413,7 @@ This makes failures easier to diagnose and rerun.
 - pure logic
 - deterministic unit behavior
 - parser/validator correctness
+- config integrity and plugin fingerprint policy, using temporary config/plugin fixtures
 - router/state/queue integration using real SQLite where helpful
 - low-friction day-to-day confidence
 
@@ -422,6 +423,27 @@ This makes failures easier to diagnose and rerun.
 - restart and recovery flows
 - network ingress behavior
 - realistic end-to-end operator-facing scenarios
+
+### Config integrity / plugin fingerprint tests
+
+Plugin fingerprinting belongs in the fast suite by default. Use temporary
+config directories and temporary plugin directories in Go tests rather than
+committed fixture trees unless the scenario needs multi-process runtime
+realism.
+
+Fast tests should cover:
+- `ductile config lock` always writes fingerprints for configured plugins
+- lock records both configured absolute paths and symlink-resolved paths
+- manifest and entrypoint bytes are hashed
+- configured enabled plugin mismatches fail verification
+- configured disabled plugin mismatches warn only
+- configured but undiscovered enabled plugins fail verification
+- stale lock entries for plugins removed from config warn only
+- missing `plugin_fingerprints` fails when plugins are configured
+
+Move a scenario into Docker only when the behavior depends on real service
+startup/reload, container filesystem mounts, or operator-facing black-box
+assertions that cannot be represented by temporary local fixtures.
 
 ---
 

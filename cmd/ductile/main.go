@@ -2802,7 +2802,7 @@ func runConfigCheck(args []string) int {
 
 func runConfigHashUpdate(args []string) int {
 	var configPath, configDir string
-	var verbose, verboseShort, dryRun, lockPlugins bool
+	var verbose, verboseShort, dryRun bool
 
 	fs := flag.NewFlagSet("lock", flag.ExitOnError)
 	fs.StringVar(&configPath, "config", "", "Path to configuration")
@@ -2810,7 +2810,6 @@ func runConfigHashUpdate(args []string) int {
 	fs.BoolVar(&verbose, "verbose", false, "Verbose output")
 	fs.BoolVar(&verboseShort, "v", false, "Verbose output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Dry run")
-	fs.BoolVar(&lockPlugins, "plugins", false, "Also lock configured plugin manifest + entrypoint fingerprints (opt-in)")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
@@ -2865,32 +2864,25 @@ func runConfigHashUpdate(args []string) int {
 				}
 			}
 
-			if lockPlugins {
-				cfg, err := config.Load(configPath)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to load config for plugin locking in %s: %v\n", dir, err)
-					return 1
+			cfg, err := config.LoadForLock(configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to load config for plugin locking in %s: %v\n", dir, err)
+				return 1
+			}
+			resolved, err := resolveConfiguredPluginFingerprints(cfg, configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to resolve plugin fingerprints in %s: %v\n", dir, err)
+				return 1
+			}
+			if isVerbose {
+				for _, rp := range resolved {
+					fmt.Printf("  DISCOVER [plugin] %s manifest=%s entrypoint=%s enabled=%t\n",
+						rp.Name, rp.ManifestPath, rp.EntrypointPath, rp.Enabled)
 				}
-				resolved, err := resolveConfiguredPluginFingerprints(cfg, configPath)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to resolve plugin fingerprints in %s: %v\n", dir, err)
-					return 1
-				}
-				if isVerbose {
-					for _, rp := range resolved {
-						fmt.Printf("  DISCOVER [plugin] %s manifest=%s entrypoint=%s enabled=%t\n",
-							rp.Name, rp.ManifestPath, rp.EntrypointPath, rp.Enabled)
-					}
-				}
-				if err := config.GenerateChecksumsWithPlugins(files, resolved, dryRun); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-					return 1
-				}
-			} else {
-				if err := config.GenerateChecksumsFromDiscovery(files, dryRun); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
-					return 1
-				}
+			}
+			if err := config.GenerateChecksumsWithPlugins(files, resolved, dryRun); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to lock config in %s: %v\n", dir, err)
+				return 1
 			}
 
 			if isVerbose {
