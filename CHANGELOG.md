@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-04-18
+- Stabilize the reload lifecycle and crash-recovery behavior to reliably mark jobs dead and trigger job-failed hooks.
+- Strengthen plugin fingerprinting and config locking across config, CLI, and snapshots, including wiring into lock/boot/reload and improving migration checks.
+- Add job lineage facts and ensure unavailable plugin fingerprints are recorded in snapshots.
+- Add reload lifecycle Docker fixture and fix webhook fixture checksum preflight, while expanding CLI plugin fingerprint wiring tests.
+- Apply Go formatting cleanup, fix gosec findings, add developer deck, and simplify agent guidance.
+
 ## 2026-04-10
 - Tests now explicitly set janitor_interval in the workspace-lifecycle fixture to make test behavior predictable.
 - Removed the obsolete workspace migrate command from the CLI to reduce confusion.
