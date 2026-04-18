@@ -19,12 +19,16 @@ CREATE TABLE IF NOT EXISTS job_queue (
   last_error      TEXT,
   parent_job_id   TEXT,
   source_event_id TEXT,
-  event_context_id TEXT
+  event_context_id TEXT,
+  enqueued_config_snapshot_id TEXT,
+  started_config_snapshot_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, created_at);
 CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);
 CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS job_queue_enqueued_config_snapshot_idx ON job_queue(enqueued_config_snapshot_id);
+CREATE INDEX IF NOT EXISTS job_queue_started_config_snapshot_idx ON job_queue(started_config_snapshot_id);
 
 -- Hickey Sprint 1 branch hickey-sprint-1-job-lineage:
 -- append-only job lineage facts. job_queue.status and job_queue.attempt
@@ -51,6 +55,29 @@ CREATE TABLE IF NOT EXISTS job_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS job_attempts_job_created_at_idx ON job_attempts(job_id, created_at);
+
+-- Hickey Sprint 2 config snapshots:
+-- append-only records of successful active runtime config values. Job rows
+-- reference the config value that admitted them and the config value that
+-- actually started execution. Existing rows may have NULL snapshot IDs.
+CREATE TABLE IF NOT EXISTS config_snapshots (
+  id                  TEXT PRIMARY KEY,
+  config_hash         TEXT NOT NULL,
+  source_hash         TEXT,
+  source_path         TEXT,
+  source              TEXT,
+  reason              TEXT NOT NULL,
+  loaded_at           TEXT NOT NULL,
+  ductile_version     TEXT,
+  binary_path         TEXT,
+  snapshot_format     INTEGER NOT NULL DEFAULT 1,
+  semantics           JSON,
+  plugin_fingerprints JSON,
+  sanitized_config    JSON,
+  secret_fingerprints JSON
+);
+
+CREATE INDEX IF NOT EXISTS config_snapshots_loaded_at_idx ON config_snapshots(loaded_at);
 
 -- Plugin State: Persistent key-value store for plugins.
 CREATE TABLE IF NOT EXISTS plugin_state (
@@ -87,10 +114,14 @@ CREATE TABLE IF NOT EXISTS job_log (
   stderr          TEXT,
   parent_job_id   TEXT,
   source_event_id TEXT,
-  event_context_id TEXT
+  event_context_id TEXT,
+  enqueued_config_snapshot_id TEXT,
+  started_config_snapshot_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);
+CREATE INDEX IF NOT EXISTS job_log_enqueued_config_snapshot_idx ON job_log(enqueued_config_snapshot_id);
+CREATE INDEX IF NOT EXISTS job_log_started_config_snapshot_idx ON job_log(started_config_snapshot_id);
 
 -- Circuit Breakers: Fault tolerance state.
 CREATE TABLE IF NOT EXISTS circuit_breakers (

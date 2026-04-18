@@ -30,6 +30,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/api"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/configsnapshot"
 	"github.com/mattjoyce/ductile/internal/dispatch"
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/events"
@@ -1707,23 +1708,24 @@ func runPluginRun(args []string) int {
 }
 
 type runtimeState struct {
-	cfg          *config.Config
-	configPath   string
-	logger       *slog.Logger
-	registry     *plugin.Registry
-	router       router.Engine
-	scheduler    *scheduler.Scheduler
-	dispatcher   *dispatch.Dispatcher
-	apiServer    *api.Server
-	webhook      *webhook.Server
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	stopOnce     sync.Once
-	stopDone     chan struct{}
-	errCh        chan error
-	db           *sql.DB
-	configSource string
+	cfg                    *config.Config
+	configPath             string
+	logger                 *slog.Logger
+	registry               *plugin.Registry
+	router                 router.Engine
+	scheduler              *scheduler.Scheduler
+	dispatcher             *dispatch.Dispatcher
+	apiServer              *api.Server
+	webhook                *webhook.Server
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	wg                     sync.WaitGroup
+	stopOnce               sync.Once
+	stopDone               chan struct{}
+	errCh                  chan error
+	db                     *sql.DB
+	configSource           string
+	activeConfigSnapshotID string
 }
 
 type reloadManager struct {
@@ -1733,6 +1735,11 @@ type reloadManager struct {
 	runtime      *runtimeState
 	errCh        chan error
 	reloadFunc   func(context.Context) (api.ReloadResponse, error)
+}
+
+type runtimeBuildOptions struct {
+	snapshotReason     string
+	existingSnapshotID string
 }
 
 func (rt *runtimeState) Stop() {
@@ -1828,10 +1835,14 @@ func (rm *reloadManager) Reload(ctx context.Context) (api.ReloadResponse, error)
 		return api.ReloadResponse{Status: "error", Message: err.Error()}, err
 	}
 
-	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
+	runtime, err := buildRuntime(newCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh, runtimeBuildOptions{
+		snapshotReason: configsnapshot.ReasonReload,
+	})
 	if err != nil {
 		oldRuntime.logger.Error("reload failed; attempting to restore previous runtime", "error", err)
-		restored, restoreErr := buildRuntime(oldCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh)
+		restored, restoreErr := buildRuntime(oldCfg, rm.configPath, rm.configSource, rm.reloadFunc, rm.errCh, runtimeBuildOptions{
+			existingSnapshotID: oldRuntime.activeConfigSnapshotID,
+		})
 		if restoreErr == nil {
 			rm.runtime = restored
 		} else {
@@ -1895,7 +1906,36 @@ func verifyReloadIntegrity(configPath string) error {
 	return nil
 }
 
-func buildRuntime(cfg *config.Config, configPath string, configSource string, reloadFunc func(context.Context) (api.ReloadResponse, error), errCh chan error) (*runtimeState, error) {
+func loadLockedPluginFingerprints(configPath string) []config.PluginFingerprint {
+	manifest, err := config.LoadChecksums(resolveConfigDir(configPath))
+	if err != nil || len(manifest.PluginFingerprints) == 0 {
+		return nil
+	}
+	fingerprints := append([]config.PluginFingerprint(nil), manifest.PluginFingerprints...)
+	sort.Slice(fingerprints, func(i, j int) bool {
+		return fingerprints[i].Name < fingerprints[j].Name
+	})
+	return fingerprints
+}
+
+func snapshotVersion() string {
+	v := strings.TrimSpace(version)
+	commit := strings.TrimSpace(gitCommit)
+	if commit != "" && commit != "unknown" {
+		return v + "+commit." + commit
+	}
+	return v
+}
+
+func binaryPath() string {
+	path, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+func buildRuntime(cfg *config.Config, configPath string, configSource string, reloadFunc func(context.Context) (api.ReloadResponse, error), errCh chan error, opts runtimeBuildOptions) (*runtimeState, error) {
 	log.Setup(cfg.Service.LogLevel)
 	logger := log.WithComponent("main")
 
@@ -2025,15 +2065,6 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	}
 	logger.Info("database opened", "path", cfg.State.Path)
 
-	q := queue.New(
-		db,
-		queue.WithLogger(logger),
-		queue.WithDedupeTTL(cfg.Service.DedupeTTL),
-	)
-	st := state.NewStore(db)
-	contextStore := state.NewContextStore(db)
-	hub := events.NewHub(256)
-
 	logger.Info("plugin discovery complete", "count", len(registry.All()))
 	if err := validateScheduledCommands(cfg, registry); err != nil {
 		logger.Error("invalid scheduled command configuration", "error", err)
@@ -2071,16 +2102,57 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 	}
 
+	activeSnapshotID := strings.TrimSpace(opts.existingSnapshotID)
+	if activeSnapshotID == "" {
+		reason := opts.snapshotReason
+		if reason == "" {
+			reason = configsnapshot.ReasonStartup
+		}
+		pluginFingerprints := loadLockedPluginFingerprints(configPath)
+		snapshot, err := configsnapshot.Build(configsnapshot.BuildInput{
+			Config:             cfg,
+			ConfigPath:         configPath,
+			ConfigSource:       configSource,
+			Reason:             reason,
+			DuctileVersion:     snapshotVersion(),
+			BinaryPath:         binaryPath(),
+			PluginFingerprints: pluginFingerprints,
+		})
+		if err != nil {
+			logger.Error("failed to build config snapshot", "error", err)
+			return nil, err
+		}
+		if err := configsnapshot.Insert(ctx, db, snapshot); err != nil {
+			logger.Error("failed to store config snapshot", "error", err)
+			return nil, err
+		}
+		activeSnapshotID = snapshot.ID
+		logger.Info("config snapshot recorded", "snapshot_id", activeSnapshotID, "reason", reason, "config_hash", snapshot.ConfigHash)
+	}
+
+	q := queue.New(
+		db,
+		queue.WithLogger(logger),
+		queue.WithDedupeTTL(cfg.Service.DedupeTTL),
+		queue.WithConfigSnapshotIDProvider(func() string {
+			return activeSnapshotID
+		}),
+	)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	hub := events.NewHub(256)
+
 	rt := &runtimeState{
-		cfg:          cfg,
-		configPath:   configPath,
-		logger:       logger,
-		registry:     registry,
-		router:       routerEngine,
-		stopDone:     make(chan struct{}),
-		errCh:        errCh,
-		db:           db,
-		configSource: configSource,
+		cfg:                    cfg,
+		configPath:             configPath,
+		logger:                 logger,
+		registry:               registry,
+		router:                 routerEngine,
+		stopDone:               make(chan struct{}),
+		errCh:                  errCh,
+		db:                     db,
+		configSource:           configSource,
+		activeConfigSnapshotID: activeSnapshotID,
 	}
 
 	rt.ctx, rt.cancel = newRuntimeContext()
@@ -2222,7 +2294,9 @@ func runStart(args []string) int {
 	}
 	manager.reloadFunc = manager.Reload
 
-	runtime, err := buildRuntime(cfg, *configPath, configSource, manager.reloadFunc, manager.errCh)
+	runtime, err := buildRuntime(cfg, *configPath, configSource, manager.reloadFunc, manager.errCh, runtimeBuildOptions{
+		snapshotReason: configsnapshot.ReasonStartup,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start runtime: %v\n", err)
 		return 1

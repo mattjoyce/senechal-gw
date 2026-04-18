@@ -88,7 +88,11 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 		{"job_log", "result", "TEXT"},
 		{"job_log", "job_id", "TEXT"},
 		{"job_queue", "event_context_id", "TEXT"},
+		{"job_queue", "enqueued_config_snapshot_id", "TEXT"},
+		{"job_queue", "started_config_snapshot_id", "TEXT"},
 		{"job_log", "event_context_id", "TEXT"},
+		{"job_log", "enqueued_config_snapshot_id", "TEXT"},
+		{"job_log", "started_config_snapshot_id", "TEXT"},
 		{"schedule_entries", "last_success_job_id", "TEXT"},
 		{"schedule_entries", "last_fired_at", "TEXT"},
 		{"schedule_entries", "last_success_at", "TEXT"},
@@ -104,6 +108,20 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 	// Ensure specific indexes that might not be in the base schema of older installs.
 	if err := ensureIndexExists(ctx, db, "job_log_job_id_attempt_idx", "CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);"); err != nil {
 		return err
+	}
+	indexes := []struct {
+		name string
+		stmt string
+	}{
+		{"job_queue_enqueued_config_snapshot_idx", "CREATE INDEX IF NOT EXISTS job_queue_enqueued_config_snapshot_idx ON job_queue(enqueued_config_snapshot_id);"},
+		{"job_queue_started_config_snapshot_idx", "CREATE INDEX IF NOT EXISTS job_queue_started_config_snapshot_idx ON job_queue(started_config_snapshot_id);"},
+		{"job_log_enqueued_config_snapshot_idx", "CREATE INDEX IF NOT EXISTS job_log_enqueued_config_snapshot_idx ON job_log(enqueued_config_snapshot_id);"},
+		{"job_log_started_config_snapshot_idx", "CREATE INDEX IF NOT EXISTS job_log_started_config_snapshot_idx ON job_log(started_config_snapshot_id);"},
+	}
+	for _, idx := range indexes {
+		if err := ensureIndexExists(ctx, db, idx.name, idx.stmt); err != nil {
+			return err
+		}
 	}
 
 	return nil

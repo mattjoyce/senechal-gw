@@ -12,17 +12,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattjoyce/ductile/internal/configsnapshot"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/state"
 )
 
 type jobInfo struct {
-	id        string
-	plugin    string
-	command   string
-	status    string
-	attempt   int
-	contextID sql.NullString
+	id                       string
+	plugin                   string
+	command                  string
+	status                   string
+	attempt                  int
+	contextID                sql.NullString
+	enqueuedConfigSnapshotID sql.NullString
+	startedConfigSnapshotID  sql.NullString
 }
 
 // Report is the structured JSON representation of a lineage report.
@@ -36,6 +39,7 @@ type Report struct {
 	Transitions []Transition       `json:"transitions"`
 	Attempts    []Attempt          `json:"attempts"`
 	Consistency LineageConsistency `json:"consistency"`
+	Config      ConfigReport       `json:"config"`
 	Hops        int                `json:"hops"`
 	Steps       []Step             `json:"steps"`
 }
@@ -60,6 +64,30 @@ type LineageConsistency struct {
 	CachedStatusMatches    bool   `json:"cached_status_matches"`
 	AttemptFactsMatch      bool   `json:"attempt_facts_match"`
 	LegacyMissingData      bool   `json:"legacy_missing_data"`
+}
+
+// ConfigReport describes the runtime config values associated with a job.
+type ConfigReport struct {
+	Enqueued              *ConfigSnapshotSummary     `json:"enqueued,omitempty"`
+	Started               *ConfigSnapshotSummary     `json:"started,omitempty"`
+	CrossedReloadBoundary bool                       `json:"crossed_reload_boundary"`
+	LegacyMissingData     bool                       `json:"legacy_missing_data"`
+	MissingSnapshotRefs   []string                   `json:"missing_snapshot_refs,omitempty"`
+	SecretUses            []configsnapshot.SecretUse `json:"secret_uses,omitempty"`
+}
+
+// ConfigSnapshotSummary is the inspect-safe subset of a config snapshot.
+type ConfigSnapshotSummary struct {
+	ID             string `json:"id"`
+	ConfigHash     string `json:"config_hash"`
+	SourceHash     string `json:"source_hash,omitempty"`
+	SourcePath     string `json:"source_path,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Reason         string `json:"reason"`
+	LoadedAt       string `json:"loaded_at"`
+	DuctileVersion string `json:"ductile_version,omitempty"`
+	BinaryPath     string `json:"binary_path,omitempty"`
+	SnapshotFormat int    `json:"snapshot_format"`
 }
 
 // Step is one entry in the execution lineage.
@@ -126,6 +154,28 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 		report.Consistency.AttemptFactsMatch,
 		report.Consistency.LegacyMissingData,
 	)
+	fmt.Fprintf(&out, "\n")
+
+	fmt.Fprintf(&out, "Config\n")
+	renderConfigSnapshotLine(&out, "enqueued under", report.Config.Enqueued)
+	renderConfigSnapshotLine(&out, "started under ", report.Config.Started)
+	fmt.Fprintf(&out, "  crossed reload boundary: %t\n", report.Config.CrossedReloadBoundary)
+	fmt.Fprintf(&out, "  legacy missing data    : %t\n", report.Config.LegacyMissingData)
+	if len(report.Config.MissingSnapshotRefs) > 0 {
+		fmt.Fprintf(&out, "  missing snapshot refs  : %s\n", strings.Join(report.Config.MissingSnapshotRefs, ", "))
+	}
+	if len(report.Config.SecretUses) == 0 {
+		fmt.Fprintf(&out, "  secrets                : <none>\n")
+	} else {
+		fmt.Fprintf(&out, "  secrets                :\n")
+		for _, use := range report.Config.SecretUses {
+			ref := use.Ref
+			if ref == "" {
+				ref = "<inline>"
+			}
+			fmt.Fprintf(&out, "    - %s used by %s present=%t\n", ref, use.Purpose, use.Present)
+		}
+	}
 	fmt.Fprintf(&out, "\n")
 
 	for _, step := range report.Steps {
@@ -207,6 +257,7 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 	report.Transitions = renderTransitions(jobLineage.Transitions)
 	report.Attempts = renderAttempts(jobLineage.Attempts)
 	report.Consistency = renderConsistency(jobLineage)
+	report.Config = loadConfigReport(ctx, db, rootJob.enqueuedConfigSnapshotID, rootJob.startedConfigSnapshotID)
 
 	if !rootJob.contextID.Valid {
 		return report, nil
@@ -255,11 +306,12 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 func lookupJob(ctx context.Context, db *sql.DB, jobID string) (*jobInfo, error) {
 	var info jobInfo
 	row := db.QueryRowContext(ctx, `
-SELECT id, plugin, command, status, attempt, event_context_id
+SELECT id, plugin, command, status, attempt, event_context_id, enqueued_config_snapshot_id, started_config_snapshot_id
 FROM job_queue
 WHERE id = ?;
 `, jobID)
-	if err := row.Scan(&info.id, &info.plugin, &info.command, &info.status, &info.attempt, &info.contextID); err != nil {
+	if err := row.Scan(&info.id, &info.plugin, &info.command, &info.status, &info.attempt, &info.contextID,
+		&info.enqueuedConfigSnapshotID, &info.startedConfigSnapshotID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("job %q not found", jobID)
 		}
@@ -325,6 +377,110 @@ func renderConsistency(lineage *queue.JobLineage) LineageConsistency {
 		consistency.LatestTransitionStatus = string(*lineage.LatestStatus)
 	}
 	return consistency
+}
+
+func loadConfigReport(ctx context.Context, db *sql.DB, enqueuedID, startedID sql.NullString) ConfigReport {
+	report := ConfigReport{
+		LegacyMissingData: !enqueuedID.Valid || !startedID.Valid,
+	}
+	if enqueuedID.Valid && startedID.Valid && enqueuedID.String != "" && startedID.String != "" {
+		report.CrossedReloadBoundary = enqueuedID.String != startedID.String
+	}
+
+	if enqueuedID.Valid && strings.TrimSpace(enqueuedID.String) != "" {
+		snapshot, err := configsnapshot.Get(ctx, db, enqueuedID.String)
+		if err != nil {
+			report.MissingSnapshotRefs = append(report.MissingSnapshotRefs, enqueuedID.String)
+		} else {
+			report.Enqueued = summarizeConfigSnapshot(snapshot)
+			report.SecretUses = secretUsesFromSnapshot(snapshot)
+		}
+	}
+	if startedID.Valid && strings.TrimSpace(startedID.String) != "" {
+		snapshot, err := configsnapshot.Get(ctx, db, startedID.String)
+		if err != nil {
+			if !containsString(report.MissingSnapshotRefs, startedID.String) {
+				report.MissingSnapshotRefs = append(report.MissingSnapshotRefs, startedID.String)
+			}
+		} else {
+			report.Started = summarizeConfigSnapshot(snapshot)
+			if report.Enqueued == nil || report.Enqueued.ID != snapshot.ID {
+				report.SecretUses = mergeSecretUses(report.SecretUses, secretUsesFromSnapshot(snapshot))
+			}
+		}
+	}
+	return report
+}
+
+func summarizeConfigSnapshot(snapshot *configsnapshot.Snapshot) *ConfigSnapshotSummary {
+	if snapshot == nil {
+		return nil
+	}
+	summary := &ConfigSnapshotSummary{
+		ID:             snapshot.ID,
+		ConfigHash:     snapshot.ConfigHash,
+		Reason:         snapshot.Reason,
+		LoadedAt:       snapshot.LoadedAt.Format(time.RFC3339Nano),
+		SnapshotFormat: snapshot.SnapshotFormat,
+	}
+	if snapshot.SourceHash != nil {
+		summary.SourceHash = *snapshot.SourceHash
+	}
+	if snapshot.SourcePath != nil {
+		summary.SourcePath = *snapshot.SourcePath
+	}
+	if snapshot.Source != nil {
+		summary.Source = *snapshot.Source
+	}
+	if snapshot.DuctileVersion != nil {
+		summary.DuctileVersion = *snapshot.DuctileVersion
+	}
+	if snapshot.BinaryPath != nil {
+		summary.BinaryPath = *snapshot.BinaryPath
+	}
+	return summary
+}
+
+func secretUsesFromSnapshot(snapshot *configsnapshot.Snapshot) []configsnapshot.SecretUse {
+	if snapshot == nil || len(snapshot.SecretFingerprints) == 0 {
+		return nil
+	}
+	var uses []configsnapshot.SecretUse
+	if err := json.Unmarshal(snapshot.SecretFingerprints, &uses); err != nil {
+		return nil
+	}
+	return uses
+}
+
+func mergeSecretUses(existing, next []configsnapshot.SecretUse) []configsnapshot.SecretUse {
+	seen := make(map[string]struct{}, len(existing)+len(next))
+	out := make([]configsnapshot.SecretUse, 0, len(existing)+len(next))
+	for _, use := range append(existing, next...) {
+		key := use.Purpose + "\x00" + use.Ref + "\x00" + use.Fingerprint
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, use)
+	}
+	return out
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func renderConfigSnapshotLine(out *strings.Builder, label string, snapshot *ConfigSnapshotSummary) {
+	if snapshot == nil {
+		fmt.Fprintf(out, "  %s: <missing>\n", label)
+		return
+	}
+	fmt.Fprintf(out, "  %s: %s %s %s\n", label, snapshot.ID, snapshot.Reason, snapshot.LoadedAt)
 }
 
 func prettyJSON(raw json.RawMessage) string {

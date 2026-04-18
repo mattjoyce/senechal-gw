@@ -16,9 +16,10 @@ import (
 const maxStderrBytes = 64 * 1024
 
 type Queue struct {
-	db        *sql.DB
-	logger    *slog.Logger
-	dedupeTTL time.Duration
+	db                       *sql.DB
+	logger                   *slog.Logger
+	dedupeTTL                time.Duration
+	configSnapshotIDProvider func() string
 }
 
 type Option func(*Queue)
@@ -36,6 +37,12 @@ func WithDedupeTTL(ttl time.Duration) Option {
 		if ttl > 0 {
 			q.dedupeTTL = ttl
 		}
+	}
+}
+
+func WithConfigSnapshotIDProvider(provider func() string) Option {
+	return func(q *Queue) {
+		q.configSnapshotIDProvider = provider
 	}
 }
 
@@ -335,6 +342,14 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	if len(req.Payload) > 0 {
 		payload = req.Payload
 	}
+	enqueuedConfigSnapshotID := strings.TrimSpace(req.EnqueuedConfigSnapshotID)
+	if enqueuedConfigSnapshotID == "" && q.configSnapshotIDProvider != nil {
+		enqueuedConfigSnapshotID = strings.TrimSpace(q.configSnapshotIDProvider())
+	}
+	var enqueuedConfigSnapshotVal any
+	if enqueuedConfigSnapshotID != "" {
+		enqueuedConfigSnapshotVal = enqueuedConfigSnapshotID
+	}
 
 	tx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -345,10 +360,10 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 	res, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO job_queue(
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, parent_job_id, source_event_id, event_context_id
+  created_at, parent_job_id, source_event_id, event_context_id, enqueued_config_snapshot_id
 )
-VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?);
-`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID)
+VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?);
+`, id, req.Plugin, req.Command, payload, StatusQueued, maxAttempts, req.SubmittedBy, req.DedupeKey, now, req.ParentJobID, req.SourceEventID, req.EventContextID, enqueuedConfigSnapshotVal)
 	if err != nil {
 		return "", fmt.Errorf("enqueue job: %w", err)
 	}
@@ -462,13 +477,22 @@ WITH next AS (
   LIMIT 1
 )
 UPDATE job_queue
-SET status = ?, started_at = ?
+SET status = ?, started_at = ?, started_config_snapshot_id = ?
 WHERE id IN (SELECT id FROM next)
 RETURNING
   id, plugin, command, payload, status, attempt, max_attempts, submitted_by, dedupe_key,
-  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id;`
+  created_at, started_at, completed_at, next_retry_at, last_error, parent_job_id, source_event_id, event_context_id,
+  enqueued_config_snapshot_id, started_config_snapshot_id;`
 
-	args = append(args, StatusRunning, nowS)
+	startedConfigSnapshotID := ""
+	if q.configSnapshotIDProvider != nil {
+		startedConfigSnapshotID = strings.TrimSpace(q.configSnapshotIDProvider())
+	}
+	var startedConfigSnapshotVal any
+	if startedConfigSnapshotID != "" {
+		startedConfigSnapshotVal = startedConfigSnapshotID
+	}
+	args = append(args, StatusRunning, nowS, startedConfigSnapshotVal)
 
 	tx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -502,22 +526,25 @@ RETURNING
 // scanDequeuedJob scans a single RETURNING row from a dequeue CTE into a Job.
 func (q *Queue) scanDequeuedJob(row *sql.Row) (*Job, error) {
 	var (
-		j              Job
-		payload        sql.NullString
-		dedupeKey      sql.NullString
-		createdAtS     string
-		startedAtS     sql.NullString
-		completedAtS   sql.NullString
-		nextRetryAtS   sql.NullString
-		lastError      sql.NullString
-		parentJobID    sql.NullString
-		sourceEventID  sql.NullString
-		eventContextID sql.NullString
-		statusS        string
+		j                        Job
+		payload                  sql.NullString
+		dedupeKey                sql.NullString
+		createdAtS               string
+		startedAtS               sql.NullString
+		completedAtS             sql.NullString
+		nextRetryAtS             sql.NullString
+		lastError                sql.NullString
+		parentJobID              sql.NullString
+		sourceEventID            sql.NullString
+		eventContextID           sql.NullString
+		enqueuedConfigSnapshotID sql.NullString
+		startedConfigSnapshotID  sql.NullString
+		statusS                  string
 	)
 	err := row.Scan(
 		&j.ID, &j.Plugin, &j.Command, &payload, &statusS, &j.Attempt, &j.MaxAttempts, &j.SubmittedBy, &dedupeKey,
 		&createdAtS, &startedAtS, &completedAtS, &nextRetryAtS, &lastError, &parentJobID, &sourceEventID, &eventContextID,
+		&enqueuedConfigSnapshotID, &startedConfigSnapshotID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -562,6 +589,12 @@ func (q *Queue) scanDequeuedJob(row *sql.Row) (*Job, error) {
 	}
 	if eventContextID.Valid {
 		j.EventContextID = &eventContextID.String
+	}
+	if enqueuedConfigSnapshotID.Valid {
+		j.EnqueuedConfigSnapshotID = &enqueuedConfigSnapshotID.String
+	}
+	if startedConfigSnapshotID.Valid {
+		j.StartedConfigSnapshotID = &startedConfigSnapshotID.String
 	}
 	return &j, nil
 }
@@ -1281,21 +1314,25 @@ func (q *Queue) CompleteWithResult(ctx context.Context, jobID string, status Sta
 	defer func() { _ = tx.Rollback() }()
 
 	var (
-		plugin         string
-		command        string
-		currentStatus  string
-		attempt        int
-		submittedBy    string
-		createdAt      string
-		parentJobID    sql.NullString
-		sourceEventID  sql.NullString
-		eventContextID sql.NullString
+		plugin                   string
+		command                  string
+		currentStatus            string
+		attempt                  int
+		submittedBy              string
+		createdAt                string
+		parentJobID              sql.NullString
+		sourceEventID            sql.NullString
+		eventContextID           sql.NullString
+		enqueuedConfigSnapshotID sql.NullString
+		startedConfigSnapshotID  sql.NullString
 	)
 	if err := tx.QueryRowContext(ctx, `
-SELECT plugin, command, status, attempt, submitted_by, created_at, parent_job_id, source_event_id, event_context_id
+SELECT plugin, command, status, attempt, submitted_by, created_at, parent_job_id, source_event_id, event_context_id,
+       enqueued_config_snapshot_id, started_config_snapshot_id
 FROM job_queue
 WHERE id = ?;
-`, jobID).Scan(&plugin, &command, &currentStatus, &attempt, &submittedBy, &createdAt, &parentJobID, &sourceEventID, &eventContextID); err != nil {
+`, jobID).Scan(&plugin, &command, &currentStatus, &attempt, &submittedBy, &createdAt, &parentJobID, &sourceEventID, &eventContextID,
+		&enqueuedConfigSnapshotID, &startedConfigSnapshotID); err != nil {
 		return fmt.Errorf("load job for completion: %w", err)
 	}
 
@@ -1335,10 +1372,12 @@ WHERE id = ?;
 
 	_, err = tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO job_log(
-  id, job_id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id
+  id, job_id, plugin, command, status, result, attempt, submitted_by, created_at, completed_at, last_error, stderr, parent_job_id, source_event_id, event_context_id,
+  enqueued_config_snapshot_id, started_config_snapshot_id
 )
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-`, logID, jobID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, logID, jobID, plugin, command, status, resultVal, attempt, submittedBy, createdAt, completedAt, lastError, stderrVal, parentJobID, sourceEventID, eventContextID,
+		enqueuedConfigSnapshotID, startedConfigSnapshotID)
 	if err != nil {
 		return fmt.Errorf("insert job_log: %w", err)
 	}

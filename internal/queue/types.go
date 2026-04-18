@@ -20,23 +20,25 @@ const (
 )
 
 type Job struct {
-	ID             string
-	Plugin         string
-	Command        string
-	Payload        json.RawMessage
-	Status         Status
-	Attempt        int
-	MaxAttempts    int
-	SubmittedBy    string
-	DedupeKey      *string
-	CreatedAt      time.Time
-	StartedAt      *time.Time
-	CompletedAt    *time.Time
-	NextRetryAt    *time.Time
-	LastError      *string
-	ParentJobID    *string
-	SourceEventID  *string
-	EventContextID *string
+	ID                       string
+	Plugin                   string
+	Command                  string
+	Payload                  json.RawMessage
+	Status                   Status
+	Attempt                  int
+	MaxAttempts              int
+	SubmittedBy              string
+	DedupeKey                *string
+	CreatedAt                time.Time
+	StartedAt                *time.Time
+	CompletedAt              *time.Time
+	NextRetryAt              *time.Time
+	LastError                *string
+	ParentJobID              *string
+	SourceEventID            *string
+	EventContextID           *string
+	EnqueuedConfigSnapshotID *string
+	StartedConfigSnapshotID  *string
 }
 
 // JobTransition records one append-only status change for a job.
@@ -71,16 +73,17 @@ type JobLineage struct {
 }
 
 type EnqueueRequest struct {
-	Plugin         string
-	Command        string
-	Payload        json.RawMessage
-	MaxAttempts    int
-	SubmittedBy    string
-	DedupeKey      *string
-	DedupeTTL      *time.Duration
-	ParentJobID    *string
-	EventContextID *string
-	SourceEventID  *string
+	Plugin                   string
+	Command                  string
+	Payload                  json.RawMessage
+	MaxAttempts              int
+	SubmittedBy              string
+	DedupeKey                *string
+	DedupeTTL                *time.Duration
+	ParentJobID              *string
+	EventContextID           *string
+	SourceEventID            *string
+	EnqueuedConfigSnapshotID string
 }
 
 // ListJobsFilter defines optional filters for listing jobs.
@@ -107,18 +110,20 @@ type JobLogFilter struct {
 
 // JobLogEntry represents a stored job log record for audit/query.
 type JobLogEntry struct {
-	JobID       string
-	LogID       string
-	Plugin      string
-	Command     string
-	Status      Status
-	Attempt     int
-	SubmittedBy string
-	CreatedAt   time.Time
-	CompletedAt time.Time
-	LastError   *string
-	Stderr      *string
-	Result      json.RawMessage
+	JobID                    string
+	LogID                    string
+	Plugin                   string
+	Command                  string
+	Status                   Status
+	Attempt                  int
+	SubmittedBy              string
+	CreatedAt                time.Time
+	CompletedAt              time.Time
+	LastError                *string
+	Stderr                   *string
+	Result                   json.RawMessage
+	EnqueuedConfigSnapshotID *string
+	StartedConfigSnapshotID  *string
 }
 
 type CircuitState string

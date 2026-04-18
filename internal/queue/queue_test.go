@@ -127,6 +127,66 @@ func TestQueueCompleteWritesJobLog(t *testing.T) {
 	}
 }
 
+func TestQueueRecordsConfigSnapshotIDs(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	q := New(db, WithConfigSnapshotIDProvider(func() string { return "cfg_runtime" }))
+
+	id, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "scheduler",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	var enqueuedID string
+	if err := db.QueryRowContext(ctx, "SELECT enqueued_config_snapshot_id FROM job_queue WHERE id = ?;", id).Scan(&enqueuedID); err != nil {
+		t.Fatalf("select enqueued snapshot: %v", err)
+	}
+	if enqueuedID != "cfg_runtime" {
+		t.Fatalf("enqueued_config_snapshot_id = %q, want cfg_runtime", enqueuedID)
+	}
+
+	job, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected dequeued job")
+	}
+	if job.EnqueuedConfigSnapshotID == nil || *job.EnqueuedConfigSnapshotID != "cfg_runtime" {
+		t.Fatalf("job enqueued snapshot = %v", job.EnqueuedConfigSnapshotID)
+	}
+	if job.StartedConfigSnapshotID == nil || *job.StartedConfigSnapshotID != "cfg_runtime" {
+		t.Fatalf("job started snapshot = %v", job.StartedConfigSnapshotID)
+	}
+
+	if err := q.Complete(ctx, id, StatusSucceeded, nil, nil); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	var logEnqueuedID, logStartedID string
+	if err := db.QueryRowContext(ctx, `
+SELECT enqueued_config_snapshot_id, started_config_snapshot_id
+FROM job_log
+WHERE job_id = ?;
+`, id).Scan(&logEnqueuedID, &logStartedID); err != nil {
+		t.Fatalf("select log snapshots: %v", err)
+	}
+	if logEnqueuedID != "cfg_runtime" || logStartedID != "cfg_runtime" {
+		t.Fatalf("job_log snapshots = %q/%q, want cfg_runtime/cfg_runtime", logEnqueuedID, logStartedID)
+	}
+}
+
 func TestQueueRecordsJobLineageLifecycle(t *testing.T) {
 	t.Parallel()
 

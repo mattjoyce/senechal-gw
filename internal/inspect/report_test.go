@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mattjoyce/ductile/internal/configsnapshot"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
@@ -89,6 +91,102 @@ func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("output missing %q:\n%s", needle, out)
 		}
+	}
+}
+
+func TestBuildReportRendersConfigSnapshots(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+	enqueued := testSnapshot("cfg_enqueued", "startup", time.Date(2026, 4, 18, 1, 0, 0, 0, time.UTC))
+	started := testSnapshot("cfg_started", "reload", time.Date(2026, 4, 18, 2, 0, 0, 0, time.UTC))
+	started.SecretFingerprints = json.RawMessage(`[{"purpose":"webhooks.github.secret_ref","ref":"github_webhook_secret","source":"tokens.yaml","present":true,"fingerprint":"secretfp_blake3:test"}]`)
+	if err := configsnapshot.Insert(ctx, db, enqueued); err != nil {
+		t.Fatalf("Insert(enqueued): %v", err)
+	}
+	if err := configsnapshot.Insert(ctx, db, started); err != nil {
+		t.Fatalf("Insert(started): %v", err)
+	}
+
+	activeSnapshotID := "cfg_enqueued"
+	q := queue.New(db, queue.WithConfigSnapshotIDProvider(func() string { return activeSnapshotID }))
+	jobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	activeSnapshotID = "cfg_started"
+	if _, err := q.Dequeue(ctx); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	out, err := BuildReport(ctx, db, dbPath, jobID)
+	if err != nil {
+		t.Fatalf("BuildReport: %v", err)
+	}
+	for _, needle := range []string{
+		"Config",
+		"enqueued under: cfg_enqueued startup",
+		"started under : cfg_started reload",
+		"crossed reload boundary: true",
+		"github_webhook_secret used by webhooks.github.secret_ref",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("BuildReport output missing %q:\n%s", needle, out)
+		}
+	}
+
+	jsonOut, err := BuildJSONReport(ctx, db, dbPath, jobID)
+	if err != nil {
+		t.Fatalf("BuildJSONReport: %v", err)
+	}
+	var report Report
+	if err := json.Unmarshal([]byte(jsonOut), &report); err != nil {
+		t.Fatalf("unmarshal report: %v", err)
+	}
+	if report.Config.Enqueued == nil || report.Config.Enqueued.ID != "cfg_enqueued" {
+		t.Fatalf("JSON enqueued config = %+v", report.Config.Enqueued)
+	}
+	if report.Config.Started == nil || report.Config.Started.ID != "cfg_started" {
+		t.Fatalf("JSON started config = %+v", report.Config.Started)
+	}
+	if !report.Config.CrossedReloadBoundary {
+		t.Fatal("expected crossed reload boundary")
+	}
+}
+
+func testSnapshot(id, reason string, loadedAt time.Time) *configsnapshot.Snapshot {
+	sourceHash := "blake3:source"
+	sourcePath := "/tmp/config.yaml"
+	source := "explicit"
+	version := "test-version"
+	binaryPath := "/tmp/ductile"
+	return &configsnapshot.Snapshot{
+		ID:                 id,
+		ConfigHash:         "blake3:" + id,
+		SourceHash:         &sourceHash,
+		SourcePath:         &sourcePath,
+		Source:             &source,
+		Reason:             reason,
+		LoadedAt:           loadedAt,
+		DuctileVersion:     &version,
+		BinaryPath:         &binaryPath,
+		SnapshotFormat:     configsnapshot.SnapshotFormat,
+		Semantics:          json.RawMessage(`{"baggage_immutability":"origin_keys_only"}`),
+		PluginFingerprints: json.RawMessage(`[]`),
+		SanitizedConfig:    json.RawMessage(`{}`),
+		SecretFingerprints: json.RawMessage(`[]`),
 	}
 }
 
