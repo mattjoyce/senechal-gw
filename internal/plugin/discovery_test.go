@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDiscover(t *testing.T) {
@@ -396,6 +398,64 @@ func TestValidateManifest(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "names-only values are valid",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands: Commands{{
+					Name: "handle",
+					Type: CommandTypeWrite,
+					Values: &Values{
+						Consume: []string{"payload.url", "payload.*"},
+						Emit: []EmittedValues{{
+							Event:  "content_ready",
+							Values: []string{"payload.url", "payload.content_hash"},
+						}},
+					},
+				}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "values emit event is required",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands: Commands{{
+					Name: "handle",
+					Type: CommandTypeWrite,
+					Values: &Values{
+						Emit: []EmittedValues{{Values: []string{"payload.result"}}},
+					},
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "values consume must be payload rooted",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands: Commands{{
+					Name: "handle",
+					Type: CommandTypeWrite,
+					Values: &Values{
+						Consume: []string{"context.url"},
+					},
+				}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid command format",
 			manifest: &Manifest{
 				ManifestSpec:    SupportedManifestSpec,
@@ -416,6 +476,51 @@ func TestValidateManifest(t *testing.T) {
 				t.Errorf("validateManifest() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestCommandValuesUnmarshalYAML(t *testing.T) {
+	data := []byte(`manifest_spec: ductile.plugin
+manifest_version: 1
+name: named-values
+version: 0.1.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: handle
+    type: write
+    input_schema:
+      url: string
+      message: string
+    values:
+      consume:
+        - payload.url
+        - payload.message
+      emit:
+        - event: content_ready
+          values:
+            - payload.url
+            - payload.content_hash
+`)
+	var manifest Manifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("yaml.Unmarshal: %v", err)
+	}
+	if err := validateManifest(&manifest); err != nil {
+		t.Fatalf("validateManifest: %v", err)
+	}
+	values := manifest.Commands[0].Values
+	if values == nil {
+		t.Fatal("values missing")
+	}
+	if got, want := values.Consume[1], "payload.message"; got != want {
+		t.Fatalf("Consume[1] = %q, want %q", got, want)
+	}
+	if got, want := values.Emit[0].Event, "content_ready"; got != want {
+		t.Fatalf("Emit[0].Event = %q, want %q", got, want)
+	}
+	if got, want := values.Emit[0].Values[1], "payload.content_hash"; got != want {
+		t.Fatalf("Emit[0].Values[1] = %q, want %q", got, want)
 	}
 }
 

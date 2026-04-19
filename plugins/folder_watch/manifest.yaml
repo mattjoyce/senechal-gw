@@ -10,6 +10,26 @@ commands:
   - name: poll
     type: write
     description: "Scan configured directories and emit events for created/modified/deleted files."
+    values:
+      consume: []
+      emit:
+        - event: "<configured event_type>"
+          values:
+            - payload.watch_id
+            - payload.root
+            - payload.created
+            - payload.modified
+            - payload.deleted
+            - payload.changed_count
+            - payload.snapshot_hash
+            - payload.payload_capped
+            - payload.state_truncated
+            - payload.path
+            - payload.change_type
+            - payload.fingerprint
+            - payload.size
+            - payload.mtime_ns
+            - payload.previous_fingerprint
   - name: health
     type: read
     description: "Validate folder watch roots and glob configuration."

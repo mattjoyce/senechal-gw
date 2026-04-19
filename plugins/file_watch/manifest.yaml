@@ -10,6 +10,19 @@ commands:
   - name: poll
     type: write
     description: "Scan configured file watches and emit events when tracked files change."
+    values:
+      consume: []
+      emit:
+        - event: "<configured event_type>"
+          values:
+            - payload.watch_id
+            - payload.path
+            - payload.change_type
+            - payload.changed_at
+            - payload.fingerprint
+            - payload.size
+            - payload.mtime_ns
+            - payload.previous_fingerprint
   - name: health
     type: read
     description: "Validate watch configuration and file path accessibility."

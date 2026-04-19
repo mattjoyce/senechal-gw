@@ -965,6 +965,100 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 	}
 }
 
+func TestDispatcherContextUpdatesForDispatchUsesExplicitBaggage(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	contextStore := state.NewContextStore(db)
+	root, err := contextStore.Create(
+		context.Background(),
+		nil,
+		"chain",
+		"root",
+		json.RawMessage(`{"origin":{"channel":"chan-1"}}`),
+	)
+	if err != nil {
+		t.Fatalf("ContextStore.Create(root): %v", err)
+	}
+
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: step_b
+        uses: plugin-b
+        baggage:
+          summary.text: payload.message
+          origin.channel: context.origin.channel
+          from: payload.metadata
+          namespace: whisper.metadata
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, nil, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	disp := &Dispatcher{
+		contexts: contextStore,
+		router:   routerEngine,
+	}
+	updates, err := disp.contextUpdatesForDispatch(context.Background(), router.Dispatch{
+		PipelineName:    "chain",
+		StepID:          "step_b",
+		ParentContextID: root.ID,
+		Event: protocol.Event{
+			Type: "chain.start",
+			Payload: map[string]any{
+				"message":   "hello",
+				"transient": "do not promote",
+				"metadata":  map[string]any{"duration": float64(12)},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("contextUpdatesForDispatch() error = %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(updates, &got); err != nil {
+		t.Fatalf("unmarshal updates: %v", err)
+	}
+	if _, exists := got["message"]; exists {
+		t.Fatalf("legacy message promoted into explicit baggage updates: %+v", got)
+	}
+	if _, exists := got["transient"]; exists {
+		t.Fatalf("legacy transient key promoted into explicit baggage updates: %+v", got)
+	}
+	summary := got["summary"].(map[string]any)
+	if summary["text"] != "hello" {
+		t.Fatalf("summary.text = %v, want hello", summary["text"])
+	}
+	origin := got["origin"].(map[string]any)
+	if origin["channel"] != "chan-1" {
+		t.Fatalf("origin.channel = %v, want chan-1", origin["channel"])
+	}
+	whisper := got["whisper"].(map[string]any)
+	metadata := whisper["metadata"].(map[string]any)
+	if metadata["duration"] != float64(12) {
+		t.Fatalf("whisper.metadata.duration = %v, want 12", metadata["duration"])
+	}
+}
+
 func TestDispatcher_ExecuteJob_SkipsConditionalStepAndContinues(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")

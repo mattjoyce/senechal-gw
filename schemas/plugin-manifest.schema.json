@@ -88,6 +88,9 @@
           "description": "JSON Schema object or compact property:type map.",
           "type": ["object", "boolean"]
         },
+        "values": {
+          "$ref": "#/$defs/Values"
+        },
         "idempotent": {
           "type": "boolean"
         },
@@ -97,6 +100,48 @@
       },
       "required": ["name", "type"],
       "additionalProperties": false
+    },
+    "Values": {
+      "type": "object",
+      "description": "Names-only consumed and emitted payload contract. input_schema/output_schema are legacy typed surfaces; authors still decide durable baggage names.",
+      "properties": {
+        "consume": {
+          "type": "array",
+          "description": "Request payload value names consumed by this command.",
+          "items": {
+            "$ref": "#/$defs/PayloadValueName"
+          }
+        },
+        "emit": {
+          "type": "array",
+          "description": "Event payload value names emitted by this command, grouped by event type.",
+          "items": {
+            "$ref": "#/$defs/EmittedValues"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "EmittedValues": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "minLength": 1
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PayloadValueName"
+          }
+        }
+      },
+      "required": ["event"],
+      "additionalProperties": false
+    },
+    "PayloadValueName": {
+      "type": "string",
+      "pattern": "^payload\\.(\\*|[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*)$"
     },
     "ConfigKeys": {
       "type": "object",

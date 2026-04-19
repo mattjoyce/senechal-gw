@@ -252,9 +252,61 @@ func validateManifest(m *Manifest) error {
 		if !cmd.Type.valid() {
 			return fmt.Errorf("invalid command type %q for %q (valid: read, write)", cmd.Type, cmd.Name)
 		}
+		if err := validateCommandValues(cmd); err != nil {
+			return fmt.Errorf("command %q values: %w", cmd.Name, err)
+		}
 	}
 
 	return nil
+}
+
+func validateCommandValues(cmd Command) error {
+	if cmd.Values == nil {
+		return nil
+	}
+	for _, name := range cmd.Values.Consume {
+		if !validValueName(name, "payload") {
+			return fmt.Errorf("invalid consume value %q (expected payload.<name> or payload.*)", name)
+		}
+	}
+	for _, emitted := range cmd.Values.Emit {
+		if strings.TrimSpace(emitted.Event) == "" {
+			return fmt.Errorf("emit event is required")
+		}
+		for _, name := range emitted.Values {
+			if !validValueName(name, "payload") {
+				return fmt.Errorf("invalid emit value %q for event %q (expected payload.<name> or payload.*)", name, emitted.Event)
+			}
+		}
+	}
+	return nil
+}
+
+func validValueName(name, root string) bool {
+	name = strings.TrimSpace(name)
+	prefix := root + "."
+	if !strings.HasPrefix(name, prefix) || len(name) == len(prefix) {
+		return false
+	}
+	if name == prefix+"*" {
+		return true
+	}
+	if strings.ContainsAny(name, " \t\r\n{}[]") {
+		return false
+	}
+	for _, segment := range strings.Split(name[len(prefix):], ".") {
+		if segment == "" {
+			return false
+		}
+		for _, r := range segment {
+			switch {
+			case unicode.IsLetter(r), unicode.IsDigit(r), r == '_', r == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validCommandName(name string) bool {

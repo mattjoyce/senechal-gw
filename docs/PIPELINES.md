@@ -157,6 +157,95 @@ Rules:
 - `with` entries do not see each other's output. They all read from the same pre-remap snapshot.
 - Invalid paths or malformed templates fail the job. Ductile does not silently substitute `null` or `""`.
 
+### 3.7 `baggage` (Explicit Durable Context for `uses` Steps)
+`baggage` names the facts that should survive beyond the immediate plugin request. It is only valid on `uses` steps.
+
+Payload is per-hop. A plugin may emit useful fields, but those fields are not durable unless the pipeline author claims them with `baggage`.
+
+Plugin manifests help authors choose these mappings. Names-only
+`values.consume` says what request payload names a command consumes, and
+`values.emit` says what event payload names a command emits. The author still
+chooses durable names:
+
+```yaml
+# plugin manifest
+commands:
+  - name: handle
+    type: write
+    values:
+      consume:
+        - payload.url
+      emit:
+        - event: content_ready
+          values:
+            - payload.url
+            - payload.content_hash
+            - payload.truncated
+```
+
+```yaml
+# pipeline
+steps:
+  - id: summarize
+    uses: fabric
+    baggage:
+      web.url: payload.url
+      web.content_hash: payload.content_hash
+      web.truncated: payload.truncated
+```
+
+```yaml
+steps:
+  - id: process
+    uses: content_processor
+    baggage:
+      content.text: payload.content
+      content.input_status: payload.status
+
+  - id: notify
+    uses: discord_notify
+    baggage:
+      processor.result: payload.result
+      processor.exit_code: payload.exit_code
+    with:
+      message: "{payload.result}"
+```
+
+Rules:
+- `baggage` is only valid on `uses` steps.
+- Mapping keys are durable dotted paths such as `content.text` or `processor.result`.
+- Mapping values are source expressions resolved from `payload.*` or `context.*`.
+- Missing source paths fail the job or trigger. Ductile does not silently skip missing durable claims.
+- Durable context is deep-accreted. A downstream step may add new paths, but may not change an inherited path to a different value.
+- Repeating the same inherited value is allowed.
+
+Bulk import is available when an object should be promoted under a named namespace:
+
+```yaml
+steps:
+  - id: transcribe
+    uses: whisper
+    baggage:
+      from: payload.metadata
+      namespace: whisper
+```
+
+This imports `payload.metadata` as `context.whisper.*`. The namespace is required until plugin manifest default namespaces exist. Without a namespace, Ductile rejects the claim rather than placing generic keys at the durable root.
+
+Use `baggage` for durable facts and `with` for the next plugin request. These are separate concerns:
+
+```yaml
+steps:
+  - id: notify
+    uses: discord_notify
+    baggage:
+      status.current: payload.status
+    with:
+      message: "Status changed to {payload.status}"
+```
+
+In this example, `status.current` is durable. `message` is just the request sent to `discord_notify`.
+
 ---
 
 ## 4. How Data Flows
@@ -168,11 +257,15 @@ Rules:
 
 ### 4.2 The Control Plane (Baggage)
 - Metadata (JSON) is stored in the `event_context` database table.
-- Every step automatically receives all metadata produced by upstream steps.
-- Immutable keys (starting with `origin_`) are preserved for the entire life of the pipeline.
+- Every step receives durable context claimed by upstream steps.
+- New durable facts are claimed explicitly with `baggage`.
+- Existing durable paths are immutable: descendants may add new paths or repeat the same value, but may not rewrite inherited facts.
+- During the Sprint 3 transition, steps without `baggage` use legacy payload promotion. Ductile logs this as a migration diagnostic.
 
 ### 4.3 Results & Payloads
-- The `result` (short string) and `payload` (JSON) from Step A are passed to Step B.
+- The event `payload` from Step A is passed to Step B as the immediate payload.
+- `with` can reshape that immediate payload before the plugin is spawned.
+- `baggage` can promote selected immediate payload fields into durable context.
 - In `synchronous` mode, the final API response aggregates the results from every step.
 - **Synthetic events:** If a pipeline step completes successfully but emits no events, Ductile routes a synthetic `ductile.step.succeeded` event to ensure downstream sequential steps are still triggered.
 

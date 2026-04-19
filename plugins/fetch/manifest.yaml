@@ -14,6 +14,23 @@ commands:
     retry_safe: true
     input_schema:
       url: string
+    values:
+      consume:
+        - payload.url
+      emit:
+        - event: fetch.completed
+          values:
+            - payload.url
+            - payload.final_url
+            - payload.status_code
+            - payload.content_length
+            - payload.output_format
+            - payload.content
+            - payload.markdown_tokens
+        - event: fetch.failed
+          values:
+            - payload.url
+            - payload.error
   - name: health
     type: read
     description: "Returns plugin health status."

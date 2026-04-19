@@ -86,6 +86,77 @@ func TestBuildRedactsSecretsAndHashesSecretChanges(t *testing.T) {
 	}
 }
 
+func TestBuildRecordsExplicitBaggageSemantics(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Defaults()
+	cfg.Pipelines = []config.PipelineEntry{
+		{
+			Name: "wisdom",
+			On:   "event.start",
+			Steps: []config.StepEntry{
+				{
+					ID:   "summarize",
+					Uses: "fabric",
+					Baggage: map[string]string{
+						"summary.text": "payload.result",
+						"from":         "payload.metadata",
+						"namespace":    "whisper",
+					},
+				},
+			},
+		},
+	}
+
+	first, err := Build(BuildInput{
+		Config: cfg,
+		Reason: ReasonStartup,
+	})
+	if err != nil {
+		t.Fatalf("Build(first): %v", err)
+	}
+
+	var semantics map[string]string
+	if err := json.Unmarshal(first.Semantics, &semantics); err != nil {
+		t.Fatalf("unmarshal semantics: %v", err)
+	}
+	if semantics["baggage_durability"] != "author_explicit_claims" {
+		t.Fatalf("baggage_durability = %q", semantics["baggage_durability"])
+	}
+	if semantics["baggage_immutability"] != "deep_accretion_immutable_paths" {
+		t.Fatalf("baggage_immutability = %q", semantics["baggage_immutability"])
+	}
+	if semantics["baggage_transition"] != "legacy_payload_promotion_without_baggage" {
+		t.Fatalf("baggage_transition = %q", semantics["baggage_transition"])
+	}
+
+	var sanitized map[string]any
+	if err := json.Unmarshal(first.SanitizedConfig, &sanitized); err != nil {
+		t.Fatalf("unmarshal sanitized config: %v", err)
+	}
+	pipelines := sanitized["pipelines"].([]any)
+	steps := pipelines[0].(map[string]any)["steps"].([]any)
+	baggage := steps[0].(map[string]any)["baggage"].(map[string]any)
+	if baggage["summary.text"] != "payload.result" {
+		t.Fatalf("summary.text baggage = %#v", baggage["summary.text"])
+	}
+	if baggage["namespace"] != "whisper" {
+		t.Fatalf("namespace baggage = %#v", baggage["namespace"])
+	}
+
+	cfg.Pipelines[0].Steps[0].Baggage["summary.text"] = "payload.summary"
+	second, err := Build(BuildInput{
+		Config: cfg,
+		Reason: ReasonStartup,
+	})
+	if err != nil {
+		t.Fatalf("Build(second): %v", err)
+	}
+	if first.ConfigHash == second.ConfigHash {
+		t.Fatal("config hash did not change after baggage-only change")
+	}
+}
+
 func TestInsertAndGetRoundTrip(t *testing.T) {
 	t.Parallel()
 

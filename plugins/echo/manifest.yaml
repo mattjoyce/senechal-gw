@@ -4,20 +4,26 @@ name: echo
 version: 0.1.0
 protocol: 2
 entrypoint: run.sh
-description: "A demonstration plugin that echoes input, emits events, and demonstrates protocol v2 state merging."
+description: "A demonstration plugin that returns a configured echo response."
 commands:
   - name: handle
     type: write
-    description: "Echoes the input payload and emits an echo.event."
+    description: "Returns a configured echo response."
+    values:
+      consume: []
+      emit: []
   - name: poll
     type: write
-    description: "Emits echo.poll events and updates the internal last_run timestamp."
+    description: "Returns a configured echo response on a schedule."
     idempotent: false
     retry_safe: false
     input_schema:
       message: string
     output_schema:
       status: string
+    values:
+      consume: []
+      emit: []
   - name: health
     type: read
     description: "Returns the current health status and plugin version."

@@ -250,7 +250,8 @@ commands:
 - `description`: A human-readable (and LLM-readable) summary of what the plugin or command does.
 - `concurrency_safe`: Optional boolean concurrency hint. Default is `true`. Set `false` for plugins whose correctness depends on serialized execution (e.g. functional state snapshots). Runtime behavior: `false` plugins run serial by default unless operator explicitly overrides `plugins.<name>.parallelism > 1` in config.
 - `type`: `read` (no side effects) or `write` (mutates state or external systems). This determines the token scope required to invoke it.
-- `input_schema` / `output_schema`: (Optional) JSON Schema describing the command's expected payload and result.
+- `input_schema` / `output_schema`: (Optional) legacy JSON Schema describing the command's expected payload and result.
+- `values`: (Optional) names-only payload contract for authoring pipelines. `values.consume` declares request payload names the command consumes, and `values.emit` declares event payload names the command emits. It does not declare types and does not make anything durable.
 
 #### Compact Schema Format
 To keep manifests concise, you can use a compact map of `field: type` instead of a full JSON Schema object. Ductile will automatically expand this into a complete JSON Schema for API consumers.
@@ -274,6 +275,38 @@ Expands to:
 ```
 
 If you need more control (descriptions, constraints), you can provide a full JSON Schema object instead.
+
+#### Names-Only Value Contracts
+For Sprint 3 explicit durability, plugin manifests can declare consumed and
+emitted value names without committing to a full type schema. This is a sanity
+aid for authors: `values.consume` tells them what request names a plugin
+expects, and `values.emit` tells them what event names the plugin may emit.
+`input_schema` remains as the legacy typed/schema surface during the transition.
+
+```yaml
+commands:
+  - name: handle
+    type: write
+    values:
+      consume:
+        - payload.url
+        - payload.message
+      emit:
+        - event: content_ready
+          values:
+            - payload.url
+            - payload.content
+            - payload.content_hash
+            - payload.truncated
+```
+
+Rules:
+
+- `values.consume` entries are request payload names, such as `payload.url`.
+- `values.emit[].values` entries are emitted event payload names, such as `payload.content_hash`.
+- Entries are names only. Do not infer JSON types from them.
+- Values do not decide durability. Pipeline authors still decide durable names with `baggage:`.
+- Values are local plugin contracts. Authors use `with:` to transform durable context into the request payload a downstream plugin expects.
 
 ---
 

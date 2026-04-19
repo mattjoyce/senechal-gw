@@ -22,6 +22,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
@@ -59,6 +60,7 @@ type mockRouter struct {
 	getPipelineByTriggerFunc func(trigger string) *router.PipelineInfo
 	getPipelineByNameFunc    func(name string) *router.PipelineInfo
 	getEntryDispatchesFunc   func(pipelineName string, event protocol.Event) ([]router.Dispatch, error)
+	getNodeFunc              func(pipelineName string, stepID string) (dsl.Node, bool)
 }
 
 func (m *mockRouter) GetPipelineByTrigger(trigger string) *router.PipelineInfo {
@@ -87,6 +89,13 @@ func (m *mockRouter) GetEntryDispatches(pipelineName string, event protocol.Even
 			StepID:  "step-1",
 		},
 	}, nil
+}
+
+func (m *mockRouter) GetNode(pipelineName string, stepID string) (dsl.Node, bool) {
+	if m.getNodeFunc != nil {
+		return m.getNodeFunc(pipelineName, stepID)
+	}
+	return dsl.Node{}, false
 }
 
 // mockWaiter implements TreeWaiter for testing
@@ -693,6 +702,129 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 		if got := accumulated["x"]; got == nil {
 			t.Errorf("expected trigger payload key 'x' in AccumulatedJSON, got %v", accumulated)
 		}
+	}
+}
+
+func TestHandlePipelineTrigger_RootBaggageClaimsDurableContext(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			return &router.PipelineInfo{
+				Name:        "explicit-root",
+				Trigger:     "web.url.detected",
+				EntryStepID: "fetch",
+			}
+		},
+		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+			return []router.Dispatch{{Plugin: "web_fetch", Command: "handle", Event: event, StepID: "fetch"}}, nil
+		},
+		getNodeFunc: func(pipelineName string, stepID string) (dsl.Node, bool) {
+			if pipelineName != "explicit-root" || stepID != "fetch" {
+				return dsl.Node{}, false
+			}
+			return dsl.Node{
+				ID:   "fetch",
+				Kind: dsl.NodeKindUses,
+				Uses: "web_fetch",
+				Baggage: &dsl.BaggageSpec{Mappings: map[string]string{
+					"web.url": "payload.url",
+				}},
+			}, true
+		},
+	}
+
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.router = rt
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/explicit-root", bytes.NewBufferString(`{"payload":{"url":"http://example.test","message":"local only","status":"pending"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var contextID string
+	if err := db.QueryRow("SELECT event_context_id FROM job_queue").Scan(&contextID); err != nil {
+		t.Fatalf("query event_context_id: %v", err)
+	}
+	cs := state.NewContextStore(db)
+	eventCtx, err := cs.Get(context.Background(), contextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(): %v", err)
+	}
+
+	var accumulated map[string]any
+	if err := json.Unmarshal(eventCtx.AccumulatedJSON, &accumulated); err != nil {
+		t.Fatalf("unmarshal AccumulatedJSON: %v", err)
+	}
+	if _, exists := accumulated["url"]; exists {
+		t.Fatalf("root url leaked into explicit baggage context: %+v", accumulated)
+	}
+	if _, exists := accumulated["message"]; exists {
+		t.Fatalf("root message leaked into explicit baggage context: %+v", accumulated)
+	}
+	web, ok := accumulated["web"].(map[string]any)
+	if !ok {
+		t.Fatalf("web baggage = %#v, want object", accumulated["web"])
+	}
+	if web["url"] != "http://example.test" {
+		t.Fatalf("web.url = %#v, want http://example.test", web["url"])
+	}
+}
+
+func TestHandlePipelineTrigger_RootBaggageMissingSourceRejectsTrigger(t *testing.T) {
+	t.Parallel()
+	db := setupTestDB(t)
+	rt := &mockRouter{
+		getPipelineByNameFunc: func(name string) *router.PipelineInfo {
+			return &router.PipelineInfo{
+				Name:        "explicit-root",
+				Trigger:     "web.url.detected",
+				EntryStepID: "fetch",
+			}
+		},
+		getEntryDispatchesFunc: func(pipelineName string, event protocol.Event) ([]router.Dispatch, error) {
+			return []router.Dispatch{{Plugin: "web_fetch", Command: "handle", Event: event, StepID: "fetch"}}, nil
+		},
+		getNodeFunc: func(pipelineName string, stepID string) (dsl.Node, bool) {
+			return dsl.Node{
+				ID:   "fetch",
+				Kind: dsl.NodeKindUses,
+				Uses: "web_fetch",
+				Baggage: &dsl.BaggageSpec{Mappings: map[string]string{
+					"web.url": "payload.url",
+				}},
+			}, true
+		},
+	}
+
+	server := setupTestServer(t, db, &mockRegistry{})
+	server.router = rt
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/explicit-root", bytes.NewBufferString(`{"payload":{"message":"missing url"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-key-123")
+	rr := httptest.NewRecorder()
+	server.setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "root baggage claims failed") || !strings.Contains(rr.Body.String(), "path not found") {
+		t.Fatalf("response body = %s, want root baggage path not found", rr.Body.String())
+	}
+
+	q := queue.New(db)
+	_, total, err := q.ListJobs(context.Background(), queue.ListJobsFilter{})
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("jobs enqueued = %d, want 0", total)
 	}
 }
 

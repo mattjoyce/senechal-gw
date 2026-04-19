@@ -182,6 +182,188 @@ func TestCompileSpecsRejectsWithOnCallStep(t *testing.T) {
 	}
 }
 
+func TestCompileSpecsAcceptsBaggageOnUsesStep(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "explicit-baggage",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:   "transcribe",
+			Uses: "whisper",
+			Baggage: &BaggageSpec{
+				Mappings: map[string]string{
+					"summary.text":     "payload.text",
+					"summary.language": "payload.language",
+				},
+				Bulk: &BaggageBulkSpec{
+					From:      "payload.metadata",
+					Namespace: "whisper",
+				},
+			},
+		}},
+	}}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
+	}
+
+	baggage := set.Pipelines["explicit-baggage"].Nodes["transcribe"].Baggage
+	if baggage == nil {
+		t.Fatalf("compiled node baggage = nil")
+	}
+	if baggage.Mappings["summary.text"] != "payload.text" {
+		t.Fatalf("summary.text mapping = %q, want payload.text", baggage.Mappings["summary.text"])
+	}
+	if baggage.Bulk == nil {
+		t.Fatalf("compiled bulk baggage = nil")
+	}
+	if baggage.Bulk.From != "payload.metadata" || baggage.Bulk.Namespace != "whisper" {
+		t.Fatalf("bulk baggage = %+v, want payload.metadata under whisper", baggage.Bulk)
+	}
+
+	specs[0].Steps[0].Baggage.Mappings["summary.text"] = "payload.mutated"
+	if baggage.Mappings["summary.text"] != "payload.text" {
+		t.Fatalf("compiled baggage changed after source mutation: %q", baggage.Mappings["summary.text"])
+	}
+}
+
+func TestLoadFileParsesBaggageYAML(t *testing.T) {
+	configDir := t.TempDir()
+	pipelineYAML := `pipelines:
+  - name: explicit-baggage
+    on: event.start
+    steps:
+      - id: transcribe
+        uses: whisper
+        baggage:
+          whisper.text: payload.text
+          whisper.language: payload.language
+          from: payload.metadata
+          namespace: whisper.meta
+`
+	path := filepath.Join(configDir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipeline.yaml): %v", err)
+	}
+
+	fileSpec, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+
+	baggage := fileSpec.Pipelines[0].Steps[0].Baggage
+	if baggage == nil {
+		t.Fatalf("loaded baggage = nil")
+	}
+	if baggage.Mappings["whisper.text"] != "payload.text" {
+		t.Fatalf("whisper.text mapping = %q, want payload.text", baggage.Mappings["whisper.text"])
+	}
+	if baggage.Bulk == nil || baggage.Bulk.From != "payload.metadata" || baggage.Bulk.Namespace != "whisper.meta" {
+		t.Fatalf("bulk baggage = %+v, want payload.metadata under whisper.meta", baggage.Bulk)
+	}
+}
+
+func TestCompileSpecsRejectsBaggageOnCallStep(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "invalid-baggage",
+		On:   "event.start",
+		Steps: []StepSpec{{
+			ID:      "call-step",
+			Call:    "other-pipeline",
+			Baggage: &BaggageSpec{Mappings: map[string]string{"summary.text": "payload.text"}},
+		}},
+	}}
+
+	_, err := CompileSpecs(specs)
+	if err == nil {
+		t.Fatalf("expected invalid baggage usage error")
+	}
+	if !strings.Contains(err.Error(), "baggage is only supported on uses steps") {
+		t.Fatalf("error = %v, want baggage usage validation", err)
+	}
+}
+
+func TestCompileSpecsRejectsInvalidBaggage(t *testing.T) {
+	tests := []struct {
+		name    string
+		baggage *BaggageSpec
+		want    string
+	}{
+		{
+			name:    "empty path segment",
+			baggage: &BaggageSpec{Mappings: map[string]string{"summary..text": "payload.text"}},
+			want:    "path segments must be non-empty",
+		},
+		{
+			name:    "digit starts path segment",
+			baggage: &BaggageSpec{Mappings: map[string]string{"summary.1text": "payload.text"}},
+			want:    "must not start with a digit",
+		},
+		{
+			name:    "empty expression",
+			baggage: &BaggageSpec{Mappings: map[string]string{"summary.text": ""}},
+			want:    "expression must be non-empty",
+		},
+		{
+			name:    "bulk from outside payload",
+			baggage: &BaggageSpec{Bulk: &BaggageBulkSpec{From: "context.summary", Namespace: "summary"}},
+			want:    "must reference payload",
+		},
+		{
+			name:    "invalid namespace",
+			baggage: &BaggageSpec{Bulk: &BaggageBulkSpec{From: "payload", Namespace: "summary-text"}},
+			want:    "invalid baggage namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			specs := []PipelineSpec{{
+				Name: "invalid-baggage",
+				On:   "event.start",
+				Steps: []StepSpec{{
+					ID:      "step",
+					Uses:    "plugin-a",
+					Baggage: tt.baggage,
+				}},
+			}}
+
+			_, err := CompileSpecs(specs)
+			if err == nil {
+				t.Fatalf("expected invalid baggage error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadFileRejectsNamespaceWithoutBaggageFrom(t *testing.T) {
+	configDir := t.TempDir()
+	pipelineYAML := `pipelines:
+  - name: explicit-baggage
+    on: event.start
+    steps:
+      - id: transcribe
+        uses: whisper
+        baggage:
+          namespace: whisper
+`
+	path := filepath.Join(configDir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipeline.yaml): %v", err)
+	}
+
+	_, err := LoadFile(path)
+	if err == nil {
+		t.Fatalf("expected namespace without from parse error")
+	}
+	if !strings.Contains(err.Error(), "namespace requires from") {
+		t.Fatalf("error = %v, want namespace requires from", err)
+	}
+}
+
 func TestCompileSpecsRejectsInvalidIfCondition(t *testing.T) {
 	specs := []PipelineSpec{{
 		Name: "conditional",

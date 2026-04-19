@@ -153,6 +153,14 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 	if len(step.With) > 0 && strings.TrimSpace(step.Uses) == "" {
 		return nil, nil, fmt.Errorf("with is only supported on uses steps")
 	}
+	if step.Baggage != nil && !step.Baggage.Empty() {
+		if strings.TrimSpace(step.Uses) == "" {
+			return nil, nil, fmt.Errorf("baggage is only supported on uses steps")
+		}
+		if err := validateBaggageSpec(step.Baggage); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	var cond *conditions.Condition
 	if step.If != nil {
@@ -175,6 +183,7 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 			Uses:      strings.TrimSpace(step.Uses),
 			Condition: cond,
 			With:      step.With,
+			Baggage:   step.Baggage.clone(),
 		}
 		b.pipeline.Nodes[id] = node
 		return []string{id}, []string{id}, nil
@@ -213,6 +222,63 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 	}
 
 	return nil, nil, fmt.Errorf("unreachable step state")
+}
+
+func validateBaggageSpec(spec *BaggageSpec) error {
+	if spec == nil || spec.Empty() {
+		return nil
+	}
+	for path, expr := range spec.Mappings {
+		if err := validateBaggagePath(path); err != nil {
+			return fmt.Errorf("invalid baggage path %q: %w", path, err)
+		}
+		if strings.TrimSpace(expr) == "" {
+			return fmt.Errorf("baggage.%s expression must be non-empty", path)
+		}
+	}
+	if spec.Bulk == nil {
+		return nil
+	}
+	if strings.TrimSpace(spec.Bulk.From) == "" {
+		return fmt.Errorf("baggage from must be non-empty")
+	}
+	if !isPayloadPath(spec.Bulk.From) {
+		return fmt.Errorf("baggage from %q must reference payload or payload.<path>", spec.Bulk.From)
+	}
+	if strings.TrimSpace(spec.Bulk.Namespace) != "" {
+		if err := validateBaggagePath(spec.Bulk.Namespace); err != nil {
+			return fmt.Errorf("invalid baggage namespace %q: %w", spec.Bulk.Namespace, err)
+		}
+	}
+	return nil
+}
+
+func validateBaggagePath(path string) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return fmt.Errorf("path must be non-empty")
+	}
+	for _, part := range strings.Split(trimmed, ".") {
+		if part == "" {
+			return fmt.Errorf("path segments must be non-empty")
+		}
+		for i, r := range part {
+			switch {
+			case r == '_':
+			case r >= 'a' && r <= 'z':
+			case r >= 'A' && r <= 'Z':
+			case i > 0 && r >= '0' && r <= '9':
+			default:
+				return fmt.Errorf("path segment %q must use letters, digits, or underscore and must not start with a digit", part)
+			}
+		}
+	}
+	return nil
+}
+
+func isPayloadPath(expr string) bool {
+	trimmed := strings.TrimSpace(expr)
+	return trimmed == "payload" || strings.HasPrefix(trimmed, "payload.")
 }
 
 func (b *compileBuilder) allocNodeID(preferred string) (string, error) {

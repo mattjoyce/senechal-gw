@@ -77,12 +77,42 @@ CREATE TABLE event_context (
 );
 ```
 
-### 3.2 Context Accumulation
+### 3.2 Explicit Context Accumulation
+Sprint 3 makes baggage explicit. Plugins emit event payloads; pipeline authors decide which values become durable.
+
 When Step A transitions to Step B:
 1.  Core reads `accumulated_json` from Step A's context.
-2.  Core merges any new keys emitted by Step A's plugin.
-3.  Core creates a **new** row in `event_context` for Step B.
-4.  The "Origin Anchor" (initial trigger info) is preserved throughout the entire chain.
+2.  If Step B declares `baggage`, Core evaluates those claims against the immediate event `payload.*` and inherited `context.*`.
+3.  Core deep-accretes the claimed values into a new `event_context` row for Step B.
+4.  Existing durable paths are immutable. A step may add a new path or repeat the same value, but may not rewrite an inherited path.
+
+Example:
+
+```yaml
+steps:
+  - id: fetch
+    uses: web_fetch
+    baggage:
+      web.url: payload.url
+
+  - id: summarize
+    uses: summarizer
+    baggage:
+      web.content: payload.content
+      web.status_code: payload.status_code
+```
+
+Bulk import is allowed only under an explicit namespace:
+
+```yaml
+baggage:
+  from: payload.metadata
+  namespace: whisper
+```
+
+This imports `payload.metadata` as `context.whisper.*`. Omitting `namespace` is rejected until plugin manifest default namespaces exist.
+
+During the Sprint 3 transition, a step with no `baggage` uses legacy shallow payload promotion. This preserves existing workflows while making migration visible through transition diagnostics.
 
 ---
 
@@ -124,9 +154,9 @@ Plugins receive the following via `stdin`:
 ```
 
 ### 5.1 Plugin Responsibilities
-*   **Metadata:** Read routing info from `context`.
+*   **Metadata:** Read durable facts and routing info from `context`.
 *   **Artifacts:** Read/Write files directly in `workspace_dir`.
-*   **Communication:** Only return filenames in the JSON `payload`, never the file content itself.
+*   **Communication:** Emit event payloads for downstream steps. Payload is per-hop; values become durable only when a pipeline author claims them with `baggage`.
 
 ---
 

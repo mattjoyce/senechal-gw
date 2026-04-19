@@ -112,6 +112,10 @@
           "additionalProperties": {
             "type": "string"
           }
+        },
+        "baggage": {
+          "$ref": "#/$defs/BaggageSpec",
+          "description": "Optional durable context claims for a uses step. Mappings name durable facts explicitly; bulk import requires a namespace until plugin manifest defaults are available."
         }
       },
       "additionalProperties": false,
@@ -133,7 +137,8 @@
               { "required": ["uses"] },
               { "required": ["steps"] },
               { "required": ["split"] },
-              { "required": ["with"] }
+              { "required": ["with"] },
+              { "required": ["baggage"] }
             ]
           }
         },
@@ -144,7 +149,8 @@
               { "required": ["uses"] },
               { "required": ["call"] },
               { "required": ["split"] },
-              { "required": ["with"] }
+              { "required": ["with"] },
+              { "required": ["baggage"] }
             ]
           }
         },
@@ -155,11 +161,46 @@
               { "required": ["uses"] },
               { "required": ["call"] },
               { "required": ["steps"] },
-              { "required": ["with"] }
+              { "required": ["with"] },
+              { "required": ["baggage"] }
             ]
           }
         }
       ]
+    },
+    "BaggageSpec": {
+      "type": "object",
+      "description": "Durable context claims for a pipeline uses step. Each mapping key is a durable dotted path and each value is a source expression such as payload.text or context.origin.channel. The special from/namespace pair imports an object under an explicit namespace.",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Bulk import source. Must reference payload or payload.<path>.",
+          "pattern": "^payload(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Durable namespace for a bulk import. Required at runtime when from is set until plugin manifest defaults are available.",
+          "$ref": "#/$defs/DottedPath"
+        }
+      },
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$": {
+          "type": "string",
+          "description": "Source expression for an explicitly named durable fact.",
+          "minLength": 1
+        }
+      },
+      "dependentRequired": {
+        "namespace": ["from"]
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "DottedPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+      "minLength": 1
     }
   }
 }

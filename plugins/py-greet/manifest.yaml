@@ -8,7 +8,10 @@ description: "Python example plugin - greets the user with a configurable messag
 commands:
   - name: poll
     type: read
-    description: "Emits a greeting heartbeat and updates last-run state."
+    description: "Returns a greeting heartbeat and updates last-run state."
+    values:
+      consume: []
+      emit: []
   - name: health
     type: read
     description: "Returns plugin health and version information."

@@ -44,7 +44,7 @@ func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
 		t.Fatalf("Enqueue(root): %v", err)
 	}
 
-	childCtx, err := ctxStore.Create(ctx, &rootCtx.ID, "chain", "step_b", json.RawMessage(`{"message":"goodbye"}`))
+	childCtx, err := ctxStore.CreateLegacy(ctx, &rootCtx.ID, "chain", "step_b", json.RawMessage(`{"message":"goodbye"}`))
 	if err != nil {
 		t.Fatalf("Create(child context): %v", err)
 	}
@@ -139,6 +139,8 @@ func TestBuildReportRendersConfigSnapshots(t *testing.T) {
 		"Config",
 		"enqueued under: cfg_enqueued startup",
 		"started under : cfg_started reload",
+		"enqueued semantics: baggage_durability=author_explicit_claims",
+		"started semantics : baggage_durability=author_explicit_claims",
 		"crossed reload boundary: true",
 		"github_webhook_secret used by webhooks.github.secret_ref",
 	} {
@@ -164,6 +166,9 @@ func TestBuildReportRendersConfigSnapshots(t *testing.T) {
 	if !report.Config.CrossedReloadBoundary {
 		t.Fatal("expected crossed reload boundary")
 	}
+	if report.Config.Started.Semantics["baggage_immutability"] != "deep_accretion_immutable_paths" {
+		t.Fatalf("started semantics = %+v", report.Config.Started.Semantics)
+	}
 }
 
 func testSnapshot(id, reason string, loadedAt time.Time) *configsnapshot.Snapshot {
@@ -183,7 +188,7 @@ func testSnapshot(id, reason string, loadedAt time.Time) *configsnapshot.Snapsho
 		DuctileVersion:     &version,
 		BinaryPath:         &binaryPath,
 		SnapshotFormat:     configsnapshot.SnapshotFormat,
-		Semantics:          json.RawMessage(`{"baggage_immutability":"origin_keys_only"}`),
+		Semantics:          json.RawMessage(`{"baggage_durability":"author_explicit_claims","baggage_immutability":"deep_accretion_immutable_paths","baggage_transition":"legacy_payload_promotion_without_baggage"}`),
 		PluginFingerprints: json.RawMessage(`[]`),
 		SanitizedConfig:    json.RawMessage(`{}`),
 		SecretFingerprints: json.RawMessage(`[]`),

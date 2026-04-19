@@ -17,6 +17,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/rs/cors"
 )
@@ -42,11 +43,13 @@ type PipelineRouter interface {
 	GetPipelineByTrigger(trigger string) *router.PipelineInfo
 	GetPipelineByName(name string) *router.PipelineInfo
 	GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error)
+	GetNode(pipelineName string, stepID string) (dsl.Node, bool)
 }
 
 // EventContextStore defines the interface for creating event context lineage.
 type EventContextStore interface {
 	Create(ctx context.Context, parentID *string, pipelineName string, stepID string, updates json.RawMessage) (*state.EventContext, error)
+	CreateLegacy(ctx context.Context, parentID *string, pipelineName string, stepID string, updates json.RawMessage) (*state.EventContext, error)
 }
 
 // PluginRegistry defines the interface for plugin operations

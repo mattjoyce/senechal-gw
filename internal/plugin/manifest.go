@@ -31,8 +31,25 @@ type Command struct {
 	Description  string      `yaml:"description,omitempty"`
 	InputSchema  any         `yaml:"input_schema,omitempty"`
 	OutputSchema any         `yaml:"output_schema,omitempty"`
+	Values       *Values     `yaml:"values,omitempty"`
 	Idempotent   *bool       `yaml:"idempotent,omitempty"`
 	RetrySafe    *bool       `yaml:"retry_safe,omitempty"`
+}
+
+// Values declares names a command consumes and emits.
+//
+// It is intentionally names-only. Input/output schemas remain the legacy typed
+// surfaces for now; values is the author-facing contract for payload names.
+// Pipeline authors still decide which values become durable baggage.
+type Values struct {
+	Consume []string        `yaml:"consume,omitempty"`
+	Emit    []EmittedValues `yaml:"emit,omitempty"`
+}
+
+// EmittedValues declares names in one event payload emitted by a command.
+type EmittedValues struct {
+	Event  string   `yaml:"event"`
+	Values []string `yaml:"values,omitempty"`
 }
 
 // GetFullInputSchema returns the expanded JSON Schema for the input.

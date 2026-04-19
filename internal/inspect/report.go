@@ -78,16 +78,17 @@ type ConfigReport struct {
 
 // ConfigSnapshotSummary is the inspect-safe subset of a config snapshot.
 type ConfigSnapshotSummary struct {
-	ID             string `json:"id"`
-	ConfigHash     string `json:"config_hash"`
-	SourceHash     string `json:"source_hash,omitempty"`
-	SourcePath     string `json:"source_path,omitempty"`
-	Source         string `json:"source,omitempty"`
-	Reason         string `json:"reason"`
-	LoadedAt       string `json:"loaded_at"`
-	DuctileVersion string `json:"ductile_version,omitempty"`
-	BinaryPath     string `json:"binary_path,omitempty"`
-	SnapshotFormat int    `json:"snapshot_format"`
+	ID             string         `json:"id"`
+	ConfigHash     string         `json:"config_hash"`
+	SourceHash     string         `json:"source_hash,omitempty"`
+	SourcePath     string         `json:"source_path,omitempty"`
+	Source         string         `json:"source,omitempty"`
+	Reason         string         `json:"reason"`
+	LoadedAt       string         `json:"loaded_at"`
+	DuctileVersion string         `json:"ductile_version,omitempty"`
+	BinaryPath     string         `json:"binary_path,omitempty"`
+	SnapshotFormat int            `json:"snapshot_format"`
+	Semantics      map[string]any `json:"semantics,omitempty"`
 }
 
 // Step is one entry in the execution lineage.
@@ -159,6 +160,8 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 	fmt.Fprintf(&out, "Config\n")
 	renderConfigSnapshotLine(&out, "enqueued under", report.Config.Enqueued)
 	renderConfigSnapshotLine(&out, "started under ", report.Config.Started)
+	renderConfigSemanticsLine(&out, "enqueued semantics", report.Config.Enqueued)
+	renderConfigSemanticsLine(&out, "started semantics ", report.Config.Started)
 	fmt.Fprintf(&out, "  crossed reload boundary: %t\n", report.Config.CrossedReloadBoundary)
 	fmt.Fprintf(&out, "  legacy missing data    : %t\n", report.Config.LegacyMissingData)
 	if len(report.Config.MissingSnapshotRefs) > 0 {
@@ -438,6 +441,12 @@ func summarizeConfigSnapshot(snapshot *configsnapshot.Snapshot) *ConfigSnapshotS
 	if snapshot.BinaryPath != nil {
 		summary.BinaryPath = *snapshot.BinaryPath
 	}
+	if len(snapshot.Semantics) > 0 {
+		var semantics map[string]any
+		if err := json.Unmarshal(snapshot.Semantics, &semantics); err == nil {
+			summary.Semantics = semantics
+		}
+	}
 	return summary
 }
 
@@ -481,6 +490,23 @@ func renderConfigSnapshotLine(out *strings.Builder, label string, snapshot *Conf
 		return
 	}
 	fmt.Fprintf(out, "  %s: %s %s %s\n", label, snapshot.ID, snapshot.Reason, snapshot.LoadedAt)
+}
+
+func renderConfigSemanticsLine(out *strings.Builder, label string, snapshot *ConfigSnapshotSummary) {
+	if snapshot == nil || len(snapshot.Semantics) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(snapshot.Semantics))
+	for key := range snapshot.Semantics {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, snapshot.Semantics[key]))
+	}
+	fmt.Fprintf(out, "  %s: %s\n", label, strings.Join(parts, ", "))
 }
 
 func prettyJSON(raw json.RawMessage) string {

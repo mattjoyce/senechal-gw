@@ -23,6 +23,30 @@ commands:
       result: string
       output_path: string
       output_dir: string
+    values:
+      consume:
+        - payload.action
+        - payload.file_path
+        - payload.content
+        - payload.result
+        - payload.output_path
+        - payload.output_dir
+        - payload.pattern
+      emit:
+        - event: file.read
+          values:
+            - payload.file_path
+            - payload.filename
+            - payload.content
+            - payload.text
+            - payload.size_bytes
+            - payload.pattern
+            - payload.output_dir
+            - payload.output_path
+        - event: file.written
+          values:
+            - payload.file_path
+            - payload.size_bytes
   - name: health
     type: read
     description: "Validate configured read/write paths are accessible."

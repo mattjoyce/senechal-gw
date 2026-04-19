@@ -14,6 +14,10 @@ commands:
     output_schema:
       result: string
       actual_duration: number
+    values:
+      consume:
+        - payload.duration_seconds
+      emit: []
 
   - name: io
     type: write
@@ -23,6 +27,10 @@ commands:
     output_schema:
       hash: string
       write_speed_mbps: number
+    values:
+      consume:
+        - payload.size_mb
+      emit: []
 
   - name: net
     type: read
@@ -32,6 +40,10 @@ commands:
     output_schema:
       status_code: integer
       bytes_received: integer
+    values:
+      consume:
+        - payload.url
+      emit: []
 
   - name: state
     type: write
@@ -40,6 +52,14 @@ commands:
       iterations: integer
     output_schema:
       final_count: integer
+    values:
+      consume:
+        - payload.iterations
+      emit:
+        - event: stress.state_increment
+          values:
+            - payload.step
+            - payload.total
 
   - name: health
     type: read

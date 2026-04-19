@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mattjoyce/ductile/internal/baggage"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/log"
@@ -920,12 +921,17 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 
 			var contextID *string
 			if d.contexts != nil {
-				updates, err := payloadObjectFromEvent(next.Event)
+				updates, err := d.contextUpdatesForDispatch(ctx, next)
 				if err != nil {
 					return err
 				}
 				parentCtxID := strPtrOrNil(next.ParentContextID)
-				createdCtx, err := d.contexts.Create(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
+				var createdCtx *state.EventContext
+				if d.dispatchUsesExplicitBaggage(next) {
+					createdCtx, err = d.contexts.Create(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
+				} else {
+					createdCtx, err = d.contexts.CreateLegacy(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
+				}
 				if err != nil {
 					return fmt.Errorf("create routed context (%s:%s): %w", next.PipelineName, next.StepID, err)
 				}
@@ -1149,6 +1155,61 @@ func (d *Dispatcher) routeSkippedStepSuccessors(ctx context.Context, logger *slo
 		return err
 	}
 	return nil
+}
+
+func (d *Dispatcher) dispatchUsesExplicitBaggage(next router.Dispatch) bool {
+	if d.router == nil || strings.TrimSpace(next.PipelineName) == "" || strings.TrimSpace(next.StepID) == "" {
+		return false
+	}
+	node, found := d.router.GetNode(next.PipelineName, next.StepID)
+	return found && node.Baggage != nil && !node.Baggage.Empty()
+}
+
+func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.Dispatch) (json.RawMessage, error) {
+	if d.dispatchUsesExplicitBaggage(next) {
+		if node, found := d.router.GetNode(next.PipelineName, next.StepID); found && node.Baggage != nil && !node.Baggage.Empty() {
+			parentContext, err := d.contextMap(ctx, next.ParentContextID)
+			if err != nil {
+				return nil, err
+			}
+			updates, err := baggage.ApplyClaims(next.Event.Payload, node.Baggage, parentContext)
+			if err != nil {
+				return nil, fmt.Errorf("apply baggage claims for %s:%s: %w", next.PipelineName, next.StepID, err)
+			}
+			raw, err := json.Marshal(updates)
+			if err != nil {
+				return nil, fmt.Errorf("marshal baggage updates: %w", err)
+			}
+			return raw, nil
+		}
+	}
+
+	if strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.StepID) != "" {
+		d.logger.Warn("using legacy payload promotion for routed step without baggage",
+			"pipeline", next.PipelineName,
+			"step_id", next.StepID,
+		)
+	}
+	return payloadObjectFromEvent(next.Event)
+}
+
+func (d *Dispatcher) contextMap(ctx context.Context, contextID string) (map[string]any, error) {
+	if d.contexts == nil || strings.TrimSpace(contextID) == "" {
+		return map[string]any{}, nil
+	}
+
+	eventCtx, err := d.contexts.Get(ctx, contextID)
+	if err != nil {
+		return nil, fmt.Errorf("load parent context %q: %w", contextID, err)
+	}
+	out := map[string]any{}
+	if len(eventCtx.AccumulatedJSON) == 0 {
+		return out, nil
+	}
+	if err := json.Unmarshal(eventCtx.AccumulatedJSON, &out); err != nil {
+		return nil, fmt.Errorf("decode parent accumulated context: %w", err)
+	}
+	return out, nil
 }
 
 func payloadObjectFromEvent(event protocol.Event) (json.RawMessage, error) {

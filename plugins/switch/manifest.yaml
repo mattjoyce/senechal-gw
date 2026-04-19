@@ -4,11 +4,18 @@ name: switch
 version: 0.1.0
 protocol: 2
 entrypoint: run.py
-description: "Classify payloads by field value and emit the first matching event type."
+description: "Legacy payload classifier. Prefer pipeline if: conditions for new authoring."
 commands:
   - name: handle
     type: write
     description: "Route an event to a new type based on configured field match rules."
+    values:
+      consume:
+        - payload.*
+      emit:
+        - event: "<configured check emit>"
+          values:
+            - payload.*
   - name: health
     type: read
     description: "Validate plugin configuration."

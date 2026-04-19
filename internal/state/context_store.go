@@ -17,9 +17,29 @@ import (
 const DefaultMaxContextBytes = DefaultMaxStateBytes
 
 var (
-	ErrEventContextNotFound  = errors.New("event context not found")
-	ErrOriginAnchorImmutable = errors.New("origin anchor is immutable")
+	ErrEventContextNotFound = errors.New("event context not found")
+	ErrBaggagePathImmutable = errors.New("baggage path is immutable")
+	// ErrOriginAnchorImmutable is kept as a compatibility alias for callers that
+	// still check the pre-Sprint-3 origin-anchor error.
+	ErrOriginAnchorImmutable = ErrBaggagePathImmutable
 )
+
+// BaggagePathImmutableError reports an attempted mutation of an inherited
+// baggage path.
+type BaggagePathImmutableError struct {
+	Path string
+}
+
+func (e *BaggagePathImmutableError) Error() string {
+	if e == nil || strings.TrimSpace(e.Path) == "" {
+		return "baggage path is immutable: inherited value differs from child value"
+	}
+	return fmt.Sprintf("baggage path %q is immutable: inherited value differs from child value", e.Path)
+}
+
+func (e *BaggagePathImmutableError) Is(target error) bool {
+	return target == ErrBaggagePathImmutable || target == ErrOriginAnchorImmutable
+}
 
 // EventContext is one immutable ledger entry in the control plane.
 type EventContext struct {
@@ -49,14 +69,40 @@ func NewContextStore(db *sql.DB) *ContextStore {
 // Create appends a new context row to the ledger.
 //
 // If parentID is nil, updates becomes the root accumulated context.
-// If parentID is set, updates is shallow-merged into parent accumulated context.
-// Keys prefixed with "origin_" are immutable once the root context exists.
+// If parentID is set, updates is deep-accreted into parent accumulated context.
+// Existing baggage paths are immutable: descendants may repeat the same JSON
+// value or add new paths, but may not revise inherited values.
 func (s *ContextStore) Create(
 	ctx context.Context,
 	parentID *string,
 	pipelineName string,
 	stepID string,
 	updates json.RawMessage,
+) (*EventContext, error) {
+	return s.create(ctx, parentID, pipelineName, stepID, updates, true)
+}
+
+// CreateLegacy appends a context row using legacy shallow payload promotion.
+//
+// This is a transition path for pipelines that have not yet adopted explicit
+// baggage claims. Prefer Create for new durable facts.
+func (s *ContextStore) CreateLegacy(
+	ctx context.Context,
+	parentID *string,
+	pipelineName string,
+	stepID string,
+	updates json.RawMessage,
+) (*EventContext, error) {
+	return s.create(ctx, parentID, pipelineName, stepID, updates, false)
+}
+
+func (s *ContextStore) create(
+	ctx context.Context,
+	parentID *string,
+	pipelineName string,
+	stepID string,
+	updates json.RawMessage,
+	deepAccrete bool,
 ) (*EventContext, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -80,17 +126,16 @@ func (s *ContextStore) Create(
 		}
 		accumulated = cloneRawMap(parentMap)
 
-		for k, v := range updateMap {
-			if strings.HasPrefix(k, "origin_") {
-				parentValue, ok := parentMap[k]
-				if !ok || !jsonValuesEqual(parentValue, v) {
-					return nil, ErrOriginAnchorImmutable
-				}
+		if deepAccrete {
+			if err := deepAccreteRawMap(accumulated, updateMap, ""); err != nil {
+				return nil, err
 			}
+		} else {
+			maps.Copy(accumulated, updateMap)
 		}
+	} else {
+		maps.Copy(accumulated, updateMap)
 	}
-
-	maps.Copy(accumulated, updateMap)
 
 	accumulatedJSON, err := json.Marshal(accumulated)
 	if err != nil {
@@ -251,4 +296,51 @@ func jsonValuesEqual(a, b json.RawMessage) bool {
 		return false
 	}
 	return reflect.DeepEqual(av, bv)
+}
+
+func deepAccreteRawMap(dst, updates map[string]json.RawMessage, prefix string) error {
+	for key, updateValue := range updates {
+		path := joinBaggagePath(prefix, key)
+		currentValue, exists := dst[key]
+		if !exists {
+			dst[key] = updateValue
+			continue
+		}
+
+		if jsonValuesEqual(currentValue, updateValue) {
+			continue
+		}
+
+		currentObject, currentIsObject := decodeRawObject(currentValue)
+		updateObject, updateIsObject := decodeRawObject(updateValue)
+		if currentIsObject && updateIsObject {
+			if err := deepAccreteRawMap(currentObject, updateObject, path); err != nil {
+				return err
+			}
+			merged, err := json.Marshal(currentObject)
+			if err != nil {
+				return fmt.Errorf("marshal merged baggage path %q: %w", path, err)
+			}
+			dst[key] = merged
+			continue
+		}
+
+		return &BaggagePathImmutableError{Path: path}
+	}
+	return nil
+}
+
+func decodeRawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, false
+	}
+	return obj, true
+}
+
+func joinBaggagePath(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
 }

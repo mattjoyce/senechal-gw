@@ -1,0 +1,228 @@
+pipelines:
+  - name: desk-presence-notify
+    on: desk.presence.changed
+    steps:
+      - id: notify
+        uses: discord_notify
+        with:
+          message: "{payload.message}"
+
+  - name: astro-rebuild-staging-on-summary-change
+    on: astro.summaries.changed
+    steps:
+      - id: rebuild_staging
+        uses: astro_rebuild_staging
+        baggage:
+          astro.summaries.watch_id: payload.watch_id
+          astro.summaries.root: payload.root
+          astro.summaries.snapshot_hash: payload.snapshot_hash
+          astro.summaries.changed_count: payload.changed_count
+          astro.summaries.created: payload.created
+          astro.summaries.modified: payload.modified
+          astro.summaries.deleted: payload.deleted
+      - id: notify
+        uses: astro_rebuild_notify
+        with:
+          message: "Staging rebuilt — {context.astro.summaries.changed_count} summary file(s) updated."
+        baggage:
+          rebuild.command: payload.command
+          rebuild.exit_code: payload.exit_code
+          rebuild.duration_ms: payload.duration_ms
+          rebuild.stdout_truncated: payload.stdout_truncated
+          rebuild.stderr_truncated: payload.stderr_truncated
+          rebuild.working_dir: payload.working_dir
+          rebuild.executed_at: payload.executed_at
+
+  - name: discord-ai
+    on: discord.ai.command
+    steps:
+      - id: classify
+        uses: check_youtube
+
+  - name: youtube-wisdom
+    on: youtube.url.detected
+    steps:
+      - id: transcript
+        uses: youtube_transcript
+      - id: summarize
+        uses: fabric
+      - id: write
+        uses: file_handler
+
+  - name: playlist-wisdom
+    on: youtube.playlist_item
+    steps:
+      - id: transcript
+        uses: youtube_transcript
+      - id: summarize
+        uses: fabric
+      - id: write
+        uses: file_handler
+
+  - name: web-summarize
+    on: web.url.detected
+    steps:
+      - id: fetch
+        uses: jina-reader
+        baggage:
+          web.input_url: payload.url
+      - id: summarize
+        uses: fabric
+        baggage:
+          web.url: payload.url
+          web.content_hash: payload.content_hash
+          web.truncated: payload.truncated
+      - id: write
+        uses: file_handler
+        baggage:
+          summary.text: payload.result
+          summary.pattern: payload.pattern
+          summary.model: payload.model
+          summary.input_length: payload.input_length
+          summary.output_length: payload.output_length
+
+  - name: github-interest-notify
+    on: github.interest.starred
+    steps:
+      - id: notify
+        uses: github_interest_notify
+
+  - name: github-repo-sync
+    on: github_repo_sync.repo_discovered
+    steps:
+      - id: sync
+        uses: git_repo_sync
+
+  - name: github-repo-sync-notify
+    on: github_repo_sync.completed
+    steps:
+      - id: notify
+        uses: discord_notify
+
+  - name: repo-compliance
+    on: git_repo_sync.completed
+    steps:
+      - id: policy
+        uses: repo_policy
+      - id: commit
+        uses: git_commit_push
+        if:
+          path: payload.changed
+          op: eq
+          value: true
+
+  - name: repo-changelog
+    on: git_repo_sync.completed
+    steps:
+      - id: changelog
+        uses: changelog_microblog
+        if:
+          path: payload.new_commits
+          op: eq
+          value: true
+      - id: commit
+        uses: git_commit_push
+        if:
+          path: payload.changed
+          op: eq
+          value: true
+
+  - name: repo-maintenance-notify
+    on: git_commit_push.completed
+    steps:
+      - id: notify
+        uses: discord_notify
+
+  - name: job-failure-notify
+    on: job.failed
+    steps:
+      - id: notify
+        uses: discord_notify
+
+
+  - name: llm-pipeline
+    on: llm.request
+    execution_mode: synchronous
+    timeout: 120s
+    steps:
+      - id: transcript
+        uses: youtube_transcript
+        if:
+          any:
+            - path: payload.url
+              op: contains
+              value: youtube.com
+            - path: payload.url
+              op: contains
+              value: youtu.be
+      - id: fetch
+        uses: jina-reader
+        if:
+          not:
+            path: payload.video_id
+            op: exists
+      - id: summarize
+        uses: fabric
+
+  - name: claude-harvest-worker
+    on: claude.harvest.project
+    steps:
+      - id: harvest
+        uses: claude_harvest_worker
+
+  - name: claude-harvest-notify
+    on: claude.harvest.worker.complete
+    steps:
+      - id: notify
+        uses: claude_harvest_notify
+
+  - name: ap-canary-registered
+    on: agent_handshake.registered
+    steps:
+      - id: notify
+        uses: ap_canary_notify
+
+  - name: apt-security-notify
+    on: apt.security.updates_found
+    steps:
+      - id: notify
+        uses: apt_security_notify
+
+  # Health data pipelines — summary plugin TBD
+  # Event payload carries: result, previous_result, db_path, query, detected_at
+  # Dirty period = (previous_result → result); summary plugin reads that range from db_path.
+  - name: garmin-daily-summary
+    on: data.change.garmin
+    steps:
+      - id: etl
+        uses: run_healthdata_etl
+      - id: notify
+        uses: discord_notify
+
+  - name: withings-weight-summary
+    on: data.change.withings
+    steps:
+      - id: etl
+        uses: run_healthdata_etl
+      - id: notify
+        uses: discord_notify
+
+  - name: job-complete-notify
+    on-hook: job.completed
+    steps:
+      - id: notify
+        uses: discord_notify
+
+  - name: if-test
+    on: test.if.check
+    execution_mode: synchronous
+    timeout: 10s
+    steps:
+      - id: guarded
+        uses: sys_exec
+        if:
+          path: payload.run_step
+          op: eq
+          value: true
+      - id: always
+        uses: sys_exec
