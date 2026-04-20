@@ -373,7 +373,7 @@ plugins:
 
 **Non-retryable conditions:**
 - Plugin exits with code `78` (EX_CONFIG from sysexits.h) — configuration error.
-- Plugin response includes `"retry": false`.
+- Protocol v2 plugin response includes `"retry": false`; core treats this as a compatibility signal, not plugin-owned policy.
 - All other failures are retried.
 
 **Configurable per-plugin:**
@@ -479,7 +479,7 @@ Single JSON object written to plugin's stdout:
 ```
 
 - `result` — required when `status=ok`. Summarizes what the plugin did.
-- `retry` — defaults to `true` if omitted. Set `false` for permanent failures.
+- `retry` — protocol v2 compatibility signal. Defaults to `true` if omitted. Set `false` for permanent failures; core still owns the retry decision with exit status, attempts, and config as inputs.
 - `events` — array of event envelopes (see 6.3).
 - `state_updates` — shallow-merged into plugin state.
 - `logs` — array of `{"level": "info|warn|error", "message": "..."}`. Optional. Stored with the job record.

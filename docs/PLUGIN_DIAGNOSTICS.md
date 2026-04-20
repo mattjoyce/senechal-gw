@@ -63,7 +63,7 @@ for l in logs:
 | `succeeded` | Plugin ran and returned `status: ok` |
 | `failed` | Plugin returned `status: error` or timed out |
 | `skipped` | Pipeline `if:` condition evaluated false — not a failure |
-| `retrying` | Previous attempt failed with `retry: true`; queued again |
+| `retrying` | Core retry policy queued another attempt after a retryable failure |
 
 A high `skipped` count is normal for conditional pipeline steps. Only `failed` warrants investigation.
 
@@ -264,7 +264,7 @@ Cross-reference the `total` count against expected frequency:
 | `timeout` | Plugin exceeded deadline | Increase `timeout:` in plugin config or fix slow external call |
 | `invalid JSON input` | Plugin received malformed stdin | Check upstream payload construction; look at `Stderr` in job log |
 | `HTTP 4xx` from external API | Auth or request format issue | Check plugin config (tokens, endpoint URLs); run `health` command |
-| `HTTP 5xx` from external API | Upstream service down | Transient — check `retry: true` in plugin response; check external service |
+| `HTTP 5xx` from external API | Upstream service down | Transient — check plugin error facts and core retry events; check external service |
 | `exit code 1` (sys_exec) | Shell command failed | Check `Stderr` in job log for command output |
 
 ---

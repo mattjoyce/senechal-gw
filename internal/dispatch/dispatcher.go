@@ -400,19 +400,16 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			errMsg := fmt.Sprintf("plugin execution timed out after %v", timeout)
 			jobLogger.Warn(errMsg)
-			d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusTimedOut, nil, &errMsg, &stderr, "timeout", true)
+			decision := decideRetryPolicy(nil, exitCode, job, pluginCfg, retryReasonTimeout)
+			d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusTimedOut, nil, &errMsg, &stderr, decision)
 			return
 		}
 
 		// Handle other spawn errors
 		errMsg := fmt.Sprintf("plugin spawn failed: %v", err)
 		jobLogger.Error(errMsg)
-		retryable := exitCode != nonRetryableExitCode
-		reason := "spawn_error"
-		if exitCode == nonRetryableExitCode {
-			reason = "exit_code_78"
-		}
-		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, reason, retryable)
+		decision := decideRetryPolicy(resp, exitCode, job, pluginCfg, retryReasonSpawnError)
+		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
 		return
 	}
 
@@ -420,7 +417,8 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp == nil {
 		errMsg := "plugin returned nil response"
 		jobLogger.Error(errMsg)
-		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, "nil_response", true)
+		decision := decideRetryPolicy(nil, exitCode, job, pluginCfg, retryReasonNilResponse)
+		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
 		return
 	}
 
@@ -433,15 +431,8 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp.Status == "error" {
 		jobLogger.Warn("plugin returned error", "error", resp.Error)
 		errMsg := resp.Error
-		retryable := resp.ShouldRetry() && exitCode != nonRetryableExitCode
-		reason := "plugin_error"
-		if !resp.ShouldRetry() {
-			reason = "plugin_retry_false"
-		}
-		if exitCode == nonRetryableExitCode {
-			reason = "exit_code_78"
-		}
-		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, reason, retryable)
+		decision := decideRetryPolicy(resp, exitCode, job, pluginCfg, retryReasonPluginError)
+		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
 		return
 	}
 
@@ -682,10 +673,10 @@ func (d *Dispatcher) failOrRetry(
 	result json.RawMessage,
 	lastError,
 	stderr *string,
-	reason string,
-	retryable bool,
+	decision retryDecision,
 ) {
-	if retryable && job.Attempt < job.MaxAttempts {
+	reason := decision.Reason
+	if decision.Retryable && !decision.AttemptsExhausted {
 		backoff := d.computeRetryDelay(pluginCfg.Retry, job.Attempt)
 		nextRetryAt := time.Now().UTC().Add(backoff)
 		nextAttempt := job.Attempt + 1
@@ -707,12 +698,14 @@ func (d *Dispatcher) failOrRetry(
 		)
 
 		d.events.Publish("job.retry_scheduled", map[string]any{
-			"job_id":       job.ID,
-			"attempt":      job.Attempt,
-			"max_attempts": job.MaxAttempts,
-			"retry_count":  job.Attempt,
-			"max_retries":  job.MaxAttempts,
-			"backoff_ms":   backoff.Milliseconds(),
+			"job_id":             job.ID,
+			"attempt":            job.Attempt,
+			"max_attempts":       job.MaxAttempts,
+			"retry_count":        job.Attempt,
+			"max_retries":        job.MaxAttempts,
+			"retry_policy_owner": retryPolicyOwner,
+			"plugin_retry_field": pluginRetryField,
+			"backoff_ms":         backoff.Milliseconds(),
 			"backoff_schedule": []int64{
 				backoff.Milliseconds(),
 			},
@@ -722,20 +715,21 @@ func (d *Dispatcher) failOrRetry(
 		return
 	}
 
-	if retryable {
-		d.events.Publish("job.retry_exhausted", map[string]any{
-			"job_id":      job.ID,
-			"attempts":    job.Attempt,
-			"final_error": deref(lastError),
-		})
-	} else {
-		d.events.Publish("job.retry_exhausted", map[string]any{
-			"job_id":      job.ID,
-			"attempts":    job.Attempt,
-			"final_error": deref(lastError),
-			"reason":      reason,
-		})
+	retryExhaustedReason := reason
+	payload := map[string]any{
+		"job_id":             job.ID,
+		"attempts":           job.Attempt,
+		"final_error":        deref(lastError),
+		"reason":             retryExhaustedReason,
+		"retry_policy_owner": retryPolicyOwner,
+		"plugin_retry_field": pluginRetryField,
 	}
+	if decision.Retryable {
+		retryExhaustedReason = retryReasonAttemptsExhausted
+		payload["reason"] = retryExhaustedReason
+		payload["retry_decision_reason"] = reason
+	}
+	d.events.Publish("job.retry_exhausted", payload)
 
 	hookPayload := map[string]any{
 		"job_id":  job.ID,

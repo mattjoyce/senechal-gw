@@ -129,6 +129,12 @@ func TestBuildRecordsExplicitBaggageSemantics(t *testing.T) {
 	if semantics["baggage_transition"] != "legacy_payload_promotion_without_baggage" {
 		t.Fatalf("baggage_transition = %q", semantics["baggage_transition"])
 	}
+	if semantics["retry_policy_owner"] != "core_with_v2_shim" {
+		t.Fatalf("retry_policy_owner = %q", semantics["retry_policy_owner"])
+	}
+	if semantics["plugin_retry_field"] != "v2_compatibility_signal" {
+		t.Fatalf("plugin_retry_field = %q", semantics["plugin_retry_field"])
+	}
 
 	var sanitized map[string]any
 	if err := json.Unmarshal(first.SanitizedConfig, &sanitized); err != nil {

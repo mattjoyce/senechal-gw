@@ -528,6 +528,16 @@ echo '{"status":"error","error":"transient failure"}'
 	if len(retryEvents) == 0 {
 		t.Fatalf("expected job.retry_scheduled event")
 	}
+	retryEvent := eventPayload(t, retryEvents[0])
+	if retryEvent["reason"] != retryReasonPluginError {
+		t.Fatalf("retry reason = %v, want %q", retryEvent["reason"], retryReasonPluginError)
+	}
+	if retryEvent["retry_policy_owner"] != retryPolicyOwner {
+		t.Fatalf("retry_policy_owner = %v, want %q", retryEvent["retry_policy_owner"], retryPolicyOwner)
+	}
+	if retryEvent["plugin_retry_field"] != pluginRetryField {
+		t.Fatalf("plugin_retry_field = %v, want %q", retryEvent["plugin_retry_field"], pluginRetryField)
+	}
 }
 
 func TestDispatcher_ExecuteJob_NonRetryableResponse(t *testing.T) {
@@ -584,6 +594,13 @@ echo '{"status":"error","error":"bad request","retry":false}'
 	if len(retryExhausted) == 0 {
 		t.Fatalf("expected retry_exhausted event for non-retryable failure")
 	}
+	retryEvent := eventPayload(t, retryExhausted[0])
+	if retryEvent["reason"] != retryReasonPluginRetryFalse {
+		t.Fatalf("retry exhausted reason = %v, want %q", retryEvent["reason"], retryReasonPluginRetryFalse)
+	}
+	if retryEvent["retry_policy_owner"] != retryPolicyOwner {
+		t.Fatalf("retry_policy_owner = %v, want %q", retryEvent["retry_policy_owner"], retryPolicyOwner)
+	}
 }
 
 func TestDispatcher_ExecuteJob_NonRetryableExitCode78(t *testing.T) {
@@ -636,6 +653,77 @@ exit 78
 	retryScheduled := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_scheduled")
 	if len(retryScheduled) != 0 {
 		t.Fatalf("expected no retry_scheduled events, got %d", len(retryScheduled))
+	}
+	retryExhausted := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_exhausted")
+	if len(retryExhausted) == 0 {
+		t.Fatalf("expected retry_exhausted event")
+	}
+	retryEvent := eventPayload(t, retryExhausted[0])
+	if retryEvent["reason"] != retryReasonExitCode78 {
+		t.Fatalf("retry exhausted reason = %v, want %q", retryEvent["reason"], retryReasonExitCode78)
+	}
+}
+
+func TestDispatcher_ExecuteJob_RetryExhaustionReasonVisible(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status":"error","error":"still broken"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "exhausted", script)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+	}
+	disp.cfg.Plugins["exhausted"] = config.PluginConf{
+		Enabled: true,
+		Retry: &config.RetryConfig{
+			MaxAttempts: 1,
+			BackoffBase: 1 * time.Second,
+		},
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "exhausted",
+		Command:     "poll",
+		SubmittedBy: "test",
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("dequeue: %v", err)
+	}
+	disp.executeJob(ctx, job)
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM job_queue WHERE id = ?`, jobID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != string(queue.StatusFailed) {
+		t.Fatalf("status = %s, want failed", status)
+	}
+	retryScheduled := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_scheduled")
+	if len(retryScheduled) != 0 {
+		t.Fatalf("expected no retry_scheduled events, got %d", len(retryScheduled))
+	}
+	retryExhausted := filterEventsByType(disp.events.SnapshotSince(0), "job.retry_exhausted")
+	if len(retryExhausted) == 0 {
+		t.Fatalf("expected retry_exhausted event")
+	}
+	retryEvent := eventPayload(t, retryExhausted[0])
+	if retryEvent["reason"] != retryReasonAttemptsExhausted {
+		t.Fatalf("retry exhausted reason = %v, want %q", retryEvent["reason"], retryReasonAttemptsExhausted)
+	}
+	if retryEvent["retry_decision_reason"] != retryReasonPluginError {
+		t.Fatalf("retry_decision_reason = %v, want %q", retryEvent["retry_decision_reason"], retryReasonPluginError)
 	}
 }
 
@@ -1210,6 +1298,16 @@ func filterEventsByType(eventsIn []events.Event, typ string) []events.Event {
 		}
 	}
 	return out
+}
+
+func eventPayload(t *testing.T, ev events.Event) map[string]any {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal(ev.Data, &payload); err != nil {
+		t.Fatalf("unmarshal event %s payload: %v", ev.Type, err)
+	}
+	return payload
 }
 
 func TestDispatcher_Start_ParallelExecution(t *testing.T) {

@@ -46,6 +46,7 @@ When a job is triggered (via scheduler, API, or webhook):
 }
 ```
 -   `result`: **Required for `status: ok`**. A short human-readable summary of what the plugin did.
+-   `retry`: Protocol v2 compatibility signal for permanent failures. Omit it for the default retryable error path; set `false` only when retrying the same request cannot succeed. Core owns the final retry decision.
 -   `state_updates`: Top-level keys here are shallow-merged into the plugin's persistent state.
 -   `events`: An array of `{ "type": "...", "payload": {} }` to trigger downstream pipelines.
 
@@ -342,7 +343,7 @@ plugins:
 
 - Checks are evaluated in order; first match wins.
 - Missing fields are treated as empty strings.
-- No match + no default → `status: error` with `retry: false`.
+- No match + no default → `status: error` with `retry: false`. Core treats this as a v2 compatibility signal for a permanent failure.
 
 ### Instance naming
 
