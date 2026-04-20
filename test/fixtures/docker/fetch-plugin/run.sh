@@ -13,6 +13,7 @@ STATE_DIR="$CONFIG_DIR/state"
 DB_PATH="$STATE_DIR/ductile.db"
 DUCTILE_PID=""
 SERVER_PID=""
+rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1

@@ -12,6 +12,7 @@ CONFIG_DIR="$FIXTURE_DIR/config"
 STATE_DIR="$CONFIG_DIR/state"
 WS_DIR="$STATE_DIR/workspaces"
 PID=""
+rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1

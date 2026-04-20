@@ -27,9 +27,6 @@ cleanup() {
 trap cleanup EXIT
 
 fixture_log "starting ductile process"
-mkdir -p "$CONFIG_DIR/plugins/echo"
-cp "$ROOT_DIR/plugins/echo/manifest.yaml" "$CONFIG_DIR/plugins/echo/manifest.yaml"
-cp "$ROOT_DIR/plugins/echo/run.sh" "$CONFIG_DIR/plugins/echo/run.sh"
 "$ROOT_DIR/ductile" system start --config "$CONFIG_DIR" >"$ARTIFACT_DIR/ductile.log" 2>&1 &
 PID=$!
 
