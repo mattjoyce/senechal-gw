@@ -18,6 +18,7 @@ type QueueService interface {
 	LatestCompletedCommandResult(ctx context.Context, plugin, command, submittedBy string) (*queue.CommandResult, error)
 	GetCircuitBreaker(ctx context.Context, plugin, command string) (*queue.CircuitBreaker, error)
 	UpsertCircuitBreaker(ctx context.Context, cb queue.CircuitBreaker) error
+	RecordCircuitBreakerTransition(ctx context.Context, transition queue.CircuitBreakerTransition) error
 	ResetCircuitBreaker(ctx context.Context, plugin, command string) error
 	GetScheduleEntryState(ctx context.Context, plugin, scheduleID string) (*queue.ScheduleEntryState, error)
 	UpsertScheduleEntryState(ctx context.Context, state queue.ScheduleEntryState) error

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS job_queue (
 
 CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, created_at);
 CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);
+CREATE INDEX IF NOT EXISTS job_queue_dedupe_status_completed_idx ON job_queue(dedupe_key, status, completed_at);
 CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS job_queue_enqueued_config_snapshot_idx ON job_queue(enqueued_config_snapshot_id);
 CREATE INDEX IF NOT EXISTS job_queue_started_config_snapshot_idx ON job_queue(started_config_snapshot_id);
@@ -135,6 +136,28 @@ CREATE TABLE IF NOT EXISTS circuit_breakers (
   updated_at      TEXT NOT NULL,
   PRIMARY KEY(plugin, command)
 );
+
+-- Hickey Sprint 4 runtime truth cleanup:
+-- append-only circuit breaker history. circuit_breakers remains the
+-- compatibility/current-state row used by scheduler decisions.
+CREATE TABLE IF NOT EXISTS circuit_breaker_transitions (
+  id            TEXT PRIMARY KEY,
+  plugin        TEXT NOT NULL,
+  command       TEXT NOT NULL,
+  from_state    TEXT,
+  to_state      TEXT NOT NULL,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  reason        TEXT NOT NULL,
+  job_id        TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_plugin_command_created_idx
+ON circuit_breaker_transitions(plugin, command, created_at);
+
+CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_job_idx
+ON circuit_breaker_transitions(job_id)
+WHERE job_id IS NOT NULL;
 
 -- Schedule Entries: Last fire times and next scheduled runs.
 CREATE TABLE IF NOT EXISTS schedule_entries (

@@ -83,6 +83,8 @@ Scheduler-originated polls respect the circuit breaker:
 - Opens after `threshold` consecutive failures.
 - Remains open for `reset_after`.
 - Half-open probe allows one poll; success closes the circuit.
+- Current state is stored in `circuit_breakers`; append-only history is stored in `circuit_breaker_transitions`.
+- Operators can inspect history with `ductile system breaker <plugin> [--json]`.
 
 ```yaml
 plugins:

@@ -936,6 +936,77 @@ func TestQueueCircuitBreakerRoundTripAndReset(t *testing.T) {
 	if got.OpenedAt != nil || got.LastFailure != nil || got.LastJobID != nil {
 		t.Fatalf("expected cleared breaker timing fields after reset, got %#v", got)
 	}
+
+	transitions, err := q.ListCircuitBreakerTransitions(context.Background(), "echo", "poll", 10)
+	if err != nil {
+		t.Fatalf("ListCircuitBreakerTransitions: %v", err)
+	}
+	if len(transitions) != 1 {
+		t.Fatalf("transitions len=%d want 1", len(transitions))
+	}
+	if transitions[0].Reason != CircuitTransitionManualReset {
+		t.Fatalf("transition reason=%q want %q", transitions[0].Reason, CircuitTransitionManualReset)
+	}
+	if transitions[0].FromState == nil || *transitions[0].FromState != CircuitOpen {
+		t.Fatalf("from_state=%v want %q", transitions[0].FromState, CircuitOpen)
+	}
+	if transitions[0].ToState != CircuitClosed {
+		t.Fatalf("to_state=%q want %q", transitions[0].ToState, CircuitClosed)
+	}
+}
+
+func TestQueueCircuitBreakerTransitionsAreAppendOnly(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+	from := CircuitClosed
+	jobID := "job-open"
+	if err := q.RecordCircuitBreakerTransition(ctx, CircuitBreakerTransition{
+		Plugin:       "echo",
+		Command:      "poll",
+		FromState:    &from,
+		ToState:      CircuitOpen,
+		FailureCount: 3,
+		Reason:       CircuitTransitionFailureThreshold,
+		JobID:        &jobID,
+	}); err != nil {
+		t.Fatalf("RecordCircuitBreakerTransition open: %v", err)
+	}
+	if err := q.RecordCircuitBreakerTransition(ctx, CircuitBreakerTransition{
+		Plugin:       "echo",
+		Command:      "poll",
+		FromState:    nil,
+		ToState:      CircuitHalfOpen,
+		FailureCount: 3,
+		Reason:       CircuitTransitionCooldownElapsed,
+	}); err != nil {
+		t.Fatalf("RecordCircuitBreakerTransition half-open: %v", err)
+	}
+
+	transitions, err := q.ListCircuitBreakerTransitions(ctx, "echo", "poll", 10)
+	if err != nil {
+		t.Fatalf("ListCircuitBreakerTransitions: %v", err)
+	}
+	if len(transitions) != 2 {
+		t.Fatalf("transitions len=%d want 2", len(transitions))
+	}
+	if transitions[0].Reason != CircuitTransitionCooldownElapsed {
+		t.Fatalf("newest reason=%q want %q", transitions[0].Reason, CircuitTransitionCooldownElapsed)
+	}
+	if transitions[1].Reason != CircuitTransitionFailureThreshold {
+		t.Fatalf("oldest reason=%q want %q", transitions[1].Reason, CircuitTransitionFailureThreshold)
+	}
+	if transitions[1].JobID == nil || *transitions[1].JobID != jobID {
+		t.Fatalf("job_id=%v want %q", transitions[1].JobID, jobID)
+	}
 }
 
 func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
@@ -1378,6 +1449,69 @@ func TestDequeueEligibleSkipsConcurrencyKeys(t *testing.T) {
 	}
 	if j2 != nil {
 		t.Fatalf("expected nil, got %v", j2)
+	}
+}
+
+func TestDequeueEligibleSkipsRunningDedupeKeyFromQueueTruth(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	keyA := "repo:alpha"
+	keyB := "repo:beta"
+	idA, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyA,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue A: %v", err)
+	}
+	idA2, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyA,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue A2: %v", err)
+	}
+	idB, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "sync", Command: "handle", SubmittedBy: "test", DedupeKey: &keyB,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue B: %v", err)
+	}
+
+	first, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible first: %v", err)
+	}
+	if first == nil || first.ID != idA {
+		t.Fatalf("first=%v want %s", first, idA)
+	}
+
+	second, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible second: %v", err)
+	}
+	if second == nil || second.ID != idB {
+		t.Fatalf("second=%v want %s", second, idB)
+	}
+
+	lastErr := "done"
+	if err := q.Complete(ctx, idA, StatusSucceeded, &lastErr, nil); err != nil {
+		t.Fatalf("Complete A: %v", err)
+	}
+	third, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("DequeueEligible third: %v", err)
+	}
+	if third == nil || third.ID != idA2 {
+		t.Fatalf("third=%v want %s", third, idA2)
 	}
 }
 

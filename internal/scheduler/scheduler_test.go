@@ -174,6 +174,9 @@ func (s *stubQueueService) GetCircuitBreaker(_ context.Context, _, _ string) (*q
 func (s *stubQueueService) UpsertCircuitBreaker(_ context.Context, _ queue.CircuitBreaker) error {
 	return nil
 }
+func (s *stubQueueService) RecordCircuitBreakerTransition(_ context.Context, _ queue.CircuitBreakerTransition) error {
+	return nil
+}
 func (s *stubQueueService) ResetCircuitBreaker(_ context.Context, _, _ string) error { return nil }
 func (s *stubQueueService) GetScheduleEntryState(_ context.Context, _, _ string) (*queue.ScheduleEntryState, error) {
 	return nil, nil
@@ -191,6 +194,122 @@ func (s *stubQueueService) CompleteWithResult(_ context.Context, _ string, _ que
 	return nil
 }
 func (s *stubQueueService) PruneJobLogs(_ context.Context, _ time.Duration) error { return nil }
+
+type circuitQueueStub struct {
+	stubQueueService
+	breaker     *queue.CircuitBreaker
+	latest      *queue.CommandResult
+	transitions []queue.CircuitBreakerTransition
+}
+
+func (s *circuitQueueStub) LatestCompletedCommandResult(_ context.Context, _, _, _ string) (*queue.CommandResult, error) {
+	return s.latest, nil
+}
+
+func (s *circuitQueueStub) GetCircuitBreaker(_ context.Context, _, _ string) (*queue.CircuitBreaker, error) {
+	return s.breaker, nil
+}
+
+func (s *circuitQueueStub) UpsertCircuitBreaker(_ context.Context, cb queue.CircuitBreaker) error {
+	copied := cb
+	s.breaker = &copied
+	return nil
+}
+
+func (s *circuitQueueStub) RecordCircuitBreakerTransition(_ context.Context, transition queue.CircuitBreakerTransition) error {
+	s.transitions = append(s.transitions, transition)
+	return nil
+}
+
+func TestReconcileCircuitBreakerRecordsOpenTransition(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	stub := &circuitQueueStub{
+		latest: &queue.CommandResult{
+			JobID:       "job-failed",
+			Status:      queue.StatusFailed,
+			CompletedAt: time.Now().UTC(),
+		},
+	}
+	sched := New(cfg, stub, nil, logger)
+
+	latest, err := sched.reconcileCircuitBreaker(context.Background(), "echo", "poll", config.PluginConf{
+		CircuitBreaker: &config.CircuitBreakerConfig{Threshold: 1, ResetAfter: time.Minute},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "job-failed", latest.JobID)
+	assert.NotNil(t, stub.breaker)
+	assert.Equal(t, queue.CircuitOpen, stub.breaker.State)
+	assert.Equal(t, 1, len(stub.transitions))
+	assert.Equal(t, queue.CircuitTransitionFailureThreshold, stub.transitions[0].Reason)
+	assert.Equal(t, queue.CircuitClosed, *stub.transitions[0].FromState)
+	assert.Equal(t, queue.CircuitOpen, stub.transitions[0].ToState)
+	assert.Equal(t, "job-failed", *stub.transitions[0].JobID)
+}
+
+func TestCanScheduleRecordsHalfOpenTransition(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	openedAt := time.Now().UTC().Add(-2 * time.Minute)
+	lastJobID := "job-open"
+	stub := &circuitQueueStub{
+		breaker: &queue.CircuitBreaker{
+			Plugin:       "echo",
+			Command:      "poll",
+			State:        queue.CircuitOpen,
+			FailureCount: 3,
+			OpenedAt:     &openedAt,
+			LastJobID:    &lastJobID,
+		},
+	}
+	sched := New(cfg, stub, nil, logger)
+
+	ok, reason, err := sched.canSchedule(context.Background(), "echo", "poll", config.PluginConf{
+		CircuitBreaker: &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: time.Minute},
+	}, config.ScheduleConfig{})
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "", reason)
+	assert.Equal(t, queue.CircuitHalfOpen, stub.breaker.State)
+	assert.Equal(t, 1, len(stub.transitions))
+	assert.Equal(t, queue.CircuitTransitionCooldownElapsed, stub.transitions[0].Reason)
+	assert.Equal(t, queue.CircuitOpen, *stub.transitions[0].FromState)
+	assert.Equal(t, queue.CircuitHalfOpen, stub.transitions[0].ToState)
+	assert.Equal(t, lastJobID, *stub.transitions[0].JobID)
+}
+
+func TestReconcileCircuitBreakerRecordsCloseTransition(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	lastJobID := "job-failed"
+	stub := &circuitQueueStub{
+		breaker: &queue.CircuitBreaker{
+			Plugin:       "echo",
+			Command:      "poll",
+			State:        queue.CircuitOpen,
+			FailureCount: 3,
+			LastJobID:    &lastJobID,
+		},
+		latest: &queue.CommandResult{
+			JobID:       "job-success",
+			Status:      queue.StatusSucceeded,
+			CompletedAt: time.Now().UTC(),
+		},
+	}
+	sched := New(cfg, stub, nil, logger)
+
+	latest, err := sched.reconcileCircuitBreaker(context.Background(), "echo", "poll", config.PluginConf{
+		CircuitBreaker: &config.CircuitBreakerConfig{Threshold: 3, ResetAfter: time.Minute},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "job-success", latest.JobID)
+	assert.Equal(t, queue.CircuitClosed, stub.breaker.State)
+	assert.Equal(t, 1, len(stub.transitions))
+	assert.Equal(t, queue.CircuitTransitionSuccess, stub.transitions[0].Reason)
+	assert.Equal(t, queue.CircuitOpen, *stub.transitions[0].FromState)
+	assert.Equal(t, queue.CircuitClosed, stub.transitions[0].ToState)
+	assert.Equal(t, "job-success", *stub.transitions[0].JobID)
+}
 
 func TestSchedulerJanitorCalledOnTick(t *testing.T) {
 	logger, _ := NewTestSlogger()
@@ -259,12 +378,12 @@ func TestSchedulerJanitorNotCalledWhenNotConfigured(t *testing.T) {
 // recoveryQueueStub records calls for recovery-path assertions.
 type recoveryQueueStub struct {
 	stubQueueService
-	mu               sync.Mutex
-	jobs             []*queue.Job
-	completedJobIDs  []string
-	completedStatus  []queue.Status
-	recoveredJobIDs  []string
-	recoveredStatus  []queue.Status
+	mu              sync.Mutex
+	jobs            []*queue.Job
+	completedJobIDs []string
+	completedStatus []queue.Status
+	recoveredJobIDs []string
+	recoveredStatus []queue.Status
 }
 
 func (r *recoveryQueueStub) FindJobsByStatus(_ context.Context, status queue.Status) ([]*queue.Job, error) {
@@ -312,8 +431,8 @@ func TestRecoverOrphanedJobs_DeadJobFiresHook(t *testing.T) {
 		hookMu.Lock()
 		defer hookMu.Unlock()
 		hookCalls = append(hookCalls, map[string]any{
-			"job_id": job.ID,
-			"signal": signal,
+			"job_id":  job.ID,
+			"signal":  signal,
 			"payload": payload,
 		})
 	})

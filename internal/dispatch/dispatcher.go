@@ -39,13 +39,6 @@ const (
 	nonRetryableExitCode = 78
 )
 
-// workerResult is sent by a worker goroutine when it finishes executing a job.
-type workerResult struct {
-	jobID     string
-	plugin    string
-	dedupeKey string // empty if job had no dedupe key
-}
-
 // Dispatcher dequeues jobs and executes them by spawning plugin subprocesses.
 type Dispatcher struct {
 	queue     *queue.Queue
@@ -104,12 +97,11 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 	d.logger.Info("dispatch loop started", "max_workers", maxWorkers)
 	defer d.logger.Info("dispatch loop stopped")
 
-	// Concurrency tracking — only accessed by the coordinator goroutine (no lock needed).
+	// activeTotal is local worker lifecycle coordination. Queue-backed running
+	// rows are the source of truth for plugin lanes and dedupe-key eligibility.
 	activeTotal := 0
-	activeByPlugin := make(map[string]int)
-	activeKeys := make(map[string]struct{})
 
-	workerDone := make(chan workerResult, maxWorkers)
+	workerDone := make(chan struct{}, maxWorkers)
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -118,22 +110,22 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 	// or no eligible work remains.
 	fillWorkers := func() {
 		for activeTotal < maxWorkers {
-			// Build skip list: plugins at their parallelism cap
+			runningByPlugin, err := d.queue.RunningCountsByPlugin(ctx)
+			if err != nil {
+				d.logger.Error("failed to load running plugin counts", "error", err)
+				return
+			}
+
+			// Build skip list: plugins at their parallelism cap.
 			var skipPlugins []string
-			for pluginName, count := range activeByPlugin {
+			for pluginName, count := range runningByPlugin {
 				limit := d.pluginParallelism(pluginName)
 				if count >= limit {
 					skipPlugins = append(skipPlugins, pluginName)
 				}
 			}
 
-			// Build active concurrency keys list
-			var activeKeySlice []string
-			for k := range activeKeys {
-				activeKeySlice = append(activeKeySlice, k)
-			}
-
-			job, err := d.queue.DequeueEligible(ctx, skipPlugins, activeKeySlice)
+			job, err := d.queue.DequeueEligible(ctx, skipPlugins, nil)
 			if err != nil {
 				d.logger.Error("failed to dequeue eligible job", "error", err)
 				return
@@ -144,29 +136,19 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 
 			// Track this worker
 			activeTotal++
-			activeByPlugin[job.Plugin]++
-			dedupeKey := ""
-			if job.DedupeKey != nil {
-				dedupeKey = *job.DedupeKey
-				activeKeys[dedupeKey] = struct{}{}
-			}
 
 			d.logger.Debug("dispatching job",
 				"job_id", job.ID,
 				"plugin", job.Plugin,
 				"active_total", activeTotal,
-				"active_plugin", activeByPlugin[job.Plugin],
+				"running_plugin", runningByPlugin[job.Plugin]+1,
 			)
 
 			// Launch worker goroutine
-			go func(j *queue.Job, dk string) {
+			go func(j *queue.Job) {
 				d.executeJob(ctx, j)
-				workerDone <- workerResult{
-					jobID:     j.ID,
-					plugin:    j.Plugin,
-					dedupeKey: dk,
-				}
-			}(job, dedupeKey)
+				workerDone <- struct{}{}
+			}(job)
 		}
 	}
 
@@ -176,24 +158,13 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 			// Drain active workers before returning
 			d.logger.Info("dispatch loop shutting down, draining workers", "active", activeTotal)
 			for activeTotal > 0 {
-				res := <-workerDone
+				<-workerDone
 				activeTotal--
-				activeByPlugin[res.plugin]--
-				if res.dedupeKey != "" {
-					delete(activeKeys, res.dedupeKey)
-				}
 			}
 			return ctx.Err()
 
-		case res := <-workerDone:
+		case <-workerDone:
 			activeTotal--
-			activeByPlugin[res.plugin]--
-			if activeByPlugin[res.plugin] <= 0 {
-				delete(activeByPlugin, res.plugin)
-			}
-			if res.dedupeKey != "" {
-				delete(activeKeys, res.dedupeKey)
-			}
 			// A slot freed up — try to fill
 			fillWorkers()
 

@@ -105,6 +105,9 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 	if err := ensureIndexExists(ctx, db, "job_log_job_id_attempt_idx", "CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);"); err != nil {
 		return err
 	}
+	if err := ensureIndexExists(ctx, db, "job_queue_dedupe_status_completed_idx", "CREATE INDEX IF NOT EXISTS job_queue_dedupe_status_completed_idx ON job_queue(dedupe_key, status, completed_at);"); err != nil {
+		return err
+	}
 
 	return nil
 }

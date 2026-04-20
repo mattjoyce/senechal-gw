@@ -8,6 +8,7 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json|tui> [flags="<...
 ### System & Lifecycle
 - system.start tier=WRITE mut=1 out=human d="Start the gateway service in foreground."
 - system.status tier=READ mut=0 out=human|json flags="[--json]" d="Check gateway health: PID lock, state DB, and plugin reachability."
+- system.breaker tier=READ mut=0 out=human|json flags="<plugin> [--command <command>] [--json] [--limit <n>]" d="Inspect circuit breaker current state and transition history."
 - system.reload tier=WRITE mut=1 out=human|json flags="[--json] [--api-url <url>] [--api-key <key>]" d="Hot-reload configuration without restart."
 - system.reset tier=WRITE mut=1 out=human flags="<plugin>" d="Reset a tripped circuit breaker for a plugin."
 - system.watch tier=READ mut=0 out=tui d="Open real-time diagnostic dashboard (Overwatch)."

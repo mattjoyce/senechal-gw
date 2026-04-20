@@ -152,7 +152,7 @@ queued → running → succeeded
 
 - **Global Limit:** Controlled by `service.max_workers` (defaults to `CPU-1`).
 - **Plugin Parallelism:** Each plugin can define a `parallelism` limit in its configuration. If a plugin is not marked as `concurrency_safe: true` in its manifest, it defaults to a parallelism of 1 (serial execution).
-- **Smart Dequeue:** The scheduler and dispatcher skip jobs for plugins that have reached their active parallelism cap, ensuring the worker pool remains available for other tasks.
+- **Smart Dequeue:** The scheduler and dispatcher skip jobs for plugins that have reached their active parallelism cap, ensuring the worker pool remains available for other tasks. Running counts and same-`dedupe_key` execution exclusion are derived from `job_queue`; dispatcher in-memory counters are local worker lifecycle coordination only.
 
 Revisit condition: sustained queue wait times exceed 60 seconds with all workers saturated.
 
@@ -165,6 +165,8 @@ When a producer enqueues a job with a `dedupe_key`:
 3. Query for a `succeeded` job with the same `dedupe_key` completed within the effective TTL.
 4. If either check finds a match: do not enqueue. Log at `INFO`: dedupe_key, existing job ID.
 5. If no match is found: enqueue normally.
+
+During dispatch, queued jobs with a `dedupe_key` are also skipped while another job with the same key is `running`. That execution serialisation is query-backed by `job_queue`, not a separate durable state table.
 
 ---
 
@@ -393,6 +395,7 @@ Configurable consecutive failure threshold per `(plugin, command)` pair. Applies
 - Default threshold: 3 consecutive failures.
 - Default reset: 30 minutes.
 - Manual reset: `ductile system reset <plugin>`.
+- Inspect state and transition history: `ductile system breaker <plugin> [--json]`.
 - States: `closed` -> `open` -> `half_open`.
 - When cooldown expires, scheduler allows a single half-open probe poll:
   - Success closes the circuit and resets failure count.
@@ -922,6 +925,20 @@ circuit_breakers (
   last_job_id     TEXT,                -- latest processed scheduler poll job id
   updated_at      TEXT NOT NULL,       -- ISO8601
   PRIMARY KEY(plugin, command)
+);
+
+-- Append-only circuit breaker transition facts.
+-- circuit_breakers remains the current-state compatibility/cache row.
+circuit_breaker_transitions (
+  id            TEXT PRIMARY KEY,
+  plugin        TEXT NOT NULL,
+  command       TEXT NOT NULL,
+  from_state    TEXT,                -- closed | open | half_open | NULL
+  to_state      TEXT NOT NULL,       -- closed | open | half_open
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  reason        TEXT NOT NULL,       -- failure_threshold | success | cooldown_elapsed | manual_reset
+  job_id        TEXT,
+  created_at    TEXT NOT NULL        -- ISO8601
 );
 ```
 

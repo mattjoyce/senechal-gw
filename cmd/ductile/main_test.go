@@ -481,6 +481,99 @@ plugins:
 	if got.FailureCount != 0 {
 		t.Fatalf("failure_count=%d want 0", got.FailureCount)
 	}
+
+	transitions, err := q.ListCircuitBreakerTransitions(context.Background(), "echo", "poll", 10)
+	if err != nil {
+		t.Fatalf("ListCircuitBreakerTransitions: %v", err)
+	}
+	if len(transitions) != 1 {
+		t.Fatalf("transitions len=%d want 1", len(transitions))
+	}
+	if transitions[0].Reason != queue.CircuitTransitionManualReset {
+		t.Fatalf("transition reason=%q want %q", transitions[0].Reason, queue.CircuitTransitionManualReset)
+	}
+}
+
+func TestRunSystemBreakerShowsCircuitBreakerHistory(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+state:
+  path: ` + dbPath + `
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := queue.New(db)
+	openedAt := time.Now().UTC().Add(-5 * time.Minute)
+	lastJobID := "job-open"
+	if err := q.UpsertCircuitBreaker(context.Background(), queue.CircuitBreaker{
+		Plugin:       "echo",
+		Command:      "poll",
+		State:        queue.CircuitOpen,
+		FailureCount: 3,
+		OpenedAt:     &openedAt,
+		LastJobID:    &lastJobID,
+	}); err != nil {
+		t.Fatalf("UpsertCircuitBreaker: %v", err)
+	}
+	from := queue.CircuitClosed
+	if err := q.RecordCircuitBreakerTransition(context.Background(), queue.CircuitBreakerTransition{
+		Plugin:       "echo",
+		Command:      "poll",
+		FromState:    &from,
+		ToState:      queue.CircuitOpen,
+		FailureCount: 3,
+		Reason:       queue.CircuitTransitionFailureThreshold,
+		JobID:        &lastJobID,
+	}); err != nil {
+		t.Fatalf("RecordCircuitBreakerTransition: %v", err)
+	}
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemBreaker([]string{"--config", configPath, "--json", "echo"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemBreaker() code = %d, stderr: %s", code, stderr)
+	}
+
+	var out struct {
+		Plugin      string `json:"plugin"`
+		Command     string `json:"command"`
+		State       string `json:"state"`
+		Transitions []struct {
+			Reason string `json:"reason"`
+			JobID  string `json:"job_id"`
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("failed to parse breaker json: %v\noutput=%s", err, stdout)
+	}
+	if out.Plugin != "echo" || out.Command != "poll" || out.State != string(queue.CircuitOpen) {
+		t.Fatalf("unexpected breaker report: %#v", out)
+	}
+	if len(out.Transitions) != 1 {
+		t.Fatalf("transitions len=%d want 1", len(out.Transitions))
+	}
+	if out.Transitions[0].Reason != string(queue.CircuitTransitionFailureThreshold) {
+		t.Fatalf("reason=%q want %q", out.Transitions[0].Reason, queue.CircuitTransitionFailureThreshold)
+	}
+	if out.Transitions[0].JobID != lastJobID {
+		t.Fatalf("job_id=%q want %q", out.Transitions[0].JobID, lastJobID)
+	}
 }
 
 func TestRunSystemSkillsFallsBackWithoutUsableAutoConfig(t *testing.T) {

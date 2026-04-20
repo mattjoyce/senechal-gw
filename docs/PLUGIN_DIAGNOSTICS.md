@@ -220,7 +220,10 @@ Ductile tracks consecutive plugin failures and can open a circuit breaker to sto
 
 ```bash
 # Check circuit state
-ductile system status
+ductile system breaker <plugin-name>
+
+# Machine-readable breaker state and recent transition facts
+ductile system breaker <plugin-name> --json
 
 # Reset after fixing the underlying issue
 ductile system reset <plugin-name>
@@ -293,6 +296,7 @@ ductile config get plugins.<name>.<key>
 ductile config lock && ductile system reload
 
 # Circuit breaker
+ductile system breaker <plugin-name>
 ductile system reset <plugin-name>
 
 # Logs (systemd)

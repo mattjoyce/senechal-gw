@@ -43,7 +43,10 @@ Persistent key-value store for plugins (e.g., OAuth tokens, cursors).
 The persistent state of the scheduler. Tracks when each schedule last fired and when it is due next.
 
 ### 6. `circuit_breakers`
-Tracks consecutive failures for scheduled polls.
+Current-state compatibility/cache row for scheduled poll circuit breakers.
+
+### 7. `circuit_breaker_transitions`
+Append-only transition facts for circuit breakers. Use this table to explain why a breaker opened, moved half-open, closed, or was manually reset.
 
 ---
 
@@ -60,6 +63,13 @@ GROUP BY status;
 SELECT plugin, command, state, failure_count, opened_at 
 FROM circuit_breakers 
 WHERE state != 'closed';
+
+-- Show recent breaker transitions
+SELECT created_at, plugin, command, from_state, to_state, reason, failure_count, job_id
+FROM circuit_breaker_transitions
+WHERE plugin = 'my-plugin' AND command = 'poll'
+ORDER BY created_at DESC
+LIMIT 20;
 
 -- Check for stuck "running" jobs (orphans)
 SELECT id, plugin, command, started_at 

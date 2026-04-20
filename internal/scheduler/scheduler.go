@@ -874,6 +874,21 @@ func (s *Scheduler) reconcileCircuitBreaker(ctx context.Context, pluginName, com
 	}
 
 	if cb.State != previousState {
+		reason := queue.CircuitTransitionSuccess
+		if cb.State == queue.CircuitOpen {
+			reason = queue.CircuitTransitionFailureThreshold
+		}
+		if err := s.queue.RecordCircuitBreakerTransition(ctx, queue.CircuitBreakerTransition{
+			Plugin:       pluginName,
+			Command:      command,
+			FromState:    &previousState,
+			ToState:      cb.State,
+			FailureCount: cb.FailureCount,
+			Reason:       reason,
+			JobID:        &latest.JobID,
+		}); err != nil {
+			return nil, err
+		}
 		s.events.Publish("scheduler.circuit_state_changed", map[string]any{
 			"plugin":         pluginName,
 			"command":        command,
@@ -931,8 +946,20 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 			return false, "circuit_open", nil
 		}
 
+		previousState := cb.State
 		cb.State = queue.CircuitHalfOpen
 		if err := s.queue.UpsertCircuitBreaker(ctx, cb); err != nil {
+			return false, "", err
+		}
+		if err := s.queue.RecordCircuitBreakerTransition(ctx, queue.CircuitBreakerTransition{
+			Plugin:       pluginName,
+			Command:      command,
+			FromState:    &previousState,
+			ToState:      cb.State,
+			FailureCount: cb.FailureCount,
+			Reason:       queue.CircuitTransitionCooldownElapsed,
+			JobID:        cb.LastJobID,
+		}); err != nil {
 			return false, "", err
 		}
 		s.events.Publish("scheduler.circuit_half_open", map[string]any{

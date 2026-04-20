@@ -145,6 +145,33 @@ type CircuitBreaker struct {
 	UpdatedAt    time.Time
 }
 
+// CircuitBreakerTransitionReason classifies why a breaker state fact was recorded.
+type CircuitBreakerTransitionReason string
+
+const (
+	// CircuitTransitionFailureThreshold means failures reached the configured threshold.
+	CircuitTransitionFailureThreshold CircuitBreakerTransitionReason = "failure_threshold"
+	// CircuitTransitionSuccess means a successful probe or poll closed the breaker.
+	CircuitTransitionSuccess CircuitBreakerTransitionReason = "success"
+	// CircuitTransitionCooldownElapsed means an open breaker moved to half-open after cooldown.
+	CircuitTransitionCooldownElapsed CircuitBreakerTransitionReason = "cooldown_elapsed"
+	// CircuitTransitionManualReset means an operator manually reset the breaker.
+	CircuitTransitionManualReset CircuitBreakerTransitionReason = "manual_reset"
+)
+
+// CircuitBreakerTransition records one append-only circuit breaker state fact.
+type CircuitBreakerTransition struct {
+	ID           string
+	Plugin       string
+	Command      string
+	FromState    *CircuitState
+	ToState      CircuitState
+	FailureCount int
+	Reason       CircuitBreakerTransitionReason
+	JobID        *string
+	CreatedAt    time.Time
+}
+
 type CommandResult struct {
 	JobID       string
 	Status      Status

@@ -169,6 +169,36 @@ func (q *Queue) Metrics(ctx context.Context) (QueueMetrics, error) {
 	return m, nil
 }
 
+// RunningCountsByPlugin returns current running job counts grouped by plugin.
+func (q *Queue) RunningCountsByPlugin(ctx context.Context) (map[string]int, error) {
+	rows, err := q.db.QueryContext(ctx, `
+SELECT plugin, COUNT(*)
+FROM job_queue
+WHERE status = ?
+GROUP BY plugin;
+`, StatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("running counts by plugin: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var (
+			plugin string
+			count  int
+		)
+		if err := rows.Scan(&plugin, &count); err != nil {
+			return nil, fmt.Errorf("scan running count: %w", err)
+		}
+		counts[plugin] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate running counts: %w", err)
+	}
+	return counts, nil
+}
+
 // CountOutstandingJobs returns queued+running jobs for a plugin command.
 func (q *Queue) CountOutstandingJobs(ctx context.Context, plugin, command string) (int, error) {
 	if plugin == "" {
@@ -433,12 +463,14 @@ func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
 }
 
 // DequeueEligible claims the oldest queued job whose plugin is NOT in
-// skipPlugins and whose dedupe_key is NOT in activeConcurrencyKeys. This
-// allows the dispatcher to skip plugins that have reached their parallelism
-// cap and prevent concurrent execution of jobs sharing a concurrency key
-// (e.g. same repo target).
+// skipPlugins and whose dedupe_key is neither in activeConcurrencyKeys nor
+// already running. This allows the dispatcher to skip plugins that have reached
+// their parallelism cap and prevents concurrent execution of jobs sharing a
+// concurrency key (e.g. same repo target) using job_queue as the source of
+// truth.
 //
-// When both slices are empty the behavior is identical to Dequeue.
+// Dequeue calls this with empty explicit filters; same-key running exclusion
+// still applies because job_queue is the concurrency-key source of truth.
 // Returns (nil, nil) when no eligible job exists.
 func (q *Queue) DequeueEligible(ctx context.Context, skipPlugins []string, activeConcurrencyKeys []string) (*Job, error) {
 	now := time.Now().UTC()
@@ -454,7 +486,7 @@ func (q *Queue) DequeueEligible(ctx context.Context, skipPlugins []string, activ
 			placeholders[i] = "?"
 			args = append(args, p)
 		}
-		pluginFilter = " AND plugin NOT IN (" + strings.Join(placeholders, ",") + ")"
+		pluginFilter = " AND candidate.plugin NOT IN (" + strings.Join(placeholders, ",") + ")"
 	}
 
 	keyFilter := ""
@@ -464,16 +496,25 @@ func (q *Queue) DequeueEligible(ctx context.Context, skipPlugins []string, activ
 			placeholders[i] = "?"
 			args = append(args, k)
 		}
-		keyFilter = " AND (dedupe_key IS NULL OR dedupe_key NOT IN (" + strings.Join(placeholders, ",") + "))"
+		keyFilter = " AND (candidate.dedupe_key IS NULL OR candidate.dedupe_key NOT IN (" + strings.Join(placeholders, ",") + "))"
 	}
 
 	query := `
 WITH next AS (
-  SELECT id
-  FROM job_queue
-  WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at = '' OR next_retry_at <= ?)` +
+  SELECT candidate.id
+  FROM job_queue AS candidate
+  WHERE candidate.status = ? AND (candidate.next_retry_at IS NULL OR candidate.next_retry_at = '' OR candidate.next_retry_at <= ?)` +
 		pluginFilter + keyFilter + `
-  ORDER BY created_at ASC, rowid ASC
+    AND (
+      candidate.dedupe_key IS NULL
+      OR NOT EXISTS (
+        SELECT 1
+        FROM job_queue AS running
+        WHERE running.status = ?
+          AND running.dedupe_key = candidate.dedupe_key
+      )
+    )
+  ORDER BY candidate.created_at ASC, candidate.rowid ASC
   LIMIT 1
 )
 UPDATE job_queue
@@ -492,7 +533,7 @@ RETURNING
 	if startedConfigSnapshotID != "" {
 		startedConfigSnapshotVal = startedConfigSnapshotID
 	}
-	args = append(args, StatusRunning, nowS, startedConfigSnapshotVal)
+	args = append(args, StatusRunning, StatusRunning, nowS, startedConfigSnapshotVal)
 
 	tx, err := q.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1206,13 +1247,141 @@ ON CONFLICT(plugin, command) DO UPDATE SET
 	return nil
 }
 
+// RecordCircuitBreakerTransition appends one circuit breaker transition fact.
+func (q *Queue) RecordCircuitBreakerTransition(ctx context.Context, transition CircuitBreakerTransition) error {
+	if transition.Plugin == "" {
+		return fmt.Errorf("plugin is empty")
+	}
+	if transition.Command == "" {
+		return fmt.Errorf("command is empty")
+	}
+	if transition.ToState == "" {
+		return fmt.Errorf("to_state is empty")
+	}
+	if transition.Reason == "" {
+		return fmt.Errorf("reason is empty")
+	}
+	if transition.ID == "" {
+		transition.ID = uuid.NewString()
+	}
+	if transition.CreatedAt.IsZero() {
+		transition.CreatedAt = time.Now().UTC()
+	}
+
+	var fromState any
+	if transition.FromState != nil {
+		fromState = *transition.FromState
+	}
+	var jobID any
+	if transition.JobID != nil && strings.TrimSpace(*transition.JobID) != "" {
+		jobID = strings.TrimSpace(*transition.JobID)
+	}
+
+	_, err := q.db.ExecContext(ctx, `
+INSERT INTO circuit_breaker_transitions(
+  id, plugin, command, from_state, to_state, failure_count, reason, job_id, created_at
+)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, transition.ID, transition.Plugin, transition.Command, fromState, transition.ToState, transition.FailureCount, transition.Reason, jobID, transition.CreatedAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("record circuit breaker transition: %w", err)
+	}
+	return nil
+}
+
+// ListCircuitBreakerTransitions returns recent circuit breaker transition facts.
+func (q *Queue) ListCircuitBreakerTransitions(ctx context.Context, plugin, command string, limit int) ([]CircuitBreakerTransition, error) {
+	if plugin == "" {
+		return nil, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return nil, fmt.Errorf("command is empty")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := q.db.QueryContext(ctx, `
+SELECT id, plugin, command, from_state, to_state, failure_count, reason, job_id, created_at
+FROM circuit_breaker_transitions
+WHERE plugin = ? AND command = ?
+ORDER BY created_at DESC, rowid DESC
+LIMIT ?;
+`, plugin, command, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list circuit breaker transitions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	transitions := make([]CircuitBreakerTransition, 0)
+	for rows.Next() {
+		var (
+			transition CircuitBreakerTransition
+			fromState  sql.NullString
+			toState    string
+			reason     string
+			jobID      sql.NullString
+			createdAt  string
+		)
+		if err := rows.Scan(
+			&transition.ID,
+			&transition.Plugin,
+			&transition.Command,
+			&fromState,
+			&toState,
+			&transition.FailureCount,
+			&reason,
+			&jobID,
+			&createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan circuit breaker transition: %w", err)
+		}
+		if fromState.Valid {
+			state := CircuitState(fromState.String)
+			transition.FromState = &state
+		}
+		transition.ToState = CircuitState(toState)
+		transition.Reason = CircuitBreakerTransitionReason(reason)
+		if jobID.Valid {
+			transition.JobID = &jobID.String
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
+			transition.CreatedAt = parsed
+		}
+		transitions = append(transitions, transition)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate circuit breaker transitions: %w", err)
+	}
+	return transitions, nil
+}
+
 // ResetCircuitBreaker closes a plugin+command circuit and clears failure history.
 func (q *Queue) ResetCircuitBreaker(ctx context.Context, plugin, command string) error {
-	return q.UpsertCircuitBreaker(ctx, CircuitBreaker{
+	previous, err := q.GetCircuitBreaker(ctx, plugin, command)
+	if err != nil {
+		return err
+	}
+	if err := q.UpsertCircuitBreaker(ctx, CircuitBreaker{
 		Plugin:       plugin,
 		Command:      command,
 		State:        CircuitClosed,
 		FailureCount: 0,
+	}); err != nil {
+		return err
+	}
+
+	var fromState *CircuitState
+	if previous != nil {
+		fromState = &previous.State
+	}
+	return q.RecordCircuitBreakerTransition(ctx, CircuitBreakerTransition{
+		Plugin:       plugin,
+		Command:      command,
+		FromState:    fromState,
+		ToState:      CircuitClosed,
+		FailureCount: 0,
+		Reason:       CircuitTransitionManualReset,
 	})
 }
 

@@ -334,6 +334,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemReset(actionArgs)
+	case "breaker":
+		if hasHelpFlag(actionArgs) {
+			printSystemBreakerHelp()
+			return 0
+		}
+		return runSystemBreaker(actionArgs)
 	case "reload":
 		if hasHelpFlag(actionArgs) {
 			printSystemReloadHelp()
@@ -972,7 +978,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, reset, reload, watch, skills")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, breaker, reset, reload, watch, skills")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -1007,6 +1013,11 @@ func printSystemStatusHelp() {
 func printSystemResetHelp() {
 	fmt.Println("Usage: ductile system reset <plugin> [--config PATH]")
 	fmt.Println("Reset scheduler poll circuit breaker state for a plugin.")
+}
+
+func printSystemBreakerHelp() {
+	fmt.Println("Usage: ductile system breaker <plugin> [--command COMMAND] [--config PATH] [--json] [--limit N]")
+	fmt.Println("Show current circuit breaker state and recent transition history.")
 }
 
 func printSystemReloadHelp() {
@@ -1066,6 +1077,183 @@ func runSystemReset(actionArgs []string) int {
 
 	fmt.Printf("Reset circuit breaker for %s (poll)\n", pluginName)
 	return 0
+}
+
+type systemBreakerTransitionReport struct {
+	ID           string  `json:"id"`
+	FromState    *string `json:"from_state,omitempty"`
+	ToState      string  `json:"to_state"`
+	FailureCount int     `json:"failure_count"`
+	Reason       string  `json:"reason"`
+	JobID        *string `json:"job_id,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+type systemBreakerReport struct {
+	Plugin        string                          `json:"plugin"`
+	Command       string                          `json:"command"`
+	State         *string                         `json:"state,omitempty"`
+	FailureCount  int                             `json:"failure_count"`
+	OpenedAt      *string                         `json:"opened_at,omitempty"`
+	LastFailureAt *string                         `json:"last_failure_at,omitempty"`
+	LastJobID     *string                         `json:"last_job_id,omitempty"`
+	UpdatedAt     *string                         `json:"updated_at,omitempty"`
+	Transitions   []systemBreakerTransitionReport `json:"transitions"`
+}
+
+func runSystemBreaker(actionArgs []string) int {
+	fs := flag.NewFlagSet("breaker", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	command := fs.String("command", "poll", "Plugin command")
+	jsonOut := fs.Bool("json", false, "Output breaker report as JSON")
+	limit := fs.Int("limit", 20, "Maximum transition rows to show")
+	if err := fs.Parse(actionArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: ductile system breaker <plugin> [--command COMMAND] [--config PATH] [--json] [--limit N]")
+		return 1
+	}
+	pluginName := strings.TrimSpace(fs.Arg(0))
+	if pluginName == "" {
+		fmt.Fprintln(os.Stderr, "plugin name is required")
+		return 1
+	}
+	commandName := strings.TrimSpace(*command)
+	if commandName == "" {
+		fmt.Fprintln(os.Stderr, "command is required")
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+	if _, ok := cfg.Plugins[pluginName]; !ok {
+		fmt.Fprintf(os.Stderr, "Unknown plugin: %s\n", pluginName)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	q := queue.New(db)
+	breaker, err := q.GetCircuitBreaker(context.Background(), pluginName, commandName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load circuit breaker: %v\n", err)
+		return 1
+	}
+	transitions, err := q.ListCircuitBreakerTransitions(context.Background(), pluginName, commandName, *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load circuit breaker transitions: %v\n", err)
+		return 1
+	}
+
+	report := buildSystemBreakerReport(pluginName, commandName, breaker, transitions)
+	if *jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to render JSON breaker report: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+	renderSystemBreakerHuman(report)
+	return 0
+}
+
+func buildSystemBreakerReport(pluginName, commandName string, breaker *queue.CircuitBreaker, transitions []queue.CircuitBreakerTransition) systemBreakerReport {
+	report := systemBreakerReport{
+		Plugin:      pluginName,
+		Command:     commandName,
+		Transitions: make([]systemBreakerTransitionReport, 0, len(transitions)),
+	}
+	if breaker != nil {
+		state := string(breaker.State)
+		report.State = &state
+		report.FailureCount = breaker.FailureCount
+		if breaker.OpenedAt != nil {
+			openedAt := breaker.OpenedAt.Format(time.RFC3339Nano)
+			report.OpenedAt = &openedAt
+		}
+		if breaker.LastFailure != nil {
+			lastFailure := breaker.LastFailure.Format(time.RFC3339Nano)
+			report.LastFailureAt = &lastFailure
+		}
+		report.LastJobID = breaker.LastJobID
+		if !breaker.UpdatedAt.IsZero() {
+			updatedAt := breaker.UpdatedAt.Format(time.RFC3339Nano)
+			report.UpdatedAt = &updatedAt
+		}
+	}
+	for _, transition := range transitions {
+		row := systemBreakerTransitionReport{
+			ID:           transition.ID,
+			ToState:      string(transition.ToState),
+			FailureCount: transition.FailureCount,
+			Reason:       string(transition.Reason),
+			JobID:        transition.JobID,
+			CreatedAt:    transition.CreatedAt.Format(time.RFC3339Nano),
+		}
+		if transition.FromState != nil {
+			fromState := string(*transition.FromState)
+			row.FromState = &fromState
+		}
+		report.Transitions = append(report.Transitions, row)
+	}
+	return report
+}
+
+func renderSystemBreakerHuman(report systemBreakerReport) {
+	fmt.Printf("Circuit breaker for %s (%s)\n", report.Plugin, report.Command)
+	if report.State == nil {
+		fmt.Println("State: no current row")
+	} else {
+		fmt.Printf("State: %s (failure_count=%d)\n", *report.State, report.FailureCount)
+		if report.OpenedAt != nil {
+			fmt.Printf("Opened at: %s\n", *report.OpenedAt)
+		}
+		if report.LastFailureAt != nil {
+			fmt.Printf("Last failure: %s\n", *report.LastFailureAt)
+		}
+		if report.LastJobID != nil {
+			fmt.Printf("Last job: %s\n", *report.LastJobID)
+		}
+	}
+	fmt.Println("Transitions:")
+	if len(report.Transitions) == 0 {
+		fmt.Println("- none")
+		return
+	}
+	for _, transition := range report.Transitions {
+		from := "<none>"
+		if transition.FromState != nil {
+			from = *transition.FromState
+		}
+		job := ""
+		if transition.JobID != nil {
+			job = fmt.Sprintf(" job=%s", *transition.JobID)
+		}
+		fmt.Printf("- %s %s -> %s reason=%s failure_count=%d%s\n",
+			transition.CreatedAt, from, transition.ToState, transition.Reason, transition.FailureCount, job)
+	}
 }
 
 func runSystemReload(actionArgs []string) int {
