@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-20
+- Implement explicit durability for Hickey Sprint 3.
+- Fix Docker fixture state isolation to prevent cross-test leakage.
+
 ## 2026-04-18
 - Stabilize the reload lifecycle and crash-recovery behavior to reliably mark jobs dead and trigger job-failed hooks.
 - Strengthen plugin fingerprinting and config locking across config, CLI, and snapshots, including wiring into lock/boot/reload and improving migration checks.
