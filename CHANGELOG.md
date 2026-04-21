@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-04-21
+- Expose the core boundary used to decide when to retry operations.
+
 ## 2026-04-20
 - Implement explicit durability for Hickey Sprint 3.
 - Fix Docker fixture state isolation to prevent cross-test leakage.
