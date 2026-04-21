@@ -43,6 +43,9 @@ func TestRouterNextRootTrigger(t *testing.T) {
 	if out[0].PipelineName != "chain" || out[0].StepID != "step_b" {
 		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
 	}
+	if out[0].PipelineInstanceID == "" {
+		t.Fatalf("expected root trigger to assign pipeline instance id: %+v", out[0])
+	}
 }
 
 func TestRouterGetNode(t *testing.T) {
@@ -146,10 +149,11 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 
 	r := New(set, nil)
 	out, err := r.Next(context.Background(), Request{
-		SourceJobID:    "job-b",
-		SourcePipeline: "chain",
-		SourceStepID:   "step_b",
-		SourceEventID:  "evt-1",
+		SourceJobID:              "job-b",
+		SourcePipeline:           "chain",
+		SourceStepID:             "step_b",
+		SourcePipelineInstanceID: "instance-1",
+		SourceEventID:            "evt-1",
 		Event: protocol.Event{
 			Type: "any.event",
 		},
@@ -162,6 +166,42 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	}
 	if out[0].Plugin != "plugin-c" || out[0].StepID != "step_c" {
 		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+	if out[0].PipelineInstanceID != "instance-1" {
+		t.Fatalf("pipeline instance id = %q, want %q", out[0].PipelineInstanceID, "instance-1")
+	}
+}
+
+func TestRouterNextStepSuccessorTransitionRequiresPipelineInstanceID(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "chain",
+			On:   "event.start",
+			Steps: []dsl.StepSpec{
+				{ID: "step_b", Uses: "plugin-b"},
+				{ID: "step_c", Uses: "plugin-c"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.Next(context.Background(), Request{
+		SourceJobID:    "job-b",
+		SourcePipeline: "chain",
+		SourceStepID:   "step_b",
+		SourceEventID:  "evt-1",
+		Event: protocol.Event{
+			Type: "any.event",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 without pipeline instance id", len(out))
 	}
 }
 
@@ -205,6 +245,9 @@ func TestRouterNextRootTriggerExpandsCalledPipeline(t *testing.T) {
 	if out[0].PipelineName != "process-audio" || out[0].StepID != "transcribe" {
 		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
 	}
+	if out[0].PipelineInstanceID == "" {
+		t.Fatalf("expected root trigger to assign pipeline instance id: %+v", out[0])
+	}
 }
 
 func TestRouterNextStepTransitionIntoCalledPipeline(t *testing.T) {
@@ -231,10 +274,11 @@ func TestRouterNextStepTransitionIntoCalledPipeline(t *testing.T) {
 
 	r := New(set, nil)
 	out, err := r.Next(context.Background(), Request{
-		SourceJobID:    "job-b",
-		SourcePipeline: "chain",
-		SourceStepID:   "step_b",
-		SourceEventID:  "evt-1",
+		SourceJobID:              "job-b",
+		SourcePipeline:           "chain",
+		SourceStepID:             "step_b",
+		SourcePipelineInstanceID: "instance-1",
+		SourceEventID:            "evt-1",
 		Event: protocol.Event{
 			Type: "any.event",
 		},
@@ -250,6 +294,9 @@ func TestRouterNextStepTransitionIntoCalledPipeline(t *testing.T) {
 	}
 	if out[0].PipelineName != "process-audio" || out[0].StepID != "transcribe" {
 		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
+	}
+	if out[0].PipelineInstanceID != "instance-1" {
+		t.Fatalf("pipeline instance id = %q, want %q", out[0].PipelineInstanceID, "instance-1")
 	}
 }
 

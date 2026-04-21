@@ -293,10 +293,22 @@ except Exception as e:
 	if err != nil {
 		t.Fatalf("failed to load lineage: %v", err)
 	}
-	// Step 1: Processor (Context 1, Parent nil)
-	// Step 2: Notifier (Context 2, Parent Context 1)
-	if len(lineage) != 2 {
-		t.Errorf("expected 2 context hops, got %d", len(lineage))
+	// Step 1: shared pipeline instance root (blank step, parent nil)
+	// Step 2: Processor (parent = root)
+	// Step 3: Notifier (parent = processor)
+	if len(lineage) != 3 {
+		t.Errorf("expected 3 context hops, got %d", len(lineage))
+	}
+	if len(lineage) == 3 {
+		if lineage[0].StepID != "" {
+			t.Errorf("root lineage step_id = %q, want empty", lineage[0].StepID)
+		}
+		if lineage[1].StepID != "step_process" {
+			t.Errorf("processor lineage step_id = %q, want step_process", lineage[1].StepID)
+		}
+		if lineage[2].StepID != "step_notify" {
+			t.Errorf("notifier lineage step_id = %q, want step_notify", lineage[2].StepID)
+		}
 	}
 
 	// Verify Baggage Flow

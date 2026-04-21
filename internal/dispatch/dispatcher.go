@@ -823,6 +823,7 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		return nil
 	}
 
+	rootContextIDs := make(map[string]string)
 	var sourcePipeline, sourceStepID, sourcePipelineInstanceID string
 	if d.contexts != nil && job.EventContextID != nil {
 		currentCtx, err := d.contexts.Get(ctx, *job.EventContextID)
@@ -896,6 +897,13 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 					return err
 				}
 				parentCtxID := strPtrOrNil(next.ParentContextID)
+				if parentCtxID == nil && strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.PipelineInstanceID) != "" {
+					rootContextID, err := d.ensurePipelineInstanceRootContext(ctx, rootContextIDs, next)
+					if err != nil {
+						return err
+					}
+					parentCtxID = &rootContextID
+				}
 				var createdCtx *state.EventContext
 				if d.dispatchUsesExplicitBaggage(next) {
 					createdCtx, err = d.contexts.Create(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
@@ -963,6 +971,24 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 	}
 
 	return nil
+}
+
+func (d *Dispatcher) ensurePipelineInstanceRootContext(ctx context.Context, cache map[string]string, next router.Dispatch) (string, error) {
+	key := next.PipelineName + "\x00" + next.PipelineInstanceID
+	if rootContextID, ok := cache[key]; ok {
+		return rootContextID, nil
+	}
+
+	updates, err := state.WithPipelineInstanceID(nil, next.PipelineInstanceID)
+	if err != nil {
+		return "", fmt.Errorf("seed pipeline instance context for %s: %w", next.PipelineName, err)
+	}
+	rootCtx, err := d.contexts.Create(ctx, nil, next.PipelineName, "", updates)
+	if err != nil {
+		return "", fmt.Errorf("create pipeline instance root context (%s): %w", next.PipelineName, err)
+	}
+	cache[key] = rootCtx.ID
+	return rootCtx.ID, nil
 }
 
 type preflightDecision string

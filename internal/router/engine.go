@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
@@ -121,6 +122,14 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 				"routes", len(routes))
 
 			for _, route := range routes {
+				if !matchesCompiledRouteSource(route.Source, req, compiledRouteMatchRequireInstance) {
+					r.logger.Debug("skipping transition route without matching pipeline instance",
+						"route_id", route.ID,
+						"pipeline", req.SourcePipeline,
+						"from_step", req.SourceStepID,
+					)
+					continue
+				}
 				dispatches, err := r.resolveCompiledRoute(route, req, false)
 				if err != nil {
 					return nil, err
@@ -132,10 +141,18 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 
 	// Root triggers: event type can start one or more pipelines.
 	if routes, ok := r.triggerIndex[eventType]; ok {
+		pipelineInstanceIDs := make(map[string]string, len(routes))
 		r.logger.Debug("matched root trigger pipelines", "event_type", eventType, "count", len(routes))
 		for _, route := range routes {
+			pipelineInstanceID := pipelineInstanceIDs[route.Pipeline]
+			if pipelineInstanceID == "" {
+				pipelineInstanceID = uuid.NewString()
+				pipelineInstanceIDs[route.Pipeline] = pipelineInstanceID
+			}
 			r.logger.Info("triggering pipeline", "name", route.Pipeline, "event_type", eventType)
-			dispatches, err := r.resolveCompiledRoute(route, req, false)
+			rootReq := req
+			rootReq.SourcePipelineInstanceID = pipelineInstanceID
+			dispatches, err := r.resolveCompiledRoute(route, rootReq, false)
 			if err != nil {
 				return nil, err
 			}
@@ -265,6 +282,37 @@ func dedupeDispatches(in []Dispatch) []Dispatch {
 
 func compiledRouteKey(pipelineName, stepID string) string {
 	return pipelineName + "\x00" + stepID
+}
+
+type compiledRouteMatchMode int
+
+const (
+	compiledRouteMatchDefault compiledRouteMatchMode = iota
+	compiledRouteMatchRequireInstance
+)
+
+func matchesCompiledRouteSource(source dsl.CompiledRouteSource, req Request, mode compiledRouteMatchMode) bool {
+	switch {
+	case source.Trigger != "":
+		return strings.TrimSpace(source.Trigger) == strings.TrimSpace(req.Event.Type)
+
+	case source.HookSignal != "":
+		return strings.TrimSpace(source.HookSignal) == strings.TrimSpace(req.Event.Type)
+
+	case source.Pipeline != "" && source.StepID != "":
+		if strings.TrimSpace(source.Pipeline) != strings.TrimSpace(req.SourcePipeline) {
+			return false
+		}
+		if strings.TrimSpace(source.StepID) != strings.TrimSpace(req.SourceStepID) {
+			return false
+		}
+		if mode == compiledRouteMatchRequireInstance && strings.TrimSpace(req.SourcePipelineInstanceID) == "" {
+			return false
+		}
+		return true
+	}
+
+	return false
 }
 
 // GetPipelineByTrigger returns the first pipeline matched by a trigger event.
