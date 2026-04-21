@@ -65,6 +65,36 @@ func TestRouterGetNode(t *testing.T) {
 	}
 }
 
+func TestRouterGetCompiledRoutes(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name: "chain",
+		On:   "event.start",
+		Steps: []dsl.StepSpec{
+			{ID: "step_b", Uses: "plugin-b"},
+			{ID: "step_c", Uses: "plugin-c"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	routes := r.GetCompiledRoutes("chain")
+	if len(routes) != 3 {
+		t.Fatalf("compiled route count = %d, want 3", len(routes))
+	}
+	if routes[0].ID != "edge:step_b->step_c" {
+		t.Fatalf("first route id = %q, want edge:step_b->step_c", routes[0].ID)
+	}
+
+	// Returned slice must be a copy.
+	routes[0].ID = "mutated"
+	routes2 := r.GetCompiledRoutes("chain")
+	if routes2[0].ID != "edge:step_b->step_c" {
+		t.Fatalf("compiled routes mutated through returned slice: %q", routes2[0].ID)
+	}
+}
+
 func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
 		{

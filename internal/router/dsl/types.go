@@ -162,6 +162,42 @@ type Edge struct {
 	To   string
 }
 
+// CompiledRouteDestinationKind identifies what kind of destination a compiled route targets.
+type CompiledRouteDestinationKind string
+
+const (
+	CompiledRouteDestinationUses     CompiledRouteDestinationKind = "uses"
+	CompiledRouteDestinationCall     CompiledRouteDestinationKind = "call"
+	CompiledRouteDestinationTerminal CompiledRouteDestinationKind = "terminal"
+)
+
+// CompiledRouteSource is the match side of one compiled orchestration rule.
+type CompiledRouteSource struct {
+	Trigger    string
+	Pipeline   string
+	StepID     string
+	HookSignal string
+}
+
+// CompiledRouteDestination is the dispatch side of one compiled orchestration rule.
+type CompiledRouteDestination struct {
+	Kind         CompiledRouteDestinationKind
+	StepID       string
+	Plugin       string
+	Command      string
+	CallPipeline string
+}
+
+// CompiledRoute is a deterministic manifest row derived from a pipeline DAG.
+// Sprint 5 uses this to make the route-oriented orchestration shape explicit
+// before runtime matching switches over to consume compiled routes directly.
+type CompiledRoute struct {
+	ID          string
+	Pipeline    string
+	Source      CompiledRouteSource
+	Destination CompiledRouteDestination
+}
+
 // Pipeline is a compiled DAG for one named pipeline.
 type Pipeline struct {
 	Name            string
@@ -174,6 +210,7 @@ type Pipeline struct {
 	EntryNodeIDs    []string
 	TerminalNodeIDs []string
 	CalledPipelines []string
+	CompiledRoutes  []CompiledRoute
 	Fingerprint     string // blake3:<hex> of normalized compiled form.
 }
 

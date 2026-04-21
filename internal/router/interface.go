@@ -60,4 +60,6 @@ type Engine interface {
 	GetEntryDispatches(pipelineName string, event protocol.Event) ([]Dispatch, error)
 	// GetNode returns the pipeline node for the given pipeline and step IDs.
 	GetNode(pipelineName string, stepID string) (dsl.Node, bool)
+	// GetCompiledRoutes returns the compiled route manifest for a named pipeline.
+	GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute
 }

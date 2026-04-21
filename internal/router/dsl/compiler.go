@@ -87,6 +87,7 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 	pipeline.TerminalNodeIDs = sortedUnique(terminal)
 	pipeline.CalledPipelines = sortedMapKeys(builder.called)
 	sortEdges(pipeline.Edges)
+	pipeline.CompiledRoutes = compileRoutes(pipeline)
 
 	if err := validatePipelineDAG(pipeline); err != nil {
 		return nil, err
@@ -307,6 +308,83 @@ func (b *compileBuilder) addEdges(fromNodes, toNodes []string) {
 	}
 }
 
+func compileRoutes(p *Pipeline) []CompiledRoute {
+	if p == nil {
+		return nil
+	}
+
+	routes := make([]CompiledRoute, 0, len(p.EntryNodeIDs)+len(p.Edges)+len(p.TerminalNodeIDs))
+	for _, entryID := range p.EntryNodeIDs {
+		node, ok := p.Nodes[entryID]
+		if !ok {
+			continue
+		}
+		source := CompiledRouteSource{}
+		if p.IsHook {
+			source.HookSignal = p.Trigger
+		} else {
+			source.Trigger = p.Trigger
+		}
+		routes = append(routes, CompiledRoute{
+			ID:          "entry:" + entryID,
+			Pipeline:    p.Name,
+			Source:      source,
+			Destination: routeDestinationForNode(node),
+		})
+	}
+
+	for _, edge := range p.Edges {
+		node, ok := p.Nodes[edge.To]
+		if !ok {
+			continue
+		}
+		routes = append(routes, CompiledRoute{
+			ID:       "edge:" + edge.From + "->" + edge.To,
+			Pipeline: p.Name,
+			Source: CompiledRouteSource{
+				Pipeline: p.Name,
+				StepID:   edge.From,
+			},
+			Destination: routeDestinationForNode(node),
+		})
+	}
+
+	for _, terminalID := range p.TerminalNodeIDs {
+		routes = append(routes, CompiledRoute{
+			ID:       "terminal:" + terminalID,
+			Pipeline: p.Name,
+			Source: CompiledRouteSource{
+				Pipeline: p.Name,
+				StepID:   terminalID,
+			},
+			Destination: CompiledRouteDestination{
+				Kind: CompiledRouteDestinationTerminal,
+			},
+		})
+	}
+
+	sortCompiledRoutes(routes)
+	return routes
+}
+
+func routeDestinationForNode(node Node) CompiledRouteDestination {
+	switch node.Kind {
+	case NodeKindCall:
+		return CompiledRouteDestination{
+			Kind:         CompiledRouteDestinationCall,
+			StepID:       node.ID,
+			CallPipeline: node.Call,
+		}
+	default:
+		return CompiledRouteDestination{
+			Kind:    CompiledRouteDestinationUses,
+			StepID:  node.ID,
+			Plugin:  node.Uses,
+			Command: "handle",
+		}
+	}
+}
+
 func validatePipelineCalls(pipelines map[string]*Pipeline) error {
 	for name, pipeline := range pipelines {
 		for _, called := range pipeline.CalledPipelines {
@@ -406,13 +484,14 @@ func validatePipelineDAG(p *Pipeline) error {
 
 func fingerprintPipeline(p *Pipeline) (string, error) {
 	type fingerprintShape struct {
-		Name            string   `json:"name"`
-		Trigger         string   `json:"trigger"`
-		Nodes           []Node   `json:"nodes"`
-		Edges           []Edge   `json:"edges"`
-		EntryNodeIDs    []string `json:"entry_node_ids"`
-		TerminalNodeIDs []string `json:"terminal_node_ids"`
-		CalledPipelines []string `json:"called_pipelines"`
+		Name            string          `json:"name"`
+		Trigger         string          `json:"trigger"`
+		Nodes           []Node          `json:"nodes"`
+		Edges           []Edge          `json:"edges"`
+		EntryNodeIDs    []string        `json:"entry_node_ids"`
+		TerminalNodeIDs []string        `json:"terminal_node_ids"`
+		CalledPipelines []string        `json:"called_pipelines"`
+		CompiledRoutes  []CompiledRoute `json:"compiled_routes"`
 	}
 
 	nodes := make([]Node, 0, len(p.Nodes))
@@ -429,11 +508,13 @@ func fingerprintPipeline(p *Pipeline) (string, error) {
 		EntryNodeIDs:    append([]string(nil), p.EntryNodeIDs...),
 		TerminalNodeIDs: append([]string(nil), p.TerminalNodeIDs...),
 		CalledPipelines: append([]string(nil), p.CalledPipelines...),
+		CompiledRoutes:  append([]CompiledRoute(nil), p.CompiledRoutes...),
 	}
 	sortEdges(shape.Edges)
 	sort.Strings(shape.EntryNodeIDs)
 	sort.Strings(shape.TerminalNodeIDs)
 	sort.Strings(shape.CalledPipelines)
+	sortCompiledRoutes(shape.CompiledRoutes)
 
 	body, err := json.Marshal(shape)
 	if err != nil {
@@ -449,6 +530,42 @@ func sortEdges(edges []Edge) {
 			return edges[i].To < edges[j].To
 		}
 		return edges[i].From < edges[j].From
+	})
+}
+
+func sortCompiledRoutes(routes []CompiledRoute) {
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].ID != routes[j].ID {
+			return routes[i].ID < routes[j].ID
+		}
+		if routes[i].Pipeline != routes[j].Pipeline {
+			return routes[i].Pipeline < routes[j].Pipeline
+		}
+		if routes[i].Source.Trigger != routes[j].Source.Trigger {
+			return routes[i].Source.Trigger < routes[j].Source.Trigger
+		}
+		if routes[i].Source.HookSignal != routes[j].Source.HookSignal {
+			return routes[i].Source.HookSignal < routes[j].Source.HookSignal
+		}
+		if routes[i].Source.Pipeline != routes[j].Source.Pipeline {
+			return routes[i].Source.Pipeline < routes[j].Source.Pipeline
+		}
+		if routes[i].Source.StepID != routes[j].Source.StepID {
+			return routes[i].Source.StepID < routes[j].Source.StepID
+		}
+		if routes[i].Destination.Kind != routes[j].Destination.Kind {
+			return routes[i].Destination.Kind < routes[j].Destination.Kind
+		}
+		if routes[i].Destination.StepID != routes[j].Destination.StepID {
+			return routes[i].Destination.StepID < routes[j].Destination.StepID
+		}
+		if routes[i].Destination.Plugin != routes[j].Destination.Plugin {
+			return routes[i].Destination.Plugin < routes[j].Destination.Plugin
+		}
+		if routes[i].Destination.Command != routes[j].Destination.Command {
+			return routes[i].Destination.Command < routes[j].Destination.Command
+		}
+		return routes[i].Destination.CallPipeline < routes[j].Destination.CallPipeline
 	})
 }
 

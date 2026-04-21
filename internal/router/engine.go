@@ -382,6 +382,18 @@ func (r *Router) GetNode(pipelineName string, stepID string) (dsl.Node, bool) {
 	return node, ok
 }
 
+// GetCompiledRoutes returns a copy of the compiled route manifest for a pipeline.
+func (r *Router) GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute {
+	if strings.TrimSpace(pipelineName) == "" {
+		return nil
+	}
+	pipeline, ok := r.set.Pipelines[pipelineName]
+	if !ok || len(pipeline.CompiledRoutes) == 0 {
+		return nil
+	}
+	return append([]dsl.CompiledRoute(nil), pipeline.CompiledRoutes...)
+}
+
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {
 	for pipelineName, pipeline := range set.Pipelines {
 		for _, node := range pipeline.Nodes {

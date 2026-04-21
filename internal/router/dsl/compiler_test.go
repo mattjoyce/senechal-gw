@@ -493,6 +493,165 @@ func TestCompileSpecsRegularPipelineIsNotHook(t *testing.T) {
 	}
 }
 
+func TestCompileSpecsEmitsCompiledRoutesManifest(t *testing.T) {
+	specs := []PipelineSpec{
+		{
+			Name: "process-audio",
+			On:   "internal.process_audio",
+			Steps: []StepSpec{
+				{ID: "transcribe", Uses: "transcriber"},
+			},
+		},
+		{
+			Name: "wisdom-chain",
+			On:   "discord.video_link_received",
+			Steps: []StepSpec{
+				{ID: "downloader", Uses: "yt-dlp-plugin"},
+				{ID: "processing", Call: "process-audio"},
+				{
+					ID: "delivery",
+					Split: []StepSpec{
+						{ID: "notify", Uses: "discord-notifier"},
+						{
+							Steps: []StepSpec{
+								{ID: "archive", Uses: "s3-archiver"},
+								{ID: "index", Uses: "db-indexer"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
+	}
+
+	p := set.Pipelines["wisdom-chain"]
+	if p == nil {
+		t.Fatalf("compiled pipeline wisdom-chain not found")
+	}
+	if len(p.CompiledRoutes) != 7 {
+		t.Fatalf("compiled route count = %d, want 7", len(p.CompiledRoutes))
+	}
+
+	assertCompiledRoute(t, p.CompiledRoutes[0], CompiledRoute{
+		ID:       "edge:archive->index",
+		Pipeline: "wisdom-chain",
+		Source: CompiledRouteSource{
+			Pipeline: "wisdom-chain",
+			StepID:   "archive",
+		},
+		Destination: CompiledRouteDestination{
+			Kind:    CompiledRouteDestinationUses,
+			StepID:  "index",
+			Plugin:  "db-indexer",
+			Command: "handle",
+		},
+	})
+	assertCompiledRoute(t, p.CompiledRoutes[1], CompiledRoute{
+		ID:       "edge:downloader->processing",
+		Pipeline: "wisdom-chain",
+		Source: CompiledRouteSource{
+			Pipeline: "wisdom-chain",
+			StepID:   "downloader",
+		},
+		Destination: CompiledRouteDestination{
+			Kind:         CompiledRouteDestinationCall,
+			StepID:       "processing",
+			CallPipeline: "process-audio",
+		},
+	})
+	assertCompiledRoute(t, p.CompiledRoutes[4], CompiledRoute{
+		ID:       "entry:downloader",
+		Pipeline: "wisdom-chain",
+		Source: CompiledRouteSource{
+			Trigger: "discord.video_link_received",
+		},
+		Destination: CompiledRouteDestination{
+			Kind:    CompiledRouteDestinationUses,
+			StepID:  "downloader",
+			Plugin:  "yt-dlp-plugin",
+			Command: "handle",
+		},
+	})
+	assertCompiledRoute(t, p.CompiledRoutes[5], CompiledRoute{
+		ID:       "terminal:index",
+		Pipeline: "wisdom-chain",
+		Source: CompiledRouteSource{
+			Pipeline: "wisdom-chain",
+			StepID:   "index",
+		},
+		Destination: CompiledRouteDestination{
+			Kind: CompiledRouteDestinationTerminal,
+		},
+	})
+	assertCompiledRoute(t, p.CompiledRoutes[6], CompiledRoute{
+		ID:       "terminal:notify",
+		Pipeline: "wisdom-chain",
+		Source: CompiledRouteSource{
+			Pipeline: "wisdom-chain",
+			StepID:   "notify",
+		},
+		Destination: CompiledRouteDestination{
+			Kind: CompiledRouteDestinationTerminal,
+		},
+	})
+
+	set2, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() second run error = %v", err)
+	}
+	if p.Fingerprint != set2.Pipelines["wisdom-chain"].Fingerprint {
+		t.Fatalf("fingerprint changed across compile runs: %q vs %q", p.Fingerprint, set2.Pipelines["wisdom-chain"].Fingerprint)
+	}
+}
+
+func TestCompileSpecsEmitsCompiledRoutesForHookPipeline(t *testing.T) {
+	set, err := CompileSpecs([]PipelineSpec{{
+		Name:   "notify-on-complete",
+		OnHook: "job.completed",
+		Steps:  []StepSpec{{ID: "notify", Uses: "discord-notifier"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
+	}
+
+	p := set.Pipelines["notify-on-complete"]
+	if p == nil {
+		t.Fatalf("pipeline not found")
+	}
+	if len(p.CompiledRoutes) != 2 {
+		t.Fatalf("compiled route count = %d, want 2", len(p.CompiledRoutes))
+	}
+	assertCompiledRoute(t, p.CompiledRoutes[0], CompiledRoute{
+		ID:       "entry:notify",
+		Pipeline: "notify-on-complete",
+		Source: CompiledRouteSource{
+			HookSignal: "job.completed",
+		},
+		Destination: CompiledRouteDestination{
+			Kind:    CompiledRouteDestinationUses,
+			StepID:  "notify",
+			Plugin:  "discord-notifier",
+			Command: "handle",
+		},
+	})
+	assertCompiledRoute(t, p.CompiledRoutes[1], CompiledRoute{
+		ID:       "terminal:notify",
+		Pipeline: "notify-on-complete",
+		Source: CompiledRouteSource{
+			Pipeline: "notify-on-complete",
+			StepID:   "notify",
+		},
+		Destination: CompiledRouteDestination{
+			Kind: CompiledRouteDestinationTerminal,
+		},
+	})
+}
+
 func hasEdge(edges []Edge, from, to string) bool {
 	for _, edge := range edges {
 		if edge.From == from && edge.To == to {
@@ -500,4 +659,20 @@ func hasEdge(edges []Edge, from, to string) bool {
 		}
 	}
 	return false
+}
+
+func assertCompiledRoute(t *testing.T, got, want CompiledRoute) {
+	t.Helper()
+	if got.ID != want.ID {
+		t.Fatalf("route id = %q, want %q", got.ID, want.ID)
+	}
+	if got.Pipeline != want.Pipeline {
+		t.Fatalf("route pipeline = %q, want %q", got.Pipeline, want.Pipeline)
+	}
+	if got.Source != want.Source {
+		t.Fatalf("route source = %+v, want %+v", got.Source, want.Source)
+	}
+	if got.Destination != want.Destination {
+		t.Fatalf("route destination = %+v, want %+v", got.Destination, want.Destination)
+	}
 }
