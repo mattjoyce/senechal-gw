@@ -15,11 +15,11 @@ import (
 
 // Router is a concrete routing engine backed by compiled pipeline DSL.
 type Router struct {
-	set          *dsl.Set
-	triggerIndex map[string][]string
-	hookIndex    map[string][]string            // signal -> hook pipeline names
-	successors   map[string]map[string][]string // pipeline -> from node -> to nodes
-	logger       *slog.Logger
+	set             *dsl.Set
+	triggerIndex    map[string][]dsl.CompiledRoute // event type -> entry routes
+	hookIndex       map[string][]dsl.CompiledRoute // signal -> hook entry routes
+	transitionIndex map[string][]dsl.CompiledRoute // pipeline+step -> downstream routes
+	logger          *slog.Logger
 }
 
 var _ Engine = (*Router)(nil)
@@ -48,34 +48,42 @@ func New(set *dsl.Set, logger *slog.Logger) *Router {
 	}
 
 	r := &Router{
-		set:          set,
-		triggerIndex: make(map[string][]string),
-		hookIndex:    make(map[string][]string),
-		successors:   make(map[string]map[string][]string),
-		logger:       logger.With("component", "router"),
+		set:             set,
+		triggerIndex:    make(map[string][]dsl.CompiledRoute),
+		hookIndex:       make(map[string][]dsl.CompiledRoute),
+		transitionIndex: make(map[string][]dsl.CompiledRoute),
+		logger:          logger.With("component", "router"),
 	}
 
-	for name, pipeline := range set.Pipelines {
-		if pipeline.IsHook {
-			r.hookIndex[pipeline.Trigger] = append(r.hookIndex[pipeline.Trigger], name)
-		} else {
-			r.triggerIndex[pipeline.Trigger] = append(r.triggerIndex[pipeline.Trigger], name)
+	for _, pipeline := range set.Pipelines {
+		routes := pipeline.CompiledRoutes
+		if len(routes) == 0 {
+			routes = dsl.BuildCompiledRoutes(pipeline)
+			pipeline.CompiledRoutes = append([]dsl.CompiledRoute(nil), routes...)
 		}
-
-		succ := make(map[string][]string)
-		for _, edge := range pipeline.Edges {
-			succ[edge.From] = append(succ[edge.From], edge.To)
+		for _, route := range routes {
+			switch {
+			case route.Source.Trigger != "":
+				r.triggerIndex[route.Source.Trigger] = append(r.triggerIndex[route.Source.Trigger], route)
+			case route.Source.HookSignal != "":
+				r.hookIndex[route.Source.HookSignal] = append(r.hookIndex[route.Source.HookSignal], route)
+			case route.Source.Pipeline != "" && route.Source.StepID != "":
+				key := compiledRouteKey(route.Source.Pipeline, route.Source.StepID)
+				r.transitionIndex[key] = append(r.transitionIndex[key], route)
+			}
 		}
-		for nodeID := range succ {
-			sort.Strings(succ[nodeID])
-		}
-		r.successors[name] = succ
 	}
-	for trigger := range r.triggerIndex {
-		sort.Strings(r.triggerIndex[trigger])
+	for trigger, routes := range r.triggerIndex {
+		dsl.SortCompiledRoutes(routes)
+		r.triggerIndex[trigger] = routes
 	}
-	for signal := range r.hookIndex {
-		sort.Strings(r.hookIndex[signal])
+	for signal, routes := range r.hookIndex {
+		dsl.SortCompiledRoutes(routes)
+		r.hookIndex[signal] = routes
+	}
+	for key, routes := range r.transitionIndex {
+		dsl.SortCompiledRoutes(routes)
+		r.transitionIndex[key] = routes
 	}
 
 	return r
@@ -103,17 +111,17 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 
 	var out []Dispatch
 
-	// Intra-pipeline transitions: if current step/pipeline are known, walk outgoing edges.
+	// Intra-pipeline transitions: if current step/pipeline are known, match downstream routes.
 	if req.SourcePipeline != "" && req.SourceStepID != "" {
-		next := r.successors[req.SourcePipeline][req.SourceStepID]
-		if len(next) > 0 {
+		routes := r.transitionIndex[compiledRouteKey(req.SourcePipeline, req.SourceStepID)]
+		if len(routes) > 0 {
 			r.logger.Debug("matched intra-pipeline transition",
 				"pipeline", req.SourcePipeline,
 				"from_step", req.SourceStepID,
-				"next_steps", len(next))
+				"routes", len(routes))
 
-			for _, nodeID := range next {
-				dispatches, err := r.resolveNodeDispatches(req.SourcePipeline, nodeID, req)
+			for _, route := range routes {
+				dispatches, err := r.resolveCompiledRoute(route, req, false)
 				if err != nil {
 					return nil, err
 				}
@@ -123,21 +131,15 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 	}
 
 	// Root triggers: event type can start one or more pipelines.
-	if pipelines, ok := r.triggerIndex[eventType]; ok {
-		r.logger.Debug("matched root trigger pipelines", "event_type", eventType, "count", len(pipelines))
-		for _, pipelineName := range pipelines {
-			pipeline := r.set.Pipelines[pipelineName]
-			if pipeline == nil {
-				continue
+	if routes, ok := r.triggerIndex[eventType]; ok {
+		r.logger.Debug("matched root trigger pipelines", "event_type", eventType, "count", len(routes))
+		for _, route := range routes {
+			r.logger.Info("triggering pipeline", "name", route.Pipeline, "event_type", eventType)
+			dispatches, err := r.resolveCompiledRoute(route, req, false)
+			if err != nil {
+				return nil, err
 			}
-			r.logger.Info("triggering pipeline", "name", pipelineName, "event_type", eventType)
-			for _, nodeID := range pipeline.EntryNodeIDs {
-				dispatches, err := r.resolveNodeDispatches(pipelineName, nodeID, req)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, dispatches...)
-			}
+			out = append(out, dispatches...)
 		}
 	}
 
@@ -159,12 +161,12 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 		return nil, fmt.Errorf("signal is required")
 	}
 
-	pipelineNames, ok := r.hookIndex[signal]
-	if !ok || len(pipelineNames) == 0 {
+	routes, ok := r.hookIndex[signal]
+	if !ok || len(routes) == 0 {
 		return nil, nil
 	}
 
-	r.logger.Debug("resolving hook pipelines", "signal", signal, "plugin", plugin, "count", len(pipelineNames))
+	r.logger.Debug("resolving hook pipelines", "signal", signal, "plugin", plugin, "count", len(routes))
 
 	ev := protocol.Event{
 		Type:    signal,
@@ -172,26 +174,13 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 	}
 
 	var out []Dispatch
-	for _, pipelineName := range pipelineNames {
-		pipeline := r.set.Pipelines[pipelineName]
-		if pipeline == nil {
-			continue
+	for _, route := range routes {
+		r.logger.Info("triggering hook pipeline", "name", route.Pipeline, "signal", signal, "source_plugin", plugin)
+		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev}, true)
+		if err != nil {
+			return nil, err
 		}
-		r.logger.Info("triggering hook pipeline", "name", pipelineName, "signal", signal, "source_plugin", plugin)
-		for _, nodeID := range pipeline.EntryNodeIDs {
-			// Hook dispatches carry no pipeline/step context — they are root jobs.
-			node, ok := pipeline.Nodes[nodeID]
-			if !ok {
-				continue
-			}
-			if node.Kind == dsl.NodeKindUses {
-				out = append(out, Dispatch{
-					Plugin:  node.Uses,
-					Command: "handle",
-					Event:   cloneEvent(ev),
-				})
-			}
-		}
+		out = append(out, dispatches...)
 	}
 
 	if len(out) > 0 {
@@ -201,52 +190,47 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 	return dedupeDispatches(out), nil
 }
 
-func (r *Router) resolveNodeDispatches(pipelineName, nodeID string, req Request) ([]Dispatch, error) {
-	pipeline := r.set.Pipelines[pipelineName]
-	if pipeline == nil {
-		return nil, fmt.Errorf("unknown pipeline %q", pipelineName)
-	}
-	node, ok := pipeline.Nodes[nodeID]
-	if !ok {
-		return nil, fmt.Errorf("pipeline %q node %q not found", pipelineName, nodeID)
-	}
-
-	switch node.Kind {
-	case dsl.NodeKindUses:
-		return []Dispatch{
-			{
-				Plugin:          node.Uses,
-				Command:         "handle",
-				Event:           cloneEvent(req.Event),
-				PipelineName:    pipelineName,
-				StepID:          nodeID,
-				ParentJobID:     req.SourceJobID,
-				ParentContextID: req.SourceContextID,
-				SourceEventID:   req.SourceEventID,
-			},
-		}, nil
-
-	case dsl.NodeKindCall:
-		called := strings.TrimSpace(node.Call)
-		if called == "" {
-			return nil, fmt.Errorf("pipeline %q node %q has empty call target", pipelineName, nodeID)
+func (r *Router) resolveCompiledRoute(route dsl.CompiledRoute, req Request, rootHook bool) ([]Dispatch, error) {
+	switch route.Destination.Kind {
+	case dsl.CompiledRouteDestinationUses:
+		dispatch := Dispatch{
+			Plugin:          route.Destination.Plugin,
+			Command:         route.Destination.Command,
+			Event:           cloneEvent(req.Event),
+			ParentJobID:     req.SourceJobID,
+			ParentContextID: req.SourceContextID,
+			SourceEventID:   req.SourceEventID,
 		}
-		target := r.set.Pipelines[called]
-		if target == nil {
-			return nil, fmt.Errorf("pipeline %q node %q references unknown pipeline %q", pipelineName, nodeID, called)
+		if !rootHook {
+			dispatch.PipelineName = route.Pipeline
+			dispatch.StepID = route.Destination.StepID
+		}
+		return []Dispatch{dispatch}, nil
+
+	case dsl.CompiledRouteDestinationCall:
+		called := strings.TrimSpace(route.Destination.CallPipeline)
+		if called == "" {
+			return nil, fmt.Errorf("compiled route %q has empty call target", route.ID)
+		}
+		entryRoutes := r.entryRoutesForPipeline(called)
+		if len(entryRoutes) == 0 {
+			return nil, fmt.Errorf("compiled route %q references pipeline %q with no entry routes", route.ID, called)
 		}
 		var out []Dispatch
-		for _, entryID := range target.EntryNodeIDs {
-			dispatches, err := r.resolveNodeDispatches(called, entryID, req)
+		for _, entryRoute := range entryRoutes {
+			dispatches, err := r.resolveCompiledRoute(entryRoute, req, rootHook)
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, dispatches...)
 		}
 		return out, nil
+
+	case dsl.CompiledRouteDestinationTerminal:
+		return nil, nil
 	}
 
-	return nil, fmt.Errorf("unsupported node kind %q", node.Kind)
+	return nil, fmt.Errorf("unsupported compiled route destination kind %q", route.Destination.Kind)
 }
 
 func cloneEvent(ev protocol.Event) protocol.Event {
@@ -278,6 +262,10 @@ func dedupeDispatches(in []Dispatch) []Dispatch {
 	return out
 }
 
+func compiledRouteKey(pipelineName, stepID string) string {
+	return pipelineName + "\x00" + stepID
+}
+
 // GetPipelineByTrigger returns the first pipeline matched by a trigger event.
 func (r *Router) GetPipelineByTrigger(trigger string) *PipelineInfo {
 	r.logger.Debug("looking up pipeline by trigger", "trigger", trigger)
@@ -287,8 +275,7 @@ func (r *Router) GetPipelineByTrigger(trigger string) *PipelineInfo {
 	}
 
 	// For now, return the first one found.
-	name := pipelines[0]
-	pipeline := r.set.Pipelines[name]
+	pipeline := r.set.Pipelines[pipelines[0].Pipeline]
 	if pipeline == nil {
 		return nil
 	}
@@ -329,13 +316,12 @@ func (r *Router) GetEntryDispatches(pipelineName string, event protocol.Event) (
 	}
 
 	var out []Dispatch
-	// Create a dummy request for resolution context
 	req := Request{
 		Event: event,
 	}
 
-	for _, nodeID := range pipeline.EntryNodeIDs {
-		dispatches, err := r.resolveNodeDispatches(pipelineName, nodeID, req)
+	for _, route := range r.entryRoutesForPipeline(pipeline.Name) {
+		dispatches, err := r.resolveCompiledRoute(route, req, false)
 		if err != nil {
 			return nil, err
 		}
@@ -392,6 +378,24 @@ func (r *Router) GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute {
 		return nil
 	}
 	return append([]dsl.CompiledRoute(nil), pipeline.CompiledRoutes...)
+}
+
+func (r *Router) entryRoutesForPipeline(pipelineName string) []dsl.CompiledRoute {
+	pipeline, ok := r.set.Pipelines[pipelineName]
+	if !ok || len(pipeline.CompiledRoutes) == 0 {
+		return nil
+	}
+	out := make([]dsl.CompiledRoute, 0)
+	for _, route := range pipeline.CompiledRoutes {
+		if route.Pipeline != pipelineName {
+			continue
+		}
+		if route.Source.Trigger == "" && route.Source.HookSignal == "" {
+			continue
+		}
+		out = append(out, route)
+	}
+	return out
 }
 
 func validateUsesNodesExist(set *dsl.Set, registry *plugin.Registry) error {

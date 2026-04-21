@@ -95,6 +95,40 @@ func TestRouterGetCompiledRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterNewBuildsCompiledRoutesForManualPipelines(t *testing.T) {
+	r := New(&dsl.Set{
+		Pipelines: map[string]*dsl.Pipeline{
+			"test-pipeline": {
+				Name:    "test-pipeline",
+				Trigger: "test.trigger",
+				Nodes: map[string]dsl.Node{
+					"entry": {ID: "entry", Kind: dsl.NodeKindUses, Uses: "echo"},
+				},
+				EntryNodeIDs:    []string{"entry"},
+				TerminalNodeIDs: []string{"entry"},
+			},
+		},
+	}, nil)
+
+	routes := r.GetCompiledRoutes("test-pipeline")
+	if len(routes) != 2 {
+		t.Fatalf("compiled route count = %d, want 2", len(routes))
+	}
+
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{Type: "test.trigger"},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "echo" || out[0].StepID != "entry" {
+		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+}
+
 func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
 		{
@@ -128,6 +162,94 @@ func TestRouterNextStepSuccessorTransition(t *testing.T) {
 	}
 	if out[0].Plugin != "plugin-c" || out[0].StepID != "step_c" {
 		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+}
+
+func TestRouterNextRootTriggerExpandsCalledPipeline(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "process-audio",
+			On:   "internal.process_audio",
+			Steps: []dsl.StepSpec{
+				{ID: "transcribe", Uses: "transcriber"},
+			},
+		},
+		{
+			Name: "wisdom-chain",
+			On:   "event.start",
+			Steps: []dsl.StepSpec{
+				{ID: "processing", Call: "process-audio"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.Next(context.Background(), Request{
+		SourceJobID: "job-a",
+		Event: protocol.Event{
+			Type: "event.start",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "transcriber" || out[0].Command != "handle" {
+		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+	if out[0].PipelineName != "process-audio" || out[0].StepID != "transcribe" {
+		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
+	}
+}
+
+func TestRouterNextStepTransitionIntoCalledPipeline(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "process-audio",
+			On:   "internal.process_audio",
+			Steps: []dsl.StepSpec{
+				{ID: "transcribe", Uses: "transcriber"},
+			},
+		},
+		{
+			Name: "chain",
+			On:   "event.start",
+			Steps: []dsl.StepSpec{
+				{ID: "step_b", Uses: "plugin-b"},
+				{ID: "processing", Call: "process-audio"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.Next(context.Background(), Request{
+		SourceJobID:    "job-b",
+		SourcePipeline: "chain",
+		SourceStepID:   "step_b",
+		SourceEventID:  "evt-1",
+		Event: protocol.Event{
+			Type: "any.event",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "transcriber" || out[0].Command != "handle" {
+		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+	if out[0].PipelineName != "process-audio" || out[0].StepID != "transcribe" {
+		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
 	}
 }
 
@@ -247,6 +369,43 @@ func TestRouterNextHookMultiplePipelines(t *testing.T) {
 	}
 	if len(out) != 2 {
 		t.Fatalf("dispatch count = %d, want 2", len(out))
+	}
+}
+
+func TestRouterGetEntryDispatchesExpandsCalledPipeline(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name: "process-audio",
+			On:   "internal.process_audio",
+			Steps: []dsl.StepSpec{
+				{ID: "transcribe", Uses: "transcriber"},
+			},
+		},
+		{
+			Name: "wisdom-chain",
+			On:   "event.start",
+			Steps: []dsl.StepSpec{
+				{ID: "processing", Call: "process-audio"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.GetEntryDispatches("wisdom-chain", protocol.Event{Type: "event.start"})
+	if err != nil {
+		t.Fatalf("GetEntryDispatches: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "transcriber" || out[0].Command != "handle" {
+		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+	if out[0].PipelineName != "process-audio" || out[0].StepID != "transcribe" {
+		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
 	}
 }
 

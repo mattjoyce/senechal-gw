@@ -87,7 +87,7 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 	pipeline.TerminalNodeIDs = sortedUnique(terminal)
 	pipeline.CalledPipelines = sortedMapKeys(builder.called)
 	sortEdges(pipeline.Edges)
-	pipeline.CompiledRoutes = compileRoutes(pipeline)
+	pipeline.CompiledRoutes = BuildCompiledRoutes(pipeline)
 
 	if err := validatePipelineDAG(pipeline); err != nil {
 		return nil, err
@@ -308,7 +308,9 @@ func (b *compileBuilder) addEdges(fromNodes, toNodes []string) {
 	}
 }
 
-func compileRoutes(p *Pipeline) []CompiledRoute {
+// BuildCompiledRoutes derives the deterministic route manifest for a compiled
+// pipeline shape.
+func BuildCompiledRoutes(p *Pipeline) []CompiledRoute {
 	if p == nil {
 		return nil
 	}
@@ -363,7 +365,7 @@ func compileRoutes(p *Pipeline) []CompiledRoute {
 		})
 	}
 
-	sortCompiledRoutes(routes)
+	SortCompiledRoutes(routes)
 	return routes
 }
 
@@ -514,7 +516,7 @@ func fingerprintPipeline(p *Pipeline) (string, error) {
 	sort.Strings(shape.EntryNodeIDs)
 	sort.Strings(shape.TerminalNodeIDs)
 	sort.Strings(shape.CalledPipelines)
-	sortCompiledRoutes(shape.CompiledRoutes)
+	SortCompiledRoutes(shape.CompiledRoutes)
 
 	body, err := json.Marshal(shape)
 	if err != nil {
@@ -533,7 +535,9 @@ func sortEdges(edges []Edge) {
 	})
 }
 
-func sortCompiledRoutes(routes []CompiledRoute) {
+// SortCompiledRoutes orders compiled routes deterministically for stable manifests
+// and stable route-index traversal.
+func SortCompiledRoutes(routes []CompiledRoute) {
 	sort.Slice(routes, func(i, j int) bool {
 		if routes[i].ID != routes[j].ID {
 			return routes[i].ID < routes[j].ID
