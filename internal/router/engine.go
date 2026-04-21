@@ -194,12 +194,13 @@ func (r *Router) resolveCompiledRoute(route dsl.CompiledRoute, req Request, root
 	switch route.Destination.Kind {
 	case dsl.CompiledRouteDestinationUses:
 		dispatch := Dispatch{
-			Plugin:          route.Destination.Plugin,
-			Command:         route.Destination.Command,
-			Event:           cloneEvent(req.Event),
-			ParentJobID:     req.SourceJobID,
-			ParentContextID: req.SourceContextID,
-			SourceEventID:   req.SourceEventID,
+			Plugin:             route.Destination.Plugin,
+			Command:            route.Destination.Command,
+			Event:              cloneEvent(req.Event),
+			PipelineInstanceID: req.SourcePipelineInstanceID,
+			ParentJobID:        req.SourceJobID,
+			ParentContextID:    req.SourceContextID,
+			SourceEventID:      req.SourceEventID,
 		}
 		if !rootHook {
 			dispatch.PipelineName = route.Pipeline
@@ -252,7 +253,7 @@ func dedupeDispatches(in []Dispatch) []Dispatch {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]Dispatch, 0, len(in))
 	for _, d := range in {
-		key := d.PipelineName + "\x00" + d.StepID + "\x00" + d.Plugin + "\x00" + d.Command + "\x00" + d.SourceEventID
+		key := d.PipelineName + "\x00" + d.StepID + "\x00" + d.PipelineInstanceID + "\x00" + d.Plugin + "\x00" + d.Command + "\x00" + d.SourceEventID
 		if _, ok := seen[key]; ok {
 			continue
 		}

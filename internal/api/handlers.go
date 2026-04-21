@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/baggage"
 	"github.com/mattjoyce/ductile/internal/plugin"
@@ -139,21 +140,55 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	type entryContextPlan struct {
+		stepID   string
+		updates  json.RawMessage
+		explicit bool
+	}
+
 	jobIDs := make([]string, 0, len(dispatches))
-	for i, d := range dispatches {
-		var eventContextID *string
-		if s.contextStore != nil {
+	contextPlans := make([]entryContextPlan, len(dispatches))
+	if s.contextStore != nil {
+		for i, d := range dispatches {
 			stepID := d.StepID
 			if stepID == "" {
 				stepID = pipeline.EntryStepID
 			}
-			root, err := s.createPipelineEntryContext(r.Context(), pipeline.Name, stepID, event.Payload)
+			updates, explicit, err := s.pipelineEntryContextUpdates(pipeline.Name, stepID, event.Payload)
 			if err != nil {
 				if errors.Is(err, errRootBaggageClaims) {
 					s.writeError(w, http.StatusBadRequest, err.Error())
 					return
 				}
-				s.logger.Error("failed to create event context for pipeline entry", "pipeline", pipeline.Name, "step_id", stepID, "error", err)
+				s.logger.Error("failed to prepare event context for pipeline entry", "pipeline", pipeline.Name, "step_id", stepID, "error", err)
+				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
+				return
+			}
+			contextPlans[i] = entryContextPlan{
+				stepID:   stepID,
+				updates:  updates,
+				explicit: explicit,
+			}
+		}
+	}
+
+	var pipelineRootContextID *string
+	if s.contextStore != nil {
+		root, err := s.createPipelineInstanceContext(r.Context(), pipeline.Name)
+		if err != nil {
+			s.logger.Error("failed to create pipeline instance context", "pipeline", pipeline.Name, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "failed to create pipeline context")
+			return
+		}
+		pipelineRootContextID = &root.ID
+	}
+
+	for i, d := range dispatches {
+		var eventContextID *string
+		if s.contextStore != nil {
+			root, err := s.createPipelineEntryContext(r.Context(), pipelineRootContextID, pipeline.Name, contextPlans[i].stepID, contextPlans[i].updates, contextPlans[i].explicit)
+			if err != nil {
+				s.logger.Error("failed to create event context for pipeline entry", "pipeline", pipeline.Name, "step_id", contextPlans[i].stepID, "error", err)
 				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
 				return
 			}
@@ -402,37 +437,61 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 var errRootBaggageClaims = errors.New("root baggage claims failed")
 
-func (s *Server) createPipelineEntryContext(
+func (s *Server) createPipelineInstanceContext(
 	ctx context.Context,
 	pipelineName string,
-	stepID string,
-	payload map[string]any,
 ) (*state.EventContext, error) {
 	if s.contextStore == nil {
 		return nil, nil
 	}
 
+	updates, err := state.WithPipelineInstanceID(nil, uuid.NewString())
+	if err != nil {
+		return nil, fmt.Errorf("seed pipeline instance context: %w", err)
+	}
+	return s.contextStore.Create(ctx, nil, pipelineName, "", updates)
+}
+
+func (s *Server) createPipelineEntryContext(
+	ctx context.Context,
+	parentID *string,
+	pipelineName string,
+	stepID string,
+	updates json.RawMessage,
+	explicit bool,
+) (*state.EventContext, error) {
+	if explicit {
+		return s.contextStore.Create(ctx, parentID, pipelineName, stepID, updates)
+	}
+	return s.contextStore.CreateLegacy(ctx, parentID, pipelineName, stepID, updates)
+}
+
+func (s *Server) pipelineEntryContextUpdates(
+	pipelineName string,
+	stepID string,
+	payload map[string]any,
+) (json.RawMessage, bool, error) {
 	if node, ok := s.router.GetNode(pipelineName, stepID); ok && node.Baggage != nil && !node.Baggage.Empty() {
 		updates, err := baggage.ApplyClaims(payload, node.Baggage, nil)
 		if err != nil {
-			return nil, fmt.Errorf("%w: apply baggage claims for %s:%s: %v", errRootBaggageClaims, pipelineName, stepID, err)
+			return nil, false, fmt.Errorf("%w: apply baggage claims for %s:%s: %v", errRootBaggageClaims, pipelineName, stepID, err)
 		}
 		raw, err := json.Marshal(updates)
 		if err != nil {
-			return nil, fmt.Errorf("marshal root baggage updates: %w", err)
+			return nil, false, fmt.Errorf("marshal root baggage updates: %w", err)
 		}
-		return s.contextStore.Create(ctx, nil, pipelineName, stepID, raw)
+		return raw, true, nil
 	}
 
 	triggerPayload, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal trigger payload: %w", err)
+		return nil, false, fmt.Errorf("marshal trigger payload: %w", err)
 	}
 	s.logger.Warn("using legacy payload promotion for pipeline entry without baggage",
 		"pipeline", pipelineName,
 		"step_id", stepID,
 	)
-	return s.contextStore.CreateLegacy(ctx, nil, pipelineName, stepID, json.RawMessage(triggerPayload))
+	return json.RawMessage(triggerPayload), false, nil
 }
 
 // handleListJobs handles GET /jobs.

@@ -235,6 +235,12 @@ func TestAPIIntegration(t *testing.T) {
 		if eventCtx.PipelineName != "test-pipeline" || eventCtx.StepID != "entry" {
 			t.Fatalf("unexpected event context: %+v", eventCtx)
 		}
+		if eventCtx.ParentID == nil || *eventCtx.ParentID == "" {
+			t.Fatalf("expected entry context to have root parent: %+v", eventCtx)
+		}
+		if got := state.PipelineInstanceIDFromAccumulated(eventCtx.AccumulatedJSON); got == "" {
+			t.Fatal("expected pipeline instance id in entry context")
+		}
 	})
 
 	t.Run("unauthorized request is rejected", func(t *testing.T) {

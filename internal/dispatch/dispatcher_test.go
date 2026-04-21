@@ -1147,6 +1147,148 @@ func TestDispatcherContextUpdatesForDispatchUsesExplicitBaggage(t *testing.T) {
 	}
 }
 
+func TestDispatcherRoutedChildContextRetainsPipelineInstanceID(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pluginsDir): %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+
+	scriptA := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"step a complete","events":[{"type":"chain.progress","payload":{"origin_channel_id":"chan-1"}}]}'
+`
+	scriptB := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"step b complete"}'
+`
+
+	registry := plugin.NewRegistry()
+	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
+	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
+
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: step_a
+        uses: plugin-a
+      - id: step_b
+        uses: plugin-b
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["plugin-a"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Handle: 5 * time.Second,
+		},
+	}
+	cfg.Plugins["plugin-b"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Handle: 5 * time.Second,
+		},
+	}
+
+	disp := New(q, st, contextStore, nil, routerEngine, registry, events.NewHub(32), cfg)
+	ctx := context.Background()
+
+	instanceID := "pipeline-instance-123"
+	rootUpdates, err := state.WithPipelineInstanceID(nil, instanceID)
+	if err != nil {
+		t.Fatalf("WithPipelineInstanceID(root): %v", err)
+	}
+	rootCtx, err := contextStore.Create(ctx, nil, "chain", "", rootUpdates)
+	if err != nil {
+		t.Fatalf("ContextStore.Create(root): %v", err)
+	}
+	stepCtx, err := contextStore.CreateLegacy(ctx, &rootCtx.ID, "chain", "step_a", json.RawMessage(`{"trigger":"go"}`))
+	if err != nil {
+		t.Fatalf("ContextStore.CreateLegacy(step_a): %v", err)
+	}
+
+	payload, err := json.Marshal(protocol.Event{Type: "chain.start", Payload: map[string]any{"trigger": "go"}})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:         "plugin-a",
+		Command:        "handle",
+		Payload:        payload,
+		SubmittedBy:    "test",
+		EventContextID: &stepCtx.ID,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue(root): %v", err)
+	}
+
+	rootJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(root): %v", err)
+	}
+	if rootJob == nil {
+		t.Fatal("expected root job")
+	}
+	disp.executeJob(ctx, rootJob)
+
+	childJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(child): %v", err)
+	}
+	if childJob == nil {
+		t.Fatal("expected routed child job")
+	}
+	if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
+		t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
+	}
+	if childJob.EventContextID == nil {
+		t.Fatal("child event_context_id is nil")
+	}
+
+	childCtx, err := contextStore.Get(ctx, *childJob.EventContextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(child): %v", err)
+	}
+	if childCtx.ParentID == nil || *childCtx.ParentID != stepCtx.ID {
+		t.Fatalf("child parent_id = %v, want %s", childCtx.ParentID, stepCtx.ID)
+	}
+	if got := state.PipelineInstanceIDFromAccumulated(childCtx.AccumulatedJSON); got != instanceID {
+		t.Fatalf("child pipeline instance id = %q, want %q", got, instanceID)
+	}
+}
+
 func TestDispatcher_ExecuteJob_SkipsConditionalStepAndContinues(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")

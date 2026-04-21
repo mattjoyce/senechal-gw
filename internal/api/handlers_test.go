@@ -694,6 +694,8 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 	}
 
 	cs := state.NewContextStore(db)
+	var pipelineInstanceID string
+	var rootContextID string
 	for _, contextID := range contextIDs {
 		ctx, err := cs.Get(context.Background(), contextID)
 		if err != nil {
@@ -710,6 +712,34 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 		if got := accumulated["x"]; got == nil {
 			t.Errorf("expected trigger payload key 'x' in AccumulatedJSON, got %v", accumulated)
 		}
+		gotPipelineInstanceID := state.PipelineInstanceIDFromAccumulated(ctx.AccumulatedJSON)
+		if gotPipelineInstanceID == "" {
+			t.Fatalf("expected pipeline instance id in context %s", contextID)
+		}
+		if pipelineInstanceID == "" {
+			pipelineInstanceID = gotPipelineInstanceID
+		} else if gotPipelineInstanceID != pipelineInstanceID {
+			t.Fatalf("pipeline instance id mismatch: got %q want %q", gotPipelineInstanceID, pipelineInstanceID)
+		}
+		if ctx.ParentID == nil || *ctx.ParentID == "" {
+			t.Fatalf("expected entry context %s to have shared root parent", contextID)
+		}
+		if rootContextID == "" {
+			rootContextID = *ctx.ParentID
+		} else if *ctx.ParentID != rootContextID {
+			t.Fatalf("entry contexts parent ids differ: got %q want %q", *ctx.ParentID, rootContextID)
+		}
+	}
+
+	rootCtx, err := cs.Get(context.Background(), rootContextID)
+	if err != nil {
+		t.Fatalf("Get root context %s: %v", rootContextID, err)
+	}
+	if rootCtx.StepID != "" {
+		t.Fatalf("root context step_id = %q, want empty", rootCtx.StepID)
+	}
+	if got := state.PipelineInstanceIDFromAccumulated(rootCtx.AccumulatedJSON); got != pipelineInstanceID {
+		t.Fatalf("root pipeline instance id = %q, want %q", got, pipelineInstanceID)
 	}
 }
 
@@ -782,6 +812,9 @@ func TestHandlePipelineTrigger_RootBaggageClaimsDurableContext(t *testing.T) {
 	if web["url"] != "http://example.test" {
 		t.Fatalf("web.url = %#v, want http://example.test", web["url"])
 	}
+	if got := state.PipelineInstanceIDFromAccumulated(eventCtx.AccumulatedJSON); got == "" {
+		t.Fatal("expected pipeline instance id in accumulated context")
+	}
 }
 
 func TestHandlePipelineTrigger_RootBaggageMissingSourceRejectsTrigger(t *testing.T) {
@@ -833,6 +866,14 @@ func TestHandlePipelineTrigger_RootBaggageMissingSourceRejectsTrigger(t *testing
 	}
 	if total != 0 {
 		t.Fatalf("jobs enqueued = %d, want 0", total)
+	}
+
+	var contextCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM event_context").Scan(&contextCount); err != nil {
+		t.Fatalf("count event_context: %v", err)
+	}
+	if contextCount != 0 {
+		t.Fatalf("event_context rows = %d, want 0", contextCount)
 	}
 }
 

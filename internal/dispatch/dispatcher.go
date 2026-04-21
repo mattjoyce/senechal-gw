@@ -811,6 +811,9 @@ func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (ma
 	if eventCtx.StepID != "" {
 		out["ductile_step_id"] = eventCtx.StepID
 	}
+	if pipelineInstanceID := state.PipelineInstanceIDFromAccumulated(eventCtx.AccumulatedJSON); pipelineInstanceID != "" {
+		out["ductile_pipeline_instance_id"] = pipelineInstanceID
+	}
 	return out, nil
 }
 
@@ -820,7 +823,7 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		return nil
 	}
 
-	var sourcePipeline, sourceStepID string
+	var sourcePipeline, sourceStepID, sourcePipelineInstanceID string
 	if d.contexts != nil && job.EventContextID != nil {
 		currentCtx, err := d.contexts.Get(ctx, *job.EventContextID)
 		if err != nil {
@@ -828,6 +831,7 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		}
 		sourcePipeline = currentCtx.PipelineName
 		sourceStepID = currentCtx.StepID
+		sourcePipelineInstanceID = state.PipelineInstanceIDFromAccumulated(currentCtx.AccumulatedJSON)
 	}
 
 	for i := range events {
@@ -843,13 +847,14 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		ev := events[i]
 
 		req := router.Request{
-			SourcePlugin:    job.Plugin,
-			SourceJobID:     job.ID,
-			SourceContextID: deref(job.EventContextID),
-			SourcePipeline:  sourcePipeline,
-			SourceStepID:    sourceStepID,
-			SourceEventID:   ev.EventID,
-			Event:           ev,
+			SourcePlugin:             job.Plugin,
+			SourceJobID:              job.ID,
+			SourceContextID:          deref(job.EventContextID),
+			SourcePipeline:           sourcePipeline,
+			SourceStepID:             sourceStepID,
+			SourcePipelineInstanceID: sourcePipelineInstanceID,
+			SourceEventID:            ev.EventID,
+			Event:                    ev,
 		}
 
 		nextDispatches, err := d.router.Next(ctx, req)

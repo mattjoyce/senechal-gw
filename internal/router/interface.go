@@ -24,25 +24,27 @@ type PipelineInfo struct {
 // The router works only with metadata and event envelopes; artifact cloning and
 // workspace lifecycle remain in the workspace manager (data plane).
 type Request struct {
-	SourcePlugin    string
-	SourceJobID     string
-	SourceContextID string
-	SourcePipeline  string
-	SourceStepID    string
-	SourceEventID   string
-	Event           protocol.Event
+	SourcePlugin             string
+	SourceJobID              string
+	SourceContextID          string
+	SourcePipeline           string
+	SourceStepID             string
+	SourcePipelineInstanceID string
+	SourceEventID            string
+	Event                    protocol.Event
 }
 
 // Dispatch describes one downstream job to enqueue from a routing decision.
 type Dispatch struct {
-	Plugin          string
-	Command         string
-	Event           protocol.Event
-	PipelineName    string
-	StepID          string
-	ParentJobID     string
-	ParentContextID string
-	SourceEventID   string
+	Plugin             string
+	Command            string
+	Event              protocol.Event
+	PipelineName       string
+	StepID             string
+	PipelineInstanceID string
+	ParentJobID        string
+	ParentContextID    string
+	SourceEventID      string
 }
 
 // Engine maps an emitted event to downstream dispatches.
