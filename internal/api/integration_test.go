@@ -373,6 +373,13 @@ echo '{"status":"ok","result":"B"}'
 	if syncResp.Tree[0].Status != string(queue.StatusSkipped) {
 		t.Fatalf("response root status = %q, want %q", syncResp.Tree[0].Status, queue.StatusSkipped)
 	}
+	var finalResult map[string]any
+	if err := json.Unmarshal(syncResp.Result, &finalResult); err != nil {
+		t.Fatalf("unmarshal sync result: %v", err)
+	}
+	if finalResult["result"] != "B" {
+		t.Fatalf("sync response result payload = %#v, want result=B", finalResult)
+	}
 
 	var immediateChildCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM job_queue WHERE parent_job_id = ?`, syncResp.JobID).Scan(&immediateChildCount); err != nil {

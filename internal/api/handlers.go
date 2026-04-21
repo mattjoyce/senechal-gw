@@ -19,6 +19,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 )
 
@@ -271,6 +272,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 		var rootResult json.RawMessage
 		finalStatus := string(queue.StatusSucceeded)
 		var terminalResult json.RawMessage
+		terminalSteps := terminalStepSet(s.router.GetCompiledRoutes(pipelineName), pipeline.TerminalStepIDs)
 
 		for _, res := range results {
 			if res.JobID == firstJobID {
@@ -281,10 +283,8 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 				finalStatus = string(res.Status)
 			}
 
-			for _, termStepID := range pipeline.TerminalStepIDs {
-				if res.StepID == termStepID {
-					terminalResult = res.Result
-				}
+			if _, ok := terminalSteps[res.StepID]; ok {
+				terminalResult = res.Result
 			}
 			tree = append(tree, JobResultData{
 				JobID:       res.JobID,
@@ -492,6 +492,27 @@ func (s *Server) pipelineEntryContextUpdates(
 		"step_id", stepID,
 	)
 	return json.RawMessage(triggerPayload), false, nil
+}
+
+func terminalStepSet(routes []dsl.CompiledRoute, fallback []string) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, route := range routes {
+		if route.Destination.Kind != dsl.CompiledRouteDestinationTerminal {
+			continue
+		}
+		if stepID := strings.TrimSpace(route.Source.StepID); stepID != "" {
+			out[stepID] = struct{}{}
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, stepID := range fallback {
+		if stepID = strings.TrimSpace(stepID); stepID != "" {
+			out[stepID] = struct{}{}
+		}
+	}
+	return out
 }
 
 // handleListJobs handles GET /jobs.
