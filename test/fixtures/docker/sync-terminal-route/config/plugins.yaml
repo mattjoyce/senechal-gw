@@ -1,0 +1,6 @@
+plugins:
+  step-a:
+    enabled: true
+
+  step-b:
+    enabled: true

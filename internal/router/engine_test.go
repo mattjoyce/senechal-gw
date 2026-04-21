@@ -419,6 +419,48 @@ func TestRouterNextHookMultiplePipelines(t *testing.T) {
 	}
 }
 
+func TestRouterNextHookExpandsCalledPipeline(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:   "hook-dispatch",
+			OnHook: "job.completed",
+			Steps: []dsl.StepSpec{
+				{ID: "fanout", Call: "hook-target"},
+			},
+		},
+		{
+			Name: "hook-target",
+			On:   "internal.hook.target",
+			Steps: []dsl.StepSpec{
+				{ID: "notify", Uses: "discord-notifier"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+
+	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "discord-notifier" || out[0].Command != "handle" {
+		t.Fatalf("unexpected dispatch: %+v", out[0])
+	}
+	if out[0].Event.Type != "job.completed" {
+		t.Fatalf("event type = %q, want %q", out[0].Event.Type, "job.completed")
+	}
+	if out[0].PipelineName != "" || out[0].StepID != "" {
+		t.Fatalf("hook dispatch must remain root-level after call expansion: pipeline=%q step=%q", out[0].PipelineName, out[0].StepID)
+	}
+}
+
 func TestRouterGetEntryDispatchesExpandsCalledPipeline(t *testing.T) {
 	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
 		{

@@ -254,6 +254,27 @@ Should verify:
 - pipeline/API triggers create expected queued work
 - status/readback behavior works from the running service
 
+#### `hook-route-compilation`
+Goal:
+- validate Sprint 5 hook runtime behavior against a real running service
+
+Should verify:
+- a root job with `notify_on_complete: true` fires a hook pipeline
+- hook-entry `call:` expands into the called pipeline entry
+- exactly one hook job is enqueued for the scenario
+- hook dispatch remains root-level rather than creating pipeline step context
+- the hook job payload is the expected lifecycle event envelope
+
+#### `sync-terminal-route`
+Goal:
+- validate Sprint 5 synchronous API result selection against compiled terminal routes
+
+Should verify:
+- a synchronous pipeline returns `200 OK`
+- a skipped earlier step does not become the returned result
+- the returned result comes from the actual terminal routed step
+- the runtime still records the expected job completion story in the database
+
 ### Deferred wave-2 concerns
 These are valuable, but should not be in the first Docker wave:
 - reload/restart nuance beyond initial recovery scenarios

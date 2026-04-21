@@ -104,6 +104,63 @@ func TestDispatcher_ExecuteJob_HookReceivesFailedEventEnvelope(t *testing.T) {
 	}
 }
 
+func TestDispatcher_ExecuteJob_HookCallEntryExpandsCalledPipeline(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	capturePath := filepath.Join(t.TempDir(), "hook-request.json")
+
+	sourcePlugin := createTestPlugin(t, pluginsDir, "source", sourceSuccessScript())
+	hookPlugin := createTestPlugin(t, pluginsDir, "hook", hookCaptureScript(capturePath))
+	addTestPlugin(t, disp, sourcePlugin)
+	addTestPlugin(t, disp, hookPlugin)
+
+	notify := true
+	disp.cfg.Plugins["source"] = config.PluginConf{
+		Enabled:          true,
+		NotifyOnComplete: &notify,
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+	disp.cfg.Plugins["hook"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Handle: 5 * time.Second,
+		},
+	}
+	disp.router = buildHookCallRouter(t, "job.completed")
+
+	ctx := context.Background()
+	jobID := enqueueTestJob(t, ctx, disp.queue, "source", "poll", 1)
+	rootJob := dequeueTestJob(t, ctx, disp.queue)
+	disp.executeJob(ctx, rootJob)
+
+	assertJobStatus(t, db, jobID, queue.StatusSucceeded)
+
+	hookJob := dequeueTestJob(t, ctx, disp.queue)
+	if hookJob.Plugin != "hook" || hookJob.Command != "handle" {
+		t.Fatalf("unexpected hook job: %+v", hookJob)
+	}
+
+	var event protocol.Event
+	if err := json.Unmarshal(hookJob.Payload, &event); err != nil {
+		t.Fatalf("unmarshal hook payload: %v", err)
+	}
+	if event.Type != "job.completed" {
+		t.Fatalf("hook payload event.type = %q, want %q", event.Type, "job.completed")
+	}
+
+	disp.executeJob(ctx, hookJob)
+	req := readCapturedHookRequest(t, capturePath)
+	if req.Event == nil {
+		t.Fatal("hook request event is nil")
+	}
+	if got := req.Event.Payload["plugin"]; got != "source" {
+		t.Fatalf("hook request payload plugin = %v, want source", got)
+	}
+}
+
 func setupHookFixture(t *testing.T, disp *Dispatcher, pluginsDir, capturePath, signal, sourceScript string) {
 	t.Helper()
 
@@ -144,6 +201,31 @@ func buildHookRouter(t *testing.T, signal string) router.Engine {
 		OnHook: signal,
 		Steps:  []dsl.StepSpec{{ID: "notify", Uses: "hook"}},
 	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	return router.New(set, nil)
+}
+
+func buildHookCallRouter(t *testing.T, signal string) router.Engine {
+	t.Helper()
+
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:   "hook-pipeline",
+			OnHook: signal,
+			Steps: []dsl.StepSpec{
+				{ID: "fanout", Call: "hook-target"},
+			},
+		},
+		{
+			Name: "hook-target",
+			On:   "internal.hook.target",
+			Steps: []dsl.StepSpec{
+				{ID: "notify", Uses: "hook"},
+			},
+		},
+	})
 	if err != nil {
 		t.Fatalf("CompileSpecs: %v", err)
 	}

@@ -6,9 +6,11 @@ Current fixtures:
 - `webhook-ingress`
 - `scheduler-recovery`
 - `api-e2e`
+- `hook-route-compilation`
+- `sync-terminal-route`
 
 Current status:
 - harness base is scaffolded
 - fixture execution wiring exists
-- `webhook-ingress` fixture is partially implemented and has uncovered a follow-up config/runtime issue tracked in `ductile-pyn`
-- `scheduler-recovery` and `api-e2e` are placeholders pending implementation
+- existing fixtures cover webhook ingress, scheduler recovery, API e2e, plugin/runtime behavior, and workspace behavior
+- Sprint 5 adds route-runtime regression fixtures for hook-entry `call:` expansion and synchronous terminal result selection
