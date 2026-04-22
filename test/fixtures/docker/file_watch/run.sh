@@ -67,5 +67,43 @@ if [[ "$detected" -ne 1 ]]; then
   fixture_fail "file_watch did not detect the new file"
 fi
 
+fixture_log "verifying persisted file_watch snapshot fact"
+FACT_COUNT=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM plugin_facts WHERE plugin_name = 'file_watch' AND fact_type = 'file_watch.snapshot';" 2>/dev/null || echo "0")
+if [[ "$FACT_COUNT" -lt 1 ]]; then
+  fixture_fail "expected at least one file_watch.snapshot fact"
+fi
+
+sqlite3 "$DB_PATH" "SELECT state FROM plugin_state WHERE plugin_name = 'file_watch';" >"$ARTIFACT_DIR/file-watch-state.json"
+if [[ ! -s "$ARTIFACT_DIR/file-watch-state.json" ]]; then
+  fixture_fail "expected file_watch compatibility state row"
+fi
+
+STATE_LAST_POLL=$(jq -r '.last_poll_at // empty' "$ARTIFACT_DIR/file-watch-state.json")
+if [[ -z "$STATE_LAST_POLL" ]]; then
+  fixture_fail "expected file_watch compatibility state to include last_poll_at"
+fi
+
+STATE_LAST_HEALTH=$(jq -r '.last_health_check // empty' "$ARTIFACT_DIR/file-watch-state.json")
+if [[ -n "$STATE_LAST_HEALTH" ]]; then
+  fixture_fail "file_watch compatibility state should not include last_health_check"
+fi
+
+fixture_log "verifying plugin-facts operator read path"
+"$ROOT_DIR/ductile" system plugin-facts --config "$CONFIG_DIR" --json file_watch >"$ARTIFACT_DIR/plugin-facts.json"
+CLI_FACT_COUNT=$(jq -r '.facts | length' "$ARTIFACT_DIR/plugin-facts.json")
+if [[ "$CLI_FACT_COUNT" -lt 1 ]]; then
+  fixture_fail "expected plugin-facts CLI to return at least one fact"
+fi
+
+CLI_FACT_TYPE=$(jq -r '.facts[0].fact_type // empty' "$ARTIFACT_DIR/plugin-facts.json")
+if [[ "$CLI_FACT_TYPE" != "file_watch.snapshot" ]]; then
+  fixture_fail "expected newest fact_type file_watch.snapshot, got $CLI_FACT_TYPE"
+fi
+
+CLI_LAST_POLL=$(jq -r '.facts[0].fact.last_poll_at // empty' "$ARTIFACT_DIR/plugin-facts.json")
+if [[ "$CLI_LAST_POLL" != "$STATE_LAST_POLL" ]]; then
+  fixture_fail "expected plugin-facts CLI last_poll_at to match compatibility state"
+fi
+
 fixture_log "file change detected successfully"
 fixture_log "success"

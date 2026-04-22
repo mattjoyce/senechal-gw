@@ -7,6 +7,13 @@ import sys
 from datetime import datetime, timezone
 
 
+def snapshot_state(message: str, now: str) -> dict:
+    return {
+        "last_run": now,
+        "last_greeting": message,
+    }
+
+
 def poll(req: dict) -> dict:
     greeting = req.get("config", {}).get("greeting", "Hello")
     name = req.get("config", {}).get("name", "World")
@@ -17,10 +24,7 @@ def poll(req: dict) -> dict:
         "status": "ok",
         "result": message,
         "events": [],
-        "state_updates": {
-            "last_run": now,
-            "last_greeting": message,
-        },
+        "state_updates": snapshot_state(message, now),
         "logs": [
             {"level": "info", "message": f"{message} (job: {req.get('job_id')})"},
         ],

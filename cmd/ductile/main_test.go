@@ -18,6 +18,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/scheduler"
+	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 )
 
@@ -573,6 +574,84 @@ plugins:
 	}
 	if out.Transitions[0].JobID != lastJobID {
 		t.Fatalf("job_id=%q want %q", out.Transitions[0].JobID, lastJobID)
+	}
+}
+
+func TestRunSystemPluginFactsJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	if err := os.MkdirAll(filepath.Join(tmpDir, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	configYAML := `
+service:
+  tick_interval: 30s
+  log_level: info
+state:
+  path: ` + dbPath + `
+plugin_roots:
+  - ` + filepath.Join(tmpDir, "plugins") + `
+plugins:
+  file_watch:
+    enabled: true
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st := state.NewStore(db)
+	if _, _, err := st.RecordFact(context.Background(), state.PluginFact{
+		ID:         "fact-1",
+		PluginName: "file_watch",
+		FactType:   state.FactTypeFileWatchSnapshot,
+		JobID:      "job-1",
+		Command:    "poll",
+		FactJSON:   json.RawMessage(`{"last_poll_at":"2026-04-22T01:02:03Z","watches":{"single-file":{"exists":true}}}`),
+		CreatedAt:  time.Date(2026, 4, 22, 1, 2, 3, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("RecordFact: %v", err)
+	}
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemPluginFacts([]string{"--config", configPath, "--json", "--fact-type", state.FactTypeFileWatchSnapshot, "file_watch"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemPluginFacts() code = %d, stderr: %s", code, stderr)
+	}
+
+	var out struct {
+		Plugin   string `json:"plugin"`
+		FactType string `json:"fact_type"`
+		Facts    []struct {
+			ID       string         `json:"id"`
+			FactType string         `json:"fact_type"`
+			JobID    string         `json:"job_id"`
+			Command  string         `json:"command"`
+			Fact     map[string]any `json:"fact"`
+		} `json:"facts"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("failed to parse plugin facts json: %v\noutput=%s", err, stdout)
+	}
+	if out.Plugin != "file_watch" || out.FactType != state.FactTypeFileWatchSnapshot {
+		t.Fatalf("unexpected report header: %#v", out)
+	}
+	if len(out.Facts) != 1 {
+		t.Fatalf("len(out.Facts) = %d, want 1", len(out.Facts))
+	}
+	if out.Facts[0].ID != "fact-1" || out.Facts[0].JobID != "job-1" || out.Facts[0].Command != "poll" {
+		t.Fatalf("unexpected fact row: %#v", out.Facts[0])
+	}
+	if _, ok := out.Facts[0].Fact["watches"]; !ok {
+		t.Fatalf("expected watches payload in fact: %#v", out.Facts[0].Fact)
 	}
 }
 

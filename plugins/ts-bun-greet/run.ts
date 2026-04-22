@@ -36,6 +36,13 @@ const request: Request = JSON.parse(input);
 
 // --- Handle commands ---
 
+function snapshotState(message: string, now: string): Record<string, unknown> {
+  return {
+    last_run: now,
+    last_greeting: message,
+  };
+}
+
 function poll(req: Request): Response {
   const greeting = (req.config.greeting as string) || "Hello";
   const name = (req.config.name as string) || "World";
@@ -46,10 +53,7 @@ function poll(req: Request): Response {
     status: "ok",
     result: message,
     events: [],
-    state_updates: {
-      last_run: now,
-      last_greeting: message,
-    },
+    state_updates: snapshotState(message, now),
     logs: [
       { level: "info", message: `${message} (job: ${req.job_id})` },
     ],

@@ -55,6 +55,7 @@ Docker-backed tests are used for **complex or environment-sensitive behavior** w
 - scheduler persistence and restart recovery
 - authenticated API end-to-end flows
 - plugin runtime/process behavior
+- append-only fact persistence and compatibility-state derivation
 - filesystem/workspace behavior
 - realistic service startup/configuration behavior
 

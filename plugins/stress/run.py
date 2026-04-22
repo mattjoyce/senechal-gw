@@ -10,6 +10,10 @@ import math
 def emit_event(name, data):
     print(json.dumps({"event": {"name": name, "data": data}}))
 
+
+def snapshot_state(count):
+    return {"count": count}
+
 def do_cpu(duration):
     start = time.time()
     count = 0
@@ -105,7 +109,7 @@ def main():
                 })
 
             result_data = {"final_count": current_count}
-            state_updates = {"count": current_count}
+            state_updates = snapshot_state(current_count)
 
         elif command == "health":
             result_data = {"status": "ok", "version": "0.1.0"}

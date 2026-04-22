@@ -445,14 +445,35 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			return
 		}
 
-		if _, err := d.state.ShallowMerge(ctx, job.Plugin, updatesJSON); err != nil {
-			errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
+		handledByFacts := false
+		if fact, ok, err := pluginFactFromStateUpdates(job, updatesJSON); err != nil {
+			errMsg := fmt.Sprintf("failed to build plugin fact: %v", err)
 			jobLogger.Error(errMsg)
 			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
+		} else if ok {
+			if _, _, err := d.state.RecordFact(ctx, *fact); err != nil {
+				errMsg := fmt.Sprintf("failed to record plugin fact: %v", err)
+				jobLogger.Error(errMsg)
+				recordBlackBox(queue.StatusFailed, &errMsg)
+				d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+				return
+			}
+			handledByFacts = true
+			jobLogger.Debug("recorded plugin fact", "fact_type", fact.FactType, "job_id", fact.JobID)
 		}
-		jobLogger.Debug("applied state updates", "updates", resp.StateUpdates)
+
+		if !handledByFacts {
+			if _, err := d.state.ShallowMerge(ctx, job.Plugin, updatesJSON); err != nil {
+				errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
+				jobLogger.Error(errMsg)
+				recordBlackBox(queue.StatusFailed, &errMsg)
+				d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
+				return
+			}
+			jobLogger.Debug("applied state updates", "updates", resp.StateUpdates)
+		}
 	}
 
 	// Process events (routing + orchestration)
@@ -1373,6 +1394,46 @@ func deref(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func pluginFactFromStateUpdates(job *queue.Job, updates json.RawMessage) (*state.PluginFact, bool, error) {
+	if job == nil || len(updates) == 0 {
+		return nil, false, nil
+	}
+
+	switch {
+	case job.Plugin == "file_watch" && job.Command == "poll":
+		return buildPluginFact(job, updates, state.FactTypeFileWatchSnapshot)
+	case job.Plugin == "folder_watch" && job.Command == "poll":
+		return buildPluginFact(job, updates, state.FactTypeFolderWatchSnapshot)
+	case job.Plugin == "py-greet" && job.Command == "poll":
+		return buildPluginFact(job, updates, state.FactTypePyGreetSnapshot)
+	case job.Plugin == "ts-bun-greet" && job.Command == "poll":
+		return buildPluginFact(job, updates, state.FactTypeTSBunGreetSnapshot)
+	case job.Plugin == "stress" && job.Command == "state":
+		return buildPluginFact(job, updates, state.FactTypeStressStateSnapshot)
+	default:
+		return nil, false, nil
+	}
+}
+
+func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (*state.PluginFact, bool, error) {
+	var snapshot map[string]json.RawMessage
+	if err := json.Unmarshal(updates, &snapshot); err != nil {
+		return nil, false, fmt.Errorf("normalize %s snapshot: %w", factType, err)
+	}
+	if snapshot == nil {
+		snapshot = map[string]json.RawMessage{}
+	}
+	return &state.PluginFact{
+		ID:         uuid.NewString(),
+		PluginName: job.Plugin,
+		FactType:   factType,
+		JobID:      job.ID,
+		Command:    job.Command,
+		FactJSON:   updates,
+		CreatedAt:  time.Now().UTC(),
+	}, true, nil
 }
 
 // getTimeout returns the timeout for a given command, falling back to defaults.

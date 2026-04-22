@@ -87,6 +87,28 @@ CREATE TABLE IF NOT EXISTS plugin_state (
   updated_at  TEXT
 );
 
+-- Hickey Sprint 7 plugin facts:
+-- append-only plugin observations. plugin_state remains the
+-- compatibility/current-state row for legacy plugin state reads.
+CREATE TABLE IF NOT EXISTS plugin_facts (
+  id          TEXT PRIMARY KEY,
+  plugin_name TEXT NOT NULL,
+  fact_type   TEXT NOT NULL,
+  job_id      TEXT NOT NULL,
+  command     TEXT NOT NULL,
+  fact_json   JSON NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS plugin_facts_plugin_created_at_idx
+ON plugin_facts(plugin_name, created_at);
+
+CREATE INDEX IF NOT EXISTS plugin_facts_plugin_type_created_at_idx
+ON plugin_facts(plugin_name, fact_type, created_at);
+
+CREATE INDEX IF NOT EXISTS plugin_facts_job_id_idx
+ON plugin_facts(job_id);
+
 -- Event Context: Pipeline execution history and data accumulation.
 CREATE TABLE IF NOT EXISTS event_context (
   id               TEXT PRIMARY KEY,

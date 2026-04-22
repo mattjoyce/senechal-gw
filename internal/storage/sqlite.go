@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 
 //go:embed schema.sql
 var schemaSQL string
+
+var errSchemaValidation = errors.New("sqlite schema validation failed")
 
 // OpenSQLite opens (and creates if needed) the SQLite database at path and
 // ensures required tables exist.
@@ -54,14 +57,31 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	// This ensures only one writer at a time while busy_timeout handles waiting.
 	db.SetMaxOpenConns(1)
 
-	if err := BootstrapSQLite(ctx, db); err != nil {
+	empty, err := isSQLiteEmpty(ctx, db)
+	if err != nil {
 		_ = db.Close()
+		return nil, fmt.Errorf("inspect sqlite schema state: %w", err)
+	}
+
+	if empty {
+		if err := BootstrapSQLite(ctx, db); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		return db, nil
+	}
+
+	if err := ValidateSQLiteSchema(ctx, db); err != nil {
+		_ = db.Close()
+		if errors.Is(err, errSchemaValidation) {
+			return nil, fmt.Errorf("%w; run scripts/migrate-hickey-sprint-7-plugin-facts.py %s before deploy", err, path)
+		}
 		return nil, err
 	}
 	return db, nil
 }
 
-// BootstrapSQLite creates tables/indexes if missing (SPEC section 10).
+// BootstrapSQLite creates the full mono-schema for an empty database.
 func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 	// Execute the embedded mono-schema.
 	// We split by semicolon to execute each statement separately.
@@ -76,50 +96,107 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("bootstrap sqlite (schema.sql): %w", err)
 		}
 	}
+	return ValidateSQLiteSchema(ctx, db)
+}
 
-	// Migrations: CREATE TABLE IF NOT EXISTS doesn't add new columns to existing tables.
-	// We keep these helpers for backward compatibility with existing installations
-	// that might be missing these specific columns.
-	migrationHelpers := []struct {
-		table  string
-		column string
-		def    string
-	}{
-		{"job_log", "result", "TEXT"},
-		{"job_log", "job_id", "TEXT"},
-		{"job_queue", "event_context_id", "TEXT"},
-		{"job_log", "event_context_id", "TEXT"},
-		{"schedule_entries", "last_success_job_id", "TEXT"},
-		{"schedule_entries", "last_fired_at", "TEXT"},
-		{"schedule_entries", "last_success_at", "TEXT"},
-		{"schedule_entries", "next_run_at", "TEXT"},
+// ValidateSQLiteSchema checks that an existing database matches the expected
+// Ductile runtime shape. It does not mutate the schema.
+func ValidateSQLiteSchema(ctx context.Context, db *sql.DB) error {
+	requiredTables := []string{
+		"job_queue",
+		"job_transitions",
+		"job_attempts",
+		"config_snapshots",
+		"plugin_state",
+		"plugin_facts",
+		"event_context",
+		"job_log",
+		"circuit_breakers",
+		"circuit_breaker_transitions",
+		"schedule_entries",
 	}
-
-	for _, m := range migrationHelpers {
-		if err := ensureColumnExists(ctx, db, m.table, m.column, m.def); err != nil {
-			return err
+	for _, table := range requiredTables {
+		exists, err := sqliteObjectExists(ctx, db, "table", table)
+		if err != nil {
+			return fmt.Errorf("validate sqlite schema: inspect table %s: %w", table, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: missing table %s", errSchemaValidation, table)
 		}
 	}
 
-	// Ensure specific indexes that might not be in the base schema of older installs.
-	if err := ensureIndexExists(ctx, db, "job_log_job_id_attempt_idx", "CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);"); err != nil {
-		return err
+	requiredColumns := []struct {
+		table  string
+		column string
+	}{
+		{"job_log", "result"},
+		{"job_log", "job_id"},
+		{"job_queue", "event_context_id"},
+		{"job_log", "event_context_id"},
+		{"schedule_entries", "last_success_job_id"},
+		{"schedule_entries", "last_fired_at"},
+		{"schedule_entries", "last_success_at"},
+		{"schedule_entries", "next_run_at"},
+		{"plugin_facts", "fact_type"},
+		{"plugin_facts", "fact_json"},
+		{"plugin_facts", "created_at"},
 	}
-	if err := ensureIndexExists(ctx, db, "job_queue_dedupe_status_completed_idx", "CREATE INDEX IF NOT EXISTS job_queue_dedupe_status_completed_idx ON job_queue(dedupe_key, status, completed_at);"); err != nil {
-		return err
+	for _, req := range requiredColumns {
+		hasColumn, err := sqliteColumnExists(ctx, db, req.table, req.column)
+		if err != nil {
+			return fmt.Errorf("validate sqlite schema: inspect column %s.%s: %w", req.table, req.column, err)
+		}
+		if !hasColumn {
+			return fmt.Errorf("%w: missing column %s.%s", errSchemaValidation, req.table, req.column)
+		}
+	}
+
+	requiredIndexes := []string{
+		"job_log_job_id_attempt_idx",
+		"job_queue_dedupe_status_completed_idx",
+		"plugin_facts_plugin_created_at_idx",
+		"plugin_facts_plugin_type_created_at_idx",
+		"plugin_facts_job_id_idx",
+	}
+	for _, index := range requiredIndexes {
+		exists, err := sqliteObjectExists(ctx, db, "index", index)
+		if err != nil {
+			return fmt.Errorf("validate sqlite schema: inspect index %s: %w", index, err)
+		}
+		if !exists {
+			return fmt.Errorf("%w: missing index %s", errSchemaValidation, index)
+		}
 	}
 
 	return nil
 }
 
-func ensureColumnExists(ctx context.Context, db *sql.DB, table, column, columnDef string) error {
+func isSQLiteEmpty(ctx context.Context, db *sql.DB) (bool, error) {
+	row := db.QueryRowContext(ctx, `
+SELECT 1
+FROM sqlite_master
+WHERE type = 'table'
+  AND name NOT LIKE 'sqlite_%'
+LIMIT 1;
+`)
+	var marker int
+	err := row.Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func sqliteColumnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
 	cols, err := db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s);", table))
 	if err != nil {
-		return fmt.Errorf("bootstrap sqlite: inspect %s columns: %w", table, err)
+		return false, err
 	}
 	defer func() { _ = cols.Close() }()
 
-	hasColumn := false
 	for cols.Next() {
 		// cid, name, type, notnull, dflt_value, pk
 		var (
@@ -131,30 +208,27 @@ func ensureColumnExists(ctx context.Context, db *sql.DB, table, column, columnDe
 			pk        int
 		)
 		if err := cols.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
-			return fmt.Errorf("bootstrap sqlite: scan %s columns: %w", table, err)
+			return false, err
 		}
 		if name == column {
-			hasColumn = true
-			break
+			return true, nil
 		}
 	}
 	if err := cols.Err(); err != nil {
-		return fmt.Errorf("bootstrap sqlite: iterate %s columns: %w", table, err)
+		return false, err
 	}
-	if hasColumn {
-		return nil
-	}
-
-	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s;", table, column, columnDef)
-	if _, err := db.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("bootstrap sqlite: add %s.%s column: %w", table, column, err)
-	}
-	return nil
+	return false, nil
 }
 
-func ensureIndexExists(ctx context.Context, db *sql.DB, name, stmt string) error {
-	if _, err := db.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("bootstrap sqlite: ensure index %s: %w", name, err)
+func sqliteObjectExists(ctx context.Context, db *sql.DB, objectType, name string) (bool, error) {
+	row := db.QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE type = ? AND name = ? LIMIT 1;", objectType, name)
+	var marker int
+	err := row.Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	return nil
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }

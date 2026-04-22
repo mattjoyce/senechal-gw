@@ -39,13 +39,19 @@ The "Control Plane" ledger. Stores metadata (Baggage) that propagates through pi
 ### 4. `plugin_state`
 Persistent key-value store for plugins (e.g., OAuth tokens, cursors).
 
-### 5. `schedule_entries`
+### 5. `plugin_facts`
+Append-only plugin observations. Sprint 7 starts this pattern with `file_watch.snapshot`, while `plugin_state` remains the compatibility/current-state row for existing runtime reads.
+
+For existing databases, apply the matching migration script before deploy:
+`python3 scripts/migrate-hickey-sprint-7-plugin-facts.py /path/to/ductile.db`
+
+### 6. `schedule_entries`
 The persistent state of the scheduler. Tracks when each schedule last fired and when it is due next.
 
-### 6. `circuit_breakers`
+### 7. `circuit_breakers`
 Current-state compatibility/cache row for scheduled poll circuit breakers.
 
-### 7. `circuit_breaker_transitions`
+### 8. `circuit_breaker_transitions`
 Append-only transition facts for circuit breakers. Use this table to explain why a breaker opened, moved half-open, closed, or was manually reset.
 
 ---
@@ -98,6 +104,13 @@ LIMIT 1;
 
 -- Inspect a plugin's persistent state
 SELECT state FROM plugin_state WHERE plugin_name = 'my-plugin';
+
+-- Inspect recent append-only plugin facts
+SELECT created_at, fact_type, job_id, command, fact_json
+FROM plugin_facts
+WHERE plugin_name = 'file_watch'
+ORDER BY created_at DESC
+LIMIT 20;
 ```
 
 ### Scheduler Inspection

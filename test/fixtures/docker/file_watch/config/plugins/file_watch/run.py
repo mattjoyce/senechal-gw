@@ -106,6 +106,13 @@ def compact_ok(
     return out
 
 
+def snapshot_state(watches: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "watches": watches,
+        "last_poll_at": iso_now(),
+    }
+
+
 def normalize_watches(config: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[str]]:
     raw = config.get("watches", [])
     if raw is None:
@@ -330,10 +337,7 @@ def handle_poll(config: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
     return compact_ok(
         result=f"file_watch poll complete: watches={len(watches)} events={len(events)}",
         events=events,
-        state_updates={
-            "watches": next_state_watches,
-            "last_poll_at": iso_now(),
-        },
+        state_updates=snapshot_state(next_state_watches),
         logs=logs,
     )
 
@@ -368,10 +372,6 @@ def handle_health(config: Dict[str, Any]) -> Dict[str, Any]:
 
     return compact_ok(
         result=f"file_watch health OK (watches={len(watches)})",
-        state_updates={
-            "last_health_check": iso_now(),
-            "watches_configured": len(watches),
-        },
         logs=logs or [{"level": "info", "message": "file_watch health OK"}],
     )
 

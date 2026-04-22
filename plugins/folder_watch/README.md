@@ -3,8 +3,8 @@
 Scheduled directory watcher that emits aggregate or per-file change events for new/modified/deleted files.
 
 ## Commands
-- `poll` (write): Scan configured directories and emit change events.
-- `health` (read): Validate watch configuration and access.
+- `poll` (write): Scan configured directories, emit change events, and produce the current watcher snapshot.
+- `health` (read): Validate watch configuration and access without writing durable state.
 
 ## Configuration
 `watches`: list of watch entries with:
@@ -20,6 +20,13 @@ Scheduled directory watcher that emits aggregate or per-file change events for n
 
 ## Events
 `aggregate` mode emits one event with lists of `created`, `modified`, `deleted`. `per_file` emits per-path events with `change_type` metadata.
+
+## Persistence
+Successful `poll` runs emit a snapshot state shaped as:
+- `watches`
+- `last_poll_at`
+
+Core records that snapshot as append-only `plugin_facts` rows with fact type `folder_watch.snapshot` and keeps `plugin_state` as the latest compatibility snapshot for existing readers.
 
 ## Example
 ```yaml

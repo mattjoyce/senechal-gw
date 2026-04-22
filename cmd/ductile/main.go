@@ -257,6 +257,7 @@ Core Resources (Nouns):
 System Commands:
   system start      Start the integration gateway in foreground
   system status     Show global gateway health
+  system plugin-facts Show recent append-only plugin facts
   system reset      Reset a plugin/connector circuit breaker
   system reload     Reload configuration in a running gateway
   system watch      Real-time diagnostic monitoring TUI
@@ -328,6 +329,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemStatus(actionArgs)
+	case "plugin-facts":
+		if hasHelpFlag(actionArgs) {
+			printSystemPluginFactsHelp()
+			return 0
+		}
+		return runSystemPluginFacts(actionArgs)
 	case "reset":
 		if hasHelpFlag(actionArgs) {
 			printSystemResetHelp()
@@ -978,7 +985,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, breaker, reset, reload, watch, skills")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, reset, reload, watch, skills")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -1018,6 +1025,11 @@ func printSystemResetHelp() {
 func printSystemBreakerHelp() {
 	fmt.Println("Usage: ductile system breaker <plugin> [--command COMMAND] [--config PATH] [--json] [--limit N]")
 	fmt.Println("Show current circuit breaker state and recent transition history.")
+}
+
+func printSystemPluginFactsHelp() {
+	fmt.Println("Usage: ductile system plugin-facts <plugin> [--fact-type TYPE] [--config PATH] [--json] [--limit N]")
+	fmt.Println("Show recent append-only plugin facts and their recorded JSON payloads.")
 }
 
 func printSystemReloadHelp() {
@@ -1099,6 +1111,22 @@ type systemBreakerReport struct {
 	LastJobID     *string                         `json:"last_job_id,omitempty"`
 	UpdatedAt     *string                         `json:"updated_at,omitempty"`
 	Transitions   []systemBreakerTransitionReport `json:"transitions"`
+}
+
+type systemPluginFactRow struct {
+	ID        string          `json:"id"`
+	Plugin    string          `json:"plugin"`
+	FactType  string          `json:"fact_type"`
+	JobID     string          `json:"job_id"`
+	Command   string          `json:"command"`
+	Fact      json.RawMessage `json:"fact"`
+	CreatedAt string          `json:"created_at"`
+}
+
+type systemPluginFactsReport struct {
+	Plugin   string                `json:"plugin"`
+	FactType string                `json:"fact_type,omitempty"`
+	Facts    []systemPluginFactRow `json:"facts"`
 }
 
 func runSystemBreaker(actionArgs []string) int {
@@ -1253,6 +1281,106 @@ func renderSystemBreakerHuman(report systemBreakerReport) {
 		}
 		fmt.Printf("- %s %s -> %s reason=%s failure_count=%d%s\n",
 			transition.CreatedAt, from, transition.ToState, transition.Reason, transition.FailureCount, job)
+	}
+}
+
+func runSystemPluginFacts(actionArgs []string) int {
+	fs := flag.NewFlagSet("plugin-facts", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	factType := fs.String("fact-type", "", "Fact type filter")
+	jsonOut := fs.Bool("json", false, "Output plugin facts as JSON")
+	limit := fs.Int("limit", 20, "Maximum fact rows to show")
+	if err := fs.Parse(actionArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: ductile system plugin-facts <plugin> [--fact-type TYPE] [--config PATH] [--json] [--limit N]")
+		return 1
+	}
+	pluginName := strings.TrimSpace(fs.Arg(0))
+	if pluginName == "" {
+		fmt.Fprintln(os.Stderr, "plugin name is required")
+		return 1
+	}
+	if *limit <= 0 {
+		fmt.Fprintln(os.Stderr, "limit must be greater than zero")
+		return 1
+	}
+
+	cfg, err := loadConfigForTool(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+	if _, ok := cfg.Plugins[pluginName]; !ok {
+		fmt.Fprintf(os.Stderr, "Unknown plugin: %s\n", pluginName)
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	st := state.NewStore(db)
+	facts, err := st.ListFacts(context.Background(), pluginName, strings.TrimSpace(*factType), *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load plugin facts: %v\n", err)
+		return 1
+	}
+
+	report := buildSystemPluginFactsReport(pluginName, strings.TrimSpace(*factType), facts)
+	if *jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to render JSON plugin facts: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+
+	renderSystemPluginFactsHuman(report)
+	return 0
+}
+
+func buildSystemPluginFactsReport(pluginName, factType string, facts []state.PluginFact) systemPluginFactsReport {
+	report := systemPluginFactsReport{
+		Plugin:   pluginName,
+		FactType: factType,
+		Facts:    make([]systemPluginFactRow, 0, len(facts)),
+	}
+	for _, fact := range facts {
+		report.Facts = append(report.Facts, systemPluginFactRow{
+			ID:        fact.ID,
+			Plugin:    fact.PluginName,
+			FactType:  fact.FactType,
+			JobID:     fact.JobID,
+			Command:   fact.Command,
+			Fact:      fact.FactJSON,
+			CreatedAt: fact.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return report
+}
+
+func renderSystemPluginFactsHuman(report systemPluginFactsReport) {
+	fmt.Printf("Plugin facts for %s\n", report.Plugin)
+	if report.FactType != "" {
+		fmt.Printf("Fact type filter: %s\n", report.FactType)
+	}
+	if len(report.Facts) == 0 {
+		fmt.Println("No facts found.")
+		return
+	}
+
+	for _, fact := range report.Facts {
+		fmt.Printf("\n%s  %s  job=%s  command=%s\n", fact.CreatedAt, fact.FactType, fact.JobID, fact.Command)
+		fmt.Println(string(fact.Fact))
 	}
 }
 

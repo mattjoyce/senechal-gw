@@ -191,6 +191,164 @@ echo '{"status": "ok", "result": "ok", "state_updates": {"last_run": "2024-01-01
 	}
 }
 
+func TestDispatcher_ExecuteJob_FileWatchPollRecordsFactAndDerivedState(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status":"ok","result":"file_watch poll complete: watches=1 events=0","state_updates":{"watches":{"single-file":{"exists":true,"fingerprint":"abc123","path":"/tmp/file.txt","updated_at":"2026-04-22T01:02:03Z"}},"last_poll_at":"2026-04-22T01:02:03Z"}}'
+`
+	plug := createTestPlugin(t, pluginsDir, "file_watch", script)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(file_watch): %v", err)
+	}
+
+	disp.cfg.Plugins["file_watch"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "file_watch",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job, got nil")
+	}
+
+	disp.executeJob(ctx, job)
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", jobID).Scan(&status); err != nil {
+		t.Fatalf("query job status: %v", err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", status)
+	}
+
+	facts, err := disp.state.ListFacts(ctx, "file_watch", state.FactTypeFileWatchSnapshot, 10)
+	if err != nil {
+		t.Fatalf("ListFacts: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("len(facts) = %d, want 1", len(facts))
+	}
+	if facts[0].JobID != jobID {
+		t.Fatalf("fact job_id = %q, want %q", facts[0].JobID, jobID)
+	}
+
+	pluginState, err := disp.state.Get(ctx, "file_watch")
+	if err != nil {
+		t.Fatalf("Get(file_watch): %v", err)
+	}
+	if string(pluginState) != string(facts[0].FactJSON) {
+		t.Fatalf("compatibility state = %s, want %s", string(pluginState), string(facts[0].FactJSON))
+	}
+}
+
+func TestPluginFactFromStateUpdatesRecognizesMigratedPlugins(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		job       *queue.Job
+		updates   json.RawMessage
+		wantType  string
+		wantMatch bool
+	}{
+		{
+			name:      "file_watch poll",
+			job:       &queue.Job{ID: "job-1", Plugin: "file_watch", Command: "poll"},
+			updates:   json.RawMessage(`{"last_poll_at":"2026-04-22T00:00:00Z","watches":{}}`),
+			wantType:  state.FactTypeFileWatchSnapshot,
+			wantMatch: true,
+		},
+		{
+			name:      "folder_watch poll",
+			job:       &queue.Job{ID: "job-2", Plugin: "folder_watch", Command: "poll"},
+			updates:   json.RawMessage(`{"last_poll_at":"2026-04-22T00:00:00Z","watches":{}}`),
+			wantType:  state.FactTypeFolderWatchSnapshot,
+			wantMatch: true,
+		},
+		{
+			name:      "py-greet poll",
+			job:       &queue.Job{ID: "job-3", Plugin: "py-greet", Command: "poll"},
+			updates:   json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z","last_greeting":"Hello, Ductile!"}`),
+			wantType:  state.FactTypePyGreetSnapshot,
+			wantMatch: true,
+		},
+		{
+			name:      "ts-bun-greet poll",
+			job:       &queue.Job{ID: "job-4", Plugin: "ts-bun-greet", Command: "poll"},
+			updates:   json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z","last_greeting":"Hello, Ductile!"}`),
+			wantType:  state.FactTypeTSBunGreetSnapshot,
+			wantMatch: true,
+		},
+		{
+			name:      "stress state",
+			job:       &queue.Job{ID: "job-5", Plugin: "stress", Command: "state"},
+			updates:   json.RawMessage(`{"count":42}`),
+			wantType:  state.FactTypeStressStateSnapshot,
+			wantMatch: true,
+		},
+		{
+			name:      "stress health ignored",
+			job:       &queue.Job{ID: "job-6", Plugin: "stress", Command: "health"},
+			updates:   json.RawMessage(`{"count":42}`),
+			wantMatch: false,
+		},
+		{
+			name:      "unknown plugin ignored",
+			job:       &queue.Job{ID: "job-7", Plugin: "echo", Command: "poll"},
+			updates:   json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z"}`),
+			wantMatch: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fact, ok, err := pluginFactFromStateUpdates(tt.job, tt.updates)
+			if err != nil {
+				t.Fatalf("pluginFactFromStateUpdates() error = %v", err)
+			}
+			if ok != tt.wantMatch {
+				t.Fatalf("pluginFactFromStateUpdates() ok = %v, want %v", ok, tt.wantMatch)
+			}
+			if !tt.wantMatch {
+				if fact != nil {
+					t.Fatalf("expected nil fact for unmatched plugin, got %+v", fact)
+				}
+				return
+			}
+			if fact == nil {
+				t.Fatal("expected fact, got nil")
+			}
+			if fact.PluginName != tt.job.Plugin || fact.Command != tt.job.Command || fact.JobID != tt.job.ID {
+				t.Fatalf("unexpected fact identity: %+v", fact)
+			}
+			if fact.FactType != tt.wantType {
+				t.Fatalf("fact type = %q, want %q", fact.FactType, tt.wantType)
+			}
+			if string(fact.FactJSON) != string(tt.updates) {
+				t.Fatalf("fact json = %s, want %s", string(fact.FactJSON), string(tt.updates))
+			}
+		})
+	}
+}
+
 func TestDispatcher_ExecuteJob_PluginError(t *testing.T) {
 	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
 	defer cleanup()

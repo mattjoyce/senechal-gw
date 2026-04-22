@@ -2,6 +2,9 @@
 
 Ductile is built on a **spawn-per-command** model. Any executable that can read JSON from `stdin` and write JSON to `stdout` can serve as a Ductile plugin (or "Skill").
 
+See also: [Plugin Facts Compliance](./PLUGIN_FACTS.md) for the Sprint 7
+append-only fact pattern and the current `file_watch` exemplar.
+
 ---
 
 ## 1. The Lifecycle
@@ -48,7 +51,13 @@ When a job is triggered (via scheduler, API, or webhook):
 -   `result`: **Required for `status: ok`**. A short human-readable summary of what the plugin did.
 -   `retry`: Protocol v2 compatibility signal for permanent failures. Omit it for the default retryable error path; set `false` only when retrying the same request cannot succeed. Core owns the final retry decision.
 -   `state_updates`: Top-level keys here are shallow-merged into the plugin's persistent state.
+-   Some shipped plugins may also have specific successful `state_updates` promoted by core into append-only `plugin_facts` rows. Sprint 7 starts this with `file_watch poll` snapshots while keeping protocol v2 unchanged.
 -   `events`: An array of `{ "type": "...", "payload": {} }` to trigger downstream pipelines.
+
+For a plugin to participate in `plugin_facts`, the emitted `state_updates`
+should be a stable object snapshot with an explicit reducer/compatibility story,
+not just arbitrary mutable metadata. `health` commands should remain diagnostic
+unless there is a very strong reason otherwise.
 
 ---
 
