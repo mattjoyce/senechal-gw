@@ -249,6 +249,51 @@ func TestContextStoreDeepAccretionRejectsMutation(t *testing.T) {
 	}
 }
 
+func TestContextStoreDeepAccretionAllowsRouteDepthAdvance(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store := NewContextStore(db)
+
+	root, err := store.Create(
+		context.Background(),
+		nil,
+		"chain",
+		"",
+		json.RawMessage(`{"ductile":{"pipeline_instance_id":"instance-1","route_depth":0,"route_max_depth":3}}`),
+	)
+	if err != nil {
+		t.Fatalf("Create(root): %v", err)
+	}
+
+	child, err := store.Create(
+		context.Background(),
+		&root.ID,
+		"chain",
+		"step_a",
+		json.RawMessage(`{"ductile":{"route_depth":1},"repo":{"name":"demo"}}`),
+	)
+	if err != nil {
+		t.Fatalf("Create(child): %v", err)
+	}
+
+	if got := RouteDepthFromAccumulated(child.AccumulatedJSON); got != 1 {
+		t.Fatalf("route depth = %d, want 1", got)
+	}
+	if got := PipelineInstanceIDFromAccumulated(child.AccumulatedJSON); got != "instance-1" {
+		t.Fatalf("pipeline instance id = %q, want instance-1", got)
+	}
+	if got := RouteMaxDepthFromAccumulated(child.AccumulatedJSON); got != 3 {
+		t.Fatalf("route max depth = %d, want 3", got)
+	}
+}
+
 func TestContextStoreMaxAccumulatedSize(t *testing.T) {
 	t.Parallel()
 

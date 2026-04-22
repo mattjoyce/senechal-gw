@@ -311,6 +311,11 @@ func deepAccreteRawMap(dst, updates map[string]json.RawMessage, prefix string) e
 			continue
 		}
 
+		if path == PipelineInstanceNamespace+"."+RouteDepthField {
+			dst[key] = updateValue
+			continue
+		}
+
 		currentObject, currentIsObject := decodeRawObject(currentValue)
 		updateObject, updateIsObject := decodeRawObject(updateValue)
 		if currentIsObject && updateIsObject {

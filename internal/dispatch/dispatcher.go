@@ -851,7 +851,21 @@ func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (ma
 	return out, nil
 }
 
+type routeEventsOptions struct {
+	allowMissingExplicitBaggage bool
+}
+
 func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []protocol.Event, logger *slog.Logger) error {
+	return d.routeEventsWithOptions(ctx, job, events, logger, routeEventsOptions{})
+}
+
+func (d *Dispatcher) routeEventsWithOptions(
+	ctx context.Context,
+	job *queue.Job,
+	events []protocol.Event,
+	logger *slog.Logger,
+	opts routeEventsOptions,
+) error {
 	if d.router == nil {
 		logger.Info("plugin emitted events (router not configured)", "count", len(events))
 		return nil
@@ -931,7 +945,7 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 
 			var contextID *string
 			if d.contexts != nil {
-				updates, err := d.contextUpdatesForDispatch(ctx, next)
+				updates, err := d.contextUpdatesForDispatch(ctx, next, opts)
 				if err != nil {
 					return err
 				}
@@ -1212,7 +1226,23 @@ func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queu
 }
 
 func (d *Dispatcher) routeSkippedStepSuccessors(ctx context.Context, logger *slog.Logger, job *queue.Job, reason string) error {
-	if err := d.routeEvents(ctx, job, []protocol.Event{{Type: "ductile.step.skipped", Payload: map[string]any{"reason": reason}}}, logger); err != nil {
+	event := protocol.Event{
+		Type:    "ductile.step.skipped",
+		Payload: map[string]any{},
+	}
+	if len(job.Payload) > 0 {
+		parsed, err := eventFromJobPayload(job.Payload)
+		if err != nil {
+			return fmt.Errorf("parse skipped job payload: %w", err)
+		}
+		event = parsed
+		if event.Payload == nil {
+			event.Payload = map[string]any{}
+		}
+	}
+	if err := d.routeEventsWithOptions(ctx, job, []protocol.Event{event}, logger, routeEventsOptions{
+		allowMissingExplicitBaggage: true,
+	}); err != nil {
 		return err
 	}
 	return nil
@@ -1226,7 +1256,7 @@ func (d *Dispatcher) dispatchUsesExplicitBaggage(next router.Dispatch) bool {
 	return found && node.Baggage != nil && !node.Baggage.Empty()
 }
 
-func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.Dispatch) (json.RawMessage, error) {
+func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.Dispatch, opts routeEventsOptions) (json.RawMessage, error) {
 	var (
 		updates json.RawMessage
 		err     error
@@ -1239,6 +1269,15 @@ func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.
 			}
 			claims, err := baggage.ApplyClaims(next.Event.Payload, node.Baggage, parentContext)
 			if err != nil {
+				if opts.allowMissingExplicitBaggage && errors.Is(err, baggage.ErrPathNotFound) {
+					d.logger.Debug("skipped-step successor missing explicit baggage source; inheriting parent context only",
+						"pipeline", next.PipelineName,
+						"step_id", next.StepID,
+						"error", err,
+					)
+					updates = json.RawMessage(`{}`)
+					goto controlPlane
+				}
 				return nil, fmt.Errorf("apply baggage claims for %s:%s: %w", next.PipelineName, next.StepID, err)
 			}
 			raw, err := json.Marshal(claims)
@@ -1262,6 +1301,7 @@ func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.
 		}
 	}
 
+controlPlane:
 	if next.RouteMaxDepth > 0 {
 		updates, err = state.WithRouteMaxDepth(updates, next.RouteMaxDepth)
 		if err != nil {

@@ -18,6 +18,8 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
+	"github.com/mattjoyce/ductile/internal/router/conditions"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 	"github.com/mattjoyce/ductile/internal/workspace"
@@ -1275,7 +1277,7 @@ func TestDispatcherContextUpdatesForDispatchUsesExplicitBaggage(t *testing.T) {
 				"metadata":  map[string]any{"duration": float64(12)},
 			},
 		},
-	})
+	}, routeEventsOptions{})
 	if err != nil {
 		t.Fatalf("contextUpdatesForDispatch() error = %v", err)
 	}
@@ -1444,6 +1446,269 @@ echo '{"status":"ok","result":"step b complete"}'
 	}
 	if got := state.PipelineInstanceIDFromAccumulated(childCtx.AccumulatedJSON); got != instanceID {
 		t.Fatalf("child pipeline instance id = %q, want %q", got, instanceID)
+	}
+}
+
+func TestDispatcher_ExecuteJob_RootExplicitBaggageAndSkippedSuccessorClaimsDoNotFail(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pluginsDir): %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+	registry := plugin.NewRegistry()
+	hub := events.NewHub(128)
+
+	starterScript := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"start","events":[{"type":"chain.start","payload":{"repo":"demo"}}]}'
+`
+	seedScript := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"seeded","events":[{"type":"chain.progress","payload":{"run":false}}]}'
+`
+	skipScript := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"should-not-run"}'
+`
+	commitScript := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"should-also-not-run"}'
+`
+
+	starter := createTestPlugin(t, pluginsDir, "starter", starterScript)
+	seeder := createTestPlugin(t, pluginsDir, "seeder", seedScript)
+	skipper := createTestPlugin(t, pluginsDir, "skipper", skipScript)
+	committer := createTestPlugin(t, pluginsDir, "committer", commitScript)
+	for _, plug := range []*plugin.Plugin{starter, seeder, skipper, committer} {
+		if err := registry.Add(plug); err != nil {
+			t.Fatalf("registry.Add(%s): %v", plug.Name, err)
+		}
+	}
+
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: seed
+        uses: seeder
+        baggage:
+          repo.name: payload.repo
+      - id: maybe
+        uses: skipper
+      - id: commit
+        uses: committer
+        baggage:
+          commit.changed: payload.changed
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	set, err := dsl.LoadAndCompileFiles([]string{pipelinePath})
+	if err != nil {
+		t.Fatalf("LoadAndCompileFiles: %v", err)
+	}
+	pipeline := set.Pipelines["chain"]
+	if pipeline == nil {
+		t.Fatal("compiled pipeline chain not found")
+	}
+	maybeNode, ok := pipeline.Nodes["maybe"]
+	if !ok {
+		t.Fatal("compiled node maybe not found")
+	}
+	maybeNode.Condition = &conditions.Condition{
+		Path:  "payload.run",
+		Op:    conditions.OpEq,
+		Value: true,
+	}
+	pipeline.Nodes["maybe"] = maybeNode
+	commitNode, ok := pipeline.Nodes["commit"]
+	if !ok {
+		t.Fatal("compiled node commit not found")
+	}
+	commitNode.Condition = &conditions.Condition{
+		Path:  "payload.changed",
+		Op:    conditions.OpEq,
+		Value: true,
+	}
+	pipeline.Nodes["commit"] = commitNode
+	routerEngine := router.New(set, nil)
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["starter"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Poll: 5 * time.Second}}
+	cfg.Plugins["seeder"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+	cfg.Plugins["skipper"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+	cfg.Plugins["committer"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
+
+	disp := New(q, st, contextStore, nil, routerEngine, registry, hub, cfg)
+	ctx := context.Background()
+
+	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "starter",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue(root): %v", err)
+	}
+
+	rootJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(root): %v", err)
+	}
+	if rootJob == nil {
+		t.Fatal("expected root job")
+	}
+	disp.executeJob(ctx, rootJob)
+
+	seedJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(seed): %v", err)
+	}
+	if seedJob == nil {
+		t.Fatal("expected seed job")
+	}
+	if seedJob.EventContextID == nil {
+		t.Fatal("seed job event_context_id is nil")
+	}
+
+	seedCtx, err := contextStore.Get(ctx, *seedJob.EventContextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(seed): %v", err)
+	}
+	if got := state.RouteDepthFromAccumulated(seedCtx.AccumulatedJSON); got != 1 {
+		t.Fatalf("seed route depth = %d, want 1", got)
+	}
+	if got := state.PipelineInstanceIDFromAccumulated(seedCtx.AccumulatedJSON); got == "" {
+		t.Fatal("seed pipeline instance id is empty")
+	}
+	var seedAccumulated map[string]any
+	if err := json.Unmarshal(seedCtx.AccumulatedJSON, &seedAccumulated); err != nil {
+		t.Fatalf("unmarshal seed accumulated context: %v", err)
+	}
+	repo := seedAccumulated["repo"].(map[string]any)
+	if repo["name"] != "demo" {
+		t.Fatalf("repo.name = %v, want demo", repo["name"])
+	}
+
+	disp.executeJob(ctx, seedJob)
+
+	maybeJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(maybe): %v", err)
+	}
+	if maybeJob == nil {
+		t.Fatal("expected maybe job")
+	}
+	if maybeJob.EventContextID == nil {
+		t.Fatal("maybe job event_context_id is nil")
+	}
+
+	maybeCtx, err := contextStore.Get(ctx, *maybeJob.EventContextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(maybe): %v", err)
+	}
+	if got := state.RouteDepthFromAccumulated(maybeCtx.AccumulatedJSON); got != 2 {
+		t.Fatalf("maybe route depth = %d, want 2", got)
+	}
+
+	disp.executeJob(ctx, maybeJob)
+
+	maybeResult, err := q.GetJobByID(ctx, maybeJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(maybe pre-commit): %v", err)
+	}
+	if maybeResult.Status != queue.StatusSkipped {
+		t.Fatalf("maybe pre-commit status = %q, want %q (last_error=%q)", maybeResult.Status, queue.StatusSkipped, deref(maybeResult.LastError))
+	}
+
+	commitJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(commit): %v", err)
+	}
+	if commitJob == nil {
+		t.Fatalf("expected commit job after skipped maybe step")
+	}
+	if commitJob.EventContextID == nil {
+		t.Fatal("commit job event_context_id is nil")
+	}
+
+	commitCtx, err := contextStore.Get(ctx, *commitJob.EventContextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(commit): %v", err)
+	}
+	if got := state.RouteDepthFromAccumulated(commitCtx.AccumulatedJSON); got != 3 {
+		t.Fatalf("commit route depth = %d, want 3", got)
+	}
+	var commitAccumulated map[string]any
+	if err := json.Unmarshal(commitCtx.AccumulatedJSON, &commitAccumulated); err != nil {
+		t.Fatalf("unmarshal commit accumulated context: %v", err)
+	}
+	if _, exists := commitAccumulated["commit"]; exists {
+		t.Fatalf("commit baggage unexpectedly materialized from skipped predecessor: %+v", commitAccumulated["commit"])
+	}
+	repo = commitAccumulated["repo"].(map[string]any)
+	if repo["name"] != "demo" {
+		t.Fatalf("inherited repo.name = %v, want demo", repo["name"])
+	}
+
+	disp.executeJob(ctx, commitJob)
+
+	rootResult, err := q.GetJobByID(ctx, rootJobID)
+	if err != nil {
+		t.Fatalf("GetJobByID(root): %v", err)
+	}
+	if rootResult.Status != queue.StatusSucceeded {
+		t.Fatalf("root status = %q, want %q", rootResult.Status, queue.StatusSucceeded)
+	}
+
+	seedResult, err := q.GetJobByID(ctx, seedJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(seed): %v", err)
+	}
+	if seedResult.Status != queue.StatusSucceeded {
+		t.Fatalf("seed status = %q, want %q", seedResult.Status, queue.StatusSucceeded)
+	}
+
+	maybeResult, err = q.GetJobByID(ctx, maybeJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(maybe): %v", err)
+	}
+	if maybeResult.Status != queue.StatusSkipped {
+		t.Fatalf("maybe status = %q, want %q", maybeResult.Status, queue.StatusSkipped)
+	}
+
+	commitResult, err := q.GetJobByID(ctx, commitJob.ID)
+	if err != nil {
+		t.Fatalf("GetJobByID(commit): %v", err)
+	}
+	if commitResult.Status != queue.StatusSkipped {
+		t.Fatalf("commit status = %q, want %q", commitResult.Status, queue.StatusSkipped)
+	}
+
+	var failedCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_queue WHERE status = 'failed'`).Scan(&failedCount); err != nil {
+		t.Fatalf("count failed jobs: %v", err)
+	}
+	if failedCount != 0 {
+		t.Fatalf("failed job count = %d, want 0", failedCount)
 	}
 }
 

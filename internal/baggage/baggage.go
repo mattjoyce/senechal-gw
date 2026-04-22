@@ -2,6 +2,7 @@ package baggage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,21 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
+
+var ErrPathNotFound = errors.New("path not found")
+
+// PathNotFoundError reports a missing source path while resolving baggage.
+type PathNotFoundError struct {
+	Path string
+}
+
+func (e *PathNotFoundError) Error() string {
+	return "path not found"
+}
+
+func (e *PathNotFoundError) Is(target error) bool {
+	return target == ErrPathNotFound
+}
 
 // ApplyClaims evaluates a baggage spec against the current payload and context.
 func ApplyClaims(payload map[string]any, spec *dsl.BaggageSpec, ctx map[string]any) (map[string]any, error) {
@@ -31,7 +47,7 @@ func ApplyClaims(payload map[string]any, spec *dsl.BaggageSpec, ctx map[string]a
 			return nil, fmt.Errorf("resolve baggage from %q: %w", spec.Bulk.From, err)
 		}
 		if !present {
-			return nil, fmt.Errorf("resolve baggage from %q: path not found", spec.Bulk.From)
+			return nil, fmt.Errorf("resolve baggage from %q: %w", spec.Bulk.From, &PathNotFoundError{Path: spec.Bulk.From})
 		}
 		object, ok := value.(map[string]any)
 		if !ok {
@@ -49,7 +65,7 @@ func ApplyClaims(payload map[string]any, spec *dsl.BaggageSpec, ctx map[string]a
 			return nil, fmt.Errorf("resolve baggage %s from %q: %w", path, expr, err)
 		}
 		if !present {
-			return nil, fmt.Errorf("resolve baggage %s from %q: path not found", path, expr)
+			return nil, fmt.Errorf("resolve baggage %s from %q: %w", path, expr, &PathNotFoundError{Path: expr})
 		}
 		if err := setPath(out, path, value); err != nil {
 			return nil, err
