@@ -35,6 +35,17 @@ func CompileSpecs(specs []PipelineSpec) (*Set, error) {
 	if err := validatePipelineCalls(out.Pipelines); err != nil {
 		return nil, err
 	}
+	if err := assignPipelineMaxRouteDepths(out.Pipelines); err != nil {
+		return nil, err
+	}
+	for name, pipeline := range out.Pipelines {
+		pipeline.CompiledRoutes = BuildCompiledRoutes(pipeline)
+		fingerprint, err := fingerprintPipeline(pipeline)
+		if err != nil {
+			return nil, fmt.Errorf("pipeline %q: %w", name, err)
+		}
+		pipeline.Fingerprint = fingerprint
+	}
 
 	return out, nil
 }
@@ -84,20 +95,14 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 		return nil, err
 	}
 	pipeline.EntryNodeIDs = sortedUnique(entry)
-	pipeline.TerminalNodeIDs = sortedUnique(terminal)
+	pipeline.TerminalExits = sortedTerminalExits(terminal)
+	pipeline.TerminalNodeIDs = terminalNodeIDs(terminal)
 	pipeline.CalledPipelines = sortedMapKeys(builder.called)
 	sortEdges(pipeline.Edges)
-	pipeline.CompiledRoutes = BuildCompiledRoutes(pipeline)
 
 	if err := validatePipelineDAG(pipeline); err != nil {
 		return nil, err
 	}
-
-	fingerprint, err := fingerprintPipeline(pipeline)
-	if err != nil {
-		return nil, err
-	}
-	pipeline.Fingerprint = fingerprint
 	return pipeline, nil
 }
 
@@ -107,12 +112,17 @@ type compileBuilder struct {
 	called   map[string]struct{}
 }
 
-func (b *compileBuilder) compileSteps(steps []StepSpec) (entry []string, terminal []string, err error) {
+type compileExit struct {
+	NodeID    string
+	EventType string
+}
+
+func (b *compileBuilder) compileSteps(steps []StepSpec) (entry []string, terminal []compileExit, err error) {
 	if len(steps) == 0 {
 		return nil, nil, fmt.Errorf("steps must be non-empty")
 	}
 
-	var previous []string
+	var previous []compileExit
 	for i, step := range steps {
 		stepEntry, stepTerminal, err := b.compileStep(step)
 		if err != nil {
@@ -134,7 +144,7 @@ func (b *compileBuilder) compileSteps(steps []StepSpec) (entry []string, termina
 	return entry, previous, nil
 }
 
-func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []string, err error) {
+func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []compileExit, err error) {
 	modeCount := 0
 	if strings.TrimSpace(step.Uses) != "" {
 		modeCount++
@@ -179,15 +189,19 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 			return nil, nil, err
 		}
 		node := Node{
-			ID:        id,
-			Kind:      NodeKindUses,
-			Uses:      strings.TrimSpace(step.Uses),
-			Condition: cond,
-			With:      step.With,
-			Baggage:   step.Baggage.clone(),
+			ID:      id,
+			Kind:    NodeKindUses,
+			Uses:    strings.TrimSpace(step.Uses),
+			With:    step.With,
+			Baggage: step.Baggage.clone(),
 		}
 		b.pipeline.Nodes[id] = node
-		return []string{id}, []string{id}, nil
+		entry = []string{id}
+		terminal = []compileExit{{NodeID: id}}
+		if cond != nil {
+			return b.wrapConditionalStep(id, cond, entry, terminal)
+		}
+		return entry, terminal, nil
 
 	case strings.TrimSpace(step.Call) != "":
 		id, err := b.allocNodeID(step.ID)
@@ -196,21 +210,25 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 		}
 		callTarget := strings.TrimSpace(step.Call)
 		node := Node{
-			ID:        id,
-			Kind:      NodeKindCall,
-			Call:      callTarget,
-			Condition: cond,
+			ID:   id,
+			Kind: NodeKindCall,
+			Call: callTarget,
 		}
 		b.pipeline.Nodes[id] = node
 		b.called[callTarget] = struct{}{}
-		return []string{id}, []string{id}, nil
+		entry = []string{id}
+		terminal = []compileExit{{NodeID: id}}
+		if cond != nil {
+			return b.wrapConditionalStep(id, cond, entry, terminal)
+		}
+		return entry, terminal, nil
 
 	case len(step.Steps) > 0:
 		return b.compileSteps(step.Steps)
 
 	case len(step.Split) > 0:
 		var allEntry []string
-		var allTerminal []string
+		var allTerminal []compileExit
 		for i, branch := range step.Split {
 			branchEntry, branchTerminal, err := b.compileStep(branch)
 			if err != nil {
@@ -219,10 +237,36 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 			allEntry = append(allEntry, branchEntry...)
 			allTerminal = append(allTerminal, branchTerminal...)
 		}
-		return sortedUnique(allEntry), sortedUnique(allTerminal), nil
+		return sortedUnique(allEntry), sortedCompileExits(allTerminal), nil
 	}
 
 	return nil, nil, fmt.Errorf("unreachable step state")
+}
+
+func (b *compileBuilder) wrapConditionalStep(stepID string, cond *conditions.Condition, entry []string, terminal []compileExit) ([]string, []compileExit, error) {
+	switchID, err := b.allocNodeID(stepID + "__switch")
+	if err != nil {
+		return nil, nil, err
+	}
+	clone := *cond
+	b.pipeline.Nodes[switchID] = Node{
+		ID:        switchID,
+		Kind:      NodeKindSwitch,
+		Uses:      "core.switch",
+		Condition: &clone,
+	}
+	for _, destination := range entry {
+		b.pipeline.Edges = append(b.pipeline.Edges, Edge{
+			From:      switchID,
+			To:        destination,
+			EventType: "ductile.switch.true",
+		})
+	}
+	terminal = append(terminal, compileExit{
+		NodeID:    switchID,
+		EventType: "ductile.switch.false",
+	})
+	return []string{switchID}, sortedCompileExits(terminal), nil
 }
 
 func validateBaggageSpec(spec *BaggageSpec) error {
@@ -300,10 +344,14 @@ func (b *compileBuilder) allocNodeID(preferred string) (string, error) {
 	return id, nil
 }
 
-func (b *compileBuilder) addEdges(fromNodes, toNodes []string) {
+func (b *compileBuilder) addEdges(fromNodes []compileExit, toNodes []string) {
 	for _, from := range fromNodes {
 		for _, to := range toNodes {
-			b.pipeline.Edges = append(b.pipeline.Edges, Edge{From: from, To: to})
+			b.pipeline.Edges = append(b.pipeline.Edges, Edge{
+				From:      from.NodeID,
+				To:        to,
+				EventType: from.EventType,
+			})
 		}
 	}
 }
@@ -330,7 +378,7 @@ func BuildCompiledRoutes(p *Pipeline) []CompiledRoute {
 		routes = append(routes, CompiledRoute{
 			ID:          "entry:" + entryID,
 			Pipeline:    p.Name,
-			Source:      source,
+			Source:      withRouteDepth(source, p.MaxRouteDepth),
 			Destination: routeDestinationForNode(node),
 		})
 	}
@@ -343,22 +391,30 @@ func BuildCompiledRoutes(p *Pipeline) []CompiledRoute {
 		routes = append(routes, CompiledRoute{
 			ID:       "edge:" + edge.From + "->" + edge.To,
 			Pipeline: p.Name,
-			Source: CompiledRouteSource{
-				Pipeline: p.Name,
-				StepID:   edge.From,
-			},
+			Source: withRouteDepth(CompiledRouteSource{
+				Pipeline:  p.Name,
+				StepID:    edge.From,
+				EventType: edge.EventType,
+			}, p.MaxRouteDepth),
 			Destination: routeDestinationForNode(node),
 		})
 	}
 
-	for _, terminalID := range p.TerminalNodeIDs {
+	terminalExits := p.TerminalExits
+	if len(terminalExits) == 0 {
+		for _, terminalID := range p.TerminalNodeIDs {
+			terminalExits = append(terminalExits, TerminalExit{StepID: terminalID})
+		}
+	}
+	for _, terminal := range terminalExits {
 		routes = append(routes, CompiledRoute{
-			ID:       "terminal:" + terminalID,
+			ID:       terminalRouteID(terminal),
 			Pipeline: p.Name,
-			Source: CompiledRouteSource{
-				Pipeline: p.Name,
-				StepID:   terminalID,
-			},
+			Source: withRouteDepth(CompiledRouteSource{
+				Pipeline:  p.Name,
+				StepID:    terminal.StepID,
+				EventType: terminal.EventType,
+			}, p.MaxRouteDepth),
 			Destination: CompiledRouteDestination{
 				Kind: CompiledRouteDestinationTerminal,
 			},
@@ -377,6 +433,13 @@ func routeDestinationForNode(node Node) CompiledRouteDestination {
 			StepID:       node.ID,
 			CallPipeline: node.Call,
 		}
+	case NodeKindSwitch:
+		return CompiledRouteDestination{
+			Kind:    CompiledRouteDestinationUses,
+			StepID:  node.ID,
+			Plugin:  "core.switch",
+			Command: "handle",
+		}
 	default:
 		return CompiledRouteDestination{
 			Kind:    CompiledRouteDestinationUses,
@@ -385,6 +448,20 @@ func routeDestinationForNode(node Node) CompiledRouteDestination {
 			Command: "handle",
 		}
 	}
+}
+
+func withRouteDepth(source CompiledRouteSource, depth int) CompiledRouteSource {
+	if depth > 0 {
+		source.DepthLT = depth
+	}
+	return source
+}
+
+func terminalRouteID(exit TerminalExit) string {
+	if strings.TrimSpace(exit.EventType) == "" {
+		return "terminal:" + exit.StepID
+	}
+	return "terminal:" + exit.StepID + "@" + exit.EventType
 }
 
 func validatePipelineCalls(pipelines map[string]*Pipeline) error {
@@ -484,6 +561,95 @@ func validatePipelineDAG(p *Pipeline) error {
 	return nil
 }
 
+func assignPipelineMaxRouteDepths(pipelines map[string]*Pipeline) error {
+	memo := make(map[string]int, len(pipelines))
+	visiting := make(map[string]bool, len(pipelines))
+
+	var visit func(string) (int, error)
+	visit = func(name string) (int, error) {
+		if depth, ok := memo[name]; ok {
+			return depth, nil
+		}
+		if visiting[name] {
+			return 0, fmt.Errorf("pipeline max depth cycle detected at %q", name)
+		}
+		pipeline, ok := pipelines[name]
+		if !ok {
+			return 0, fmt.Errorf("pipeline %q not found", name)
+		}
+
+		visiting[name] = true
+		adj := make(map[string][]string, len(pipeline.Nodes))
+		for _, edge := range pipeline.Edges {
+			adj[edge.From] = append(adj[edge.From], edge.To)
+		}
+		nodeMemo := make(map[string]int, len(pipeline.Nodes))
+		var nodeDepth func(string) (int, error)
+		nodeDepth = func(nodeID string) (int, error) {
+			if depth, ok := nodeMemo[nodeID]; ok {
+				return depth, nil
+			}
+			node, ok := pipeline.Nodes[nodeID]
+			if !ok {
+				return 0, fmt.Errorf("pipeline %q missing node %q", name, nodeID)
+			}
+
+			own := 1
+			if node.Kind == NodeKindCall {
+				calledDepth, err := visit(node.Call)
+				if err != nil {
+					return 0, err
+				}
+				own = calledDepth
+			}
+
+			maxSucc := 0
+			for _, nextID := range adj[nodeID] {
+				depth, err := nodeDepth(nextID)
+				if err != nil {
+					return 0, err
+				}
+				if depth > maxSucc {
+					maxSucc = depth
+				}
+			}
+			total := own + maxSucc
+			nodeMemo[nodeID] = total
+			return total, nil
+		}
+
+		maxDepth := 0
+		for _, entryID := range pipeline.EntryNodeIDs {
+			depth, err := nodeDepth(entryID)
+			if err != nil {
+				return 0, err
+			}
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		if maxDepth == 0 {
+			maxDepth = 1
+		}
+		pipeline.MaxRouteDepth = maxDepth
+		memo[name] = maxDepth
+		delete(visiting, name)
+		return maxDepth, nil
+	}
+
+	names := make([]string, 0, len(pipelines))
+	for name := range pipelines {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, err := visit(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func fingerprintPipeline(p *Pipeline) (string, error) {
 	type fingerprintShape struct {
 		Name            string          `json:"name"`
@@ -492,7 +658,9 @@ func fingerprintPipeline(p *Pipeline) (string, error) {
 		Edges           []Edge          `json:"edges"`
 		EntryNodeIDs    []string        `json:"entry_node_ids"`
 		TerminalNodeIDs []string        `json:"terminal_node_ids"`
+		TerminalExits   []TerminalExit  `json:"terminal_exits"`
 		CalledPipelines []string        `json:"called_pipelines"`
+		MaxRouteDepth   int             `json:"max_route_depth"`
 		CompiledRoutes  []CompiledRoute `json:"compiled_routes"`
 	}
 
@@ -509,12 +677,15 @@ func fingerprintPipeline(p *Pipeline) (string, error) {
 		Edges:           append([]Edge(nil), p.Edges...),
 		EntryNodeIDs:    append([]string(nil), p.EntryNodeIDs...),
 		TerminalNodeIDs: append([]string(nil), p.TerminalNodeIDs...),
+		TerminalExits:   append([]TerminalExit(nil), p.TerminalExits...),
 		CalledPipelines: append([]string(nil), p.CalledPipelines...),
+		MaxRouteDepth:   p.MaxRouteDepth,
 		CompiledRoutes:  append([]CompiledRoute(nil), p.CompiledRoutes...),
 	}
 	sortEdges(shape.Edges)
 	sort.Strings(shape.EntryNodeIDs)
 	sort.Strings(shape.TerminalNodeIDs)
+	sortTerminalExits(shape.TerminalExits)
 	sort.Strings(shape.CalledPipelines)
 	SortCompiledRoutes(shape.CompiledRoutes)
 
@@ -529,6 +700,9 @@ func fingerprintPipeline(p *Pipeline) (string, error) {
 func sortEdges(edges []Edge) {
 	sort.Slice(edges, func(i, j int) bool {
 		if edges[i].From == edges[j].From {
+			if edges[i].To == edges[j].To {
+				return edges[i].EventType < edges[j].EventType
+			}
 			return edges[i].To < edges[j].To
 		}
 		return edges[i].From < edges[j].From
@@ -557,6 +731,12 @@ func SortCompiledRoutes(routes []CompiledRoute) {
 		if routes[i].Source.StepID != routes[j].Source.StepID {
 			return routes[i].Source.StepID < routes[j].Source.StepID
 		}
+		if routes[i].Source.EventType != routes[j].Source.EventType {
+			return routes[i].Source.EventType < routes[j].Source.EventType
+		}
+		if routes[i].Source.DepthLT != routes[j].Source.DepthLT {
+			return routes[i].Source.DepthLT < routes[j].Source.DepthLT
+		}
 		if routes[i].Destination.Kind != routes[j].Destination.Kind {
 			return routes[i].Destination.Kind < routes[j].Destination.Kind
 		}
@@ -584,6 +764,58 @@ func sortedUnique(in []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func terminalNodeIDs(in []compileExit) []string {
+	seen := make(map[string]struct{}, len(in))
+	for _, exit := range in {
+		seen[exit.NodeID] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for nodeID := range seen {
+		out = append(out, nodeID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedCompileExits(in []compileExit) []compileExit {
+	seen := make(map[string]compileExit, len(in))
+	for _, exit := range in {
+		key := exit.NodeID + "\x00" + exit.EventType
+		seen[key] = exit
+	}
+	out := make([]compileExit, 0, len(seen))
+	for _, exit := range seen {
+		out = append(out, exit)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].NodeID == out[j].NodeID {
+			return out[i].EventType < out[j].EventType
+		}
+		return out[i].NodeID < out[j].NodeID
+	})
+	return out
+}
+
+func sortedTerminalExits(in []compileExit) []TerminalExit {
+	out := make([]TerminalExit, 0, len(in))
+	for _, exit := range sortedCompileExits(in) {
+		out = append(out, TerminalExit{
+			StepID:    exit.NodeID,
+			EventType: exit.EventType,
+		})
+	}
+	return out
+}
+
+func sortTerminalExits(exits []TerminalExit) {
+	sort.Slice(exits, func(i, j int) bool {
+		if exits[i].StepID == exits[j].StepID {
+			return exits[i].EventType < exits[j].EventType
+		}
+		return exits[i].StepID < exits[j].StepID
+	})
 }
 
 func sortedMapKeys(in map[string]struct{}) []string {

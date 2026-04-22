@@ -157,8 +157,15 @@ func TestCompileSpecsAcceptsStructuredIfCondition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileSpecs() error = %v", err)
 	}
-	if set.Pipelines["conditional"].Nodes["step_a"].Condition == nil {
-		t.Fatalf("expected compiled node condition")
+	switchNode, ok := set.Pipelines["conditional"].Nodes["step_a__switch"]
+	if !ok {
+		t.Fatalf("expected compiled switch node")
+	}
+	if switchNode.Kind != NodeKindSwitch {
+		t.Fatalf("switch node kind = %q, want %q", switchNode.Kind, NodeKindSwitch)
+	}
+	if switchNode.Condition == nil {
+		t.Fatalf("expected compiled switch condition")
 	}
 }
 
@@ -668,6 +675,9 @@ func assertCompiledRoute(t *testing.T, got, want CompiledRoute) {
 	}
 	if got.Pipeline != want.Pipeline {
 		t.Fatalf("route pipeline = %q, want %q", got.Pipeline, want.Pipeline)
+	}
+	if want.Source.DepthLT == 0 {
+		want.Source.DepthLT = got.Source.DepthLT
 	}
 	if got.Source != want.Source {
 		t.Fatalf("route source = %+v, want %+v", got.Source, want.Source)

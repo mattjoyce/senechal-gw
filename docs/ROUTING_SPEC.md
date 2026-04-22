@@ -203,7 +203,7 @@ Pipelines can use the `if` keyword on any step to decide whether it should run b
     value: error
 ```
 
-If the condition evaluates to `false`, the step is marked `skipped`, and a synthetic `ductile.step.skipped` event is routed to downstream steps to allow the chain to continue.
+Sprint 6 compiles authored `if:` conditions into an internal `core.switch` hop. That hop emits `ductile.switch.true` or `ductile.switch.false`, so the gated step only runs on the true branch while the false branch bypasses directly to the downstream route.
 
 ### 8.2 Multi-Event Branching
 

@@ -114,12 +114,20 @@ print(json.dumps({"status":"ok","result":"verified"}))
 		disp.ExecuteJob(ctx, job)
 	}
 
-	var skipStatus string
-	if err := db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'skipme' LIMIT 1").Scan(&skipStatus); err != nil {
-		t.Fatalf("query skipme status: %v", err)
+	var switchStatus string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'core.switch' LIMIT 1").Scan(&switchStatus); err != nil {
+		t.Fatalf("query core.switch status: %v", err)
 	}
-	if skipStatus != "skipped" {
-		t.Fatalf("skipme status = %q, want skipped", skipStatus)
+	if switchStatus != "succeeded" {
+		t.Fatalf("core.switch status = %q, want succeeded", switchStatus)
+	}
+
+	var skipmeCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM job_queue WHERE plugin = 'skipme'").Scan(&skipmeCount); err != nil {
+		t.Fatalf("count skipme jobs: %v", err)
+	}
+	if skipmeCount != 0 {
+		t.Fatalf("skipme job count = %d, want 0", skipmeCount)
 	}
 	var notifyStatus string
 	if err := db.QueryRow("SELECT status FROM job_queue WHERE plugin = 'notifier' LIMIT 1").Scan(&notifyStatus); err != nil {

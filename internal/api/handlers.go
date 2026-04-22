@@ -175,7 +175,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 
 	var pipelineRootContextID *string
 	if s.contextStore != nil {
-		root, err := s.createPipelineInstanceContext(r.Context(), pipeline.Name)
+		root, err := s.createPipelineInstanceContext(r.Context(), pipeline.Name, dispatches[0].RouteMaxDepth)
 		if err != nil {
 			s.logger.Error("failed to create pipeline instance context", "pipeline", pipeline.Name, "error", err)
 			s.writeError(w, http.StatusInternalServerError, "failed to create pipeline context")
@@ -187,7 +187,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	for i, d := range dispatches {
 		var eventContextID *string
 		if s.contextStore != nil {
-			root, err := s.createPipelineEntryContext(r.Context(), pipelineRootContextID, pipeline.Name, contextPlans[i].stepID, contextPlans[i].updates, contextPlans[i].explicit)
+			root, err := s.createPipelineEntryContext(r.Context(), pipelineRootContextID, pipeline.Name, contextPlans[i].stepID, contextPlans[i].updates, contextPlans[i].explicit, d.RouteDepth, d.RouteMaxDepth)
 			if err != nil {
 				s.logger.Error("failed to create event context for pipeline entry", "pipeline", pipeline.Name, "step_id", contextPlans[i].stepID, "error", err)
 				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
@@ -440,6 +440,7 @@ var errRootBaggageClaims = errors.New("root baggage claims failed")
 func (s *Server) createPipelineInstanceContext(
 	ctx context.Context,
 	pipelineName string,
+	routeMaxDepth int,
 ) (*state.EventContext, error) {
 	if s.contextStore == nil {
 		return nil, nil
@@ -448,6 +449,16 @@ func (s *Server) createPipelineInstanceContext(
 	updates, err := state.WithPipelineInstanceID(nil, uuid.NewString())
 	if err != nil {
 		return nil, fmt.Errorf("seed pipeline instance context: %w", err)
+	}
+	updates, err = state.WithRouteDepth(updates, 0)
+	if err != nil {
+		return nil, fmt.Errorf("seed pipeline route depth: %w", err)
+	}
+	if routeMaxDepth > 0 {
+		updates, err = state.WithRouteMaxDepth(updates, routeMaxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("seed pipeline route max depth: %w", err)
+		}
 	}
 	return s.contextStore.Create(ctx, nil, pipelineName, "", updates)
 }
@@ -459,7 +470,34 @@ func (s *Server) createPipelineEntryContext(
 	stepID string,
 	updates json.RawMessage,
 	explicit bool,
+	routeDepth int,
+	routeMaxDepth int,
 ) (*state.EventContext, error) {
+	var err error
+	if parentID != nil && s.contextStore != nil {
+		parentCtx, loadErr := s.contextStore.Get(ctx, *parentID)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load parent pipeline context: %w", loadErr)
+		}
+		if instanceID := state.PipelineInstanceIDFromAccumulated(parentCtx.AccumulatedJSON); instanceID != "" {
+			updates, err = state.WithPipelineInstanceID(updates, instanceID)
+			if err != nil {
+				return nil, fmt.Errorf("seed pipeline entry instance id: %w", err)
+			}
+		}
+	}
+	if routeDepth > 0 {
+		updates, err = state.WithRouteDepth(updates, routeDepth)
+		if err != nil {
+			return nil, fmt.Errorf("seed pipeline entry route depth: %w", err)
+		}
+	}
+	if routeMaxDepth > 0 {
+		updates, err = state.WithRouteMaxDepth(updates, routeMaxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("seed pipeline entry route max depth: %w", err)
+		}
+	}
 	if explicit {
 		return s.contextStore.Create(ctx, parentID, pipelineName, stepID, updates)
 	}

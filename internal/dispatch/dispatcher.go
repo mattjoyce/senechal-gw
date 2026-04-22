@@ -25,6 +25,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
@@ -241,6 +242,12 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	requestContext := preflight.requestContext
 	workspaceDir := preflight.workspaceDir
+
+	if isCoreSwitchJob(job) {
+		_ = workspaceDir
+		d.executeCoreSwitch(ctx, job, requestContext, jobLogger)
+		return
+	}
 
 	// Get plugin from registry
 	plug, ok := d.registry.Get(job.Plugin)
@@ -814,6 +821,12 @@ func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (ma
 	if pipelineInstanceID := state.PipelineInstanceIDFromAccumulated(eventCtx.AccumulatedJSON); pipelineInstanceID != "" {
 		out["ductile_pipeline_instance_id"] = pipelineInstanceID
 	}
+	if routeDepth := state.RouteDepthFromAccumulated(eventCtx.AccumulatedJSON); routeDepth > 0 {
+		out["ductile_route_depth"] = routeDepth
+	}
+	if routeMaxDepth := state.RouteMaxDepthFromAccumulated(eventCtx.AccumulatedJSON); routeMaxDepth > 0 {
+		out["ductile_route_max_depth"] = routeMaxDepth
+	}
 	return out, nil
 }
 
@@ -825,6 +838,7 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 
 	rootContextIDs := make(map[string]string)
 	var sourcePipeline, sourceStepID, sourcePipelineInstanceID string
+	var sourceDepth, sourceMaxDepth int
 	if d.contexts != nil && job.EventContextID != nil {
 		currentCtx, err := d.contexts.Get(ctx, *job.EventContextID)
 		if err != nil {
@@ -833,6 +847,8 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 		sourcePipeline = currentCtx.PipelineName
 		sourceStepID = currentCtx.StepID
 		sourcePipelineInstanceID = state.PipelineInstanceIDFromAccumulated(currentCtx.AccumulatedJSON)
+		sourceDepth = state.RouteDepthFromAccumulated(currentCtx.AccumulatedJSON)
+		sourceMaxDepth = state.RouteMaxDepthFromAccumulated(currentCtx.AccumulatedJSON)
 	}
 
 	for i := range events {
@@ -854,6 +870,8 @@ func (d *Dispatcher) routeEvents(ctx context.Context, job *queue.Job, events []p
 			SourcePipeline:           sourcePipeline,
 			SourceStepID:             sourceStepID,
 			SourcePipelineInstanceID: sourcePipelineInstanceID,
+			SourceDepth:              sourceDepth,
+			SourceMaxDepth:           sourceMaxDepth,
 			SourceEventID:            ev.EventID,
 			Event:                    ev,
 		}
@@ -983,6 +1001,16 @@ func (d *Dispatcher) ensurePipelineInstanceRootContext(ctx context.Context, cach
 	if err != nil {
 		return "", fmt.Errorf("seed pipeline instance context for %s: %w", next.PipelineName, err)
 	}
+	updates, err = state.WithRouteDepth(updates, 0)
+	if err != nil {
+		return "", fmt.Errorf("seed pipeline route depth context for %s: %w", next.PipelineName, err)
+	}
+	if next.RouteMaxDepth > 0 {
+		updates, err = state.WithRouteMaxDepth(updates, next.RouteMaxDepth)
+		if err != nil {
+			return "", fmt.Errorf("seed pipeline max depth context for %s: %w", next.PipelineName, err)
+		}
+	}
 	rootCtx, err := d.contexts.Create(ctx, nil, next.PipelineName, "", updates)
 	if err != nil {
 		return "", fmt.Errorf("create pipeline instance root context (%s): %w", next.PipelineName, err)
@@ -1061,7 +1089,7 @@ func (d *Dispatcher) evaluateStepCondition(_ context.Context, job *queue.Job, re
 	}
 
 	node, ok := d.router.GetNode(pipelineName, stepID)
-	if !ok || node.Condition == nil {
+	if !ok || node.Condition == nil || node.Kind == dsl.NodeKindSwitch {
 		return conditionEvaluation{}, nil
 	}
 
@@ -1109,6 +1137,22 @@ func eventPayloadForCondition(raw json.RawMessage) map[string]any {
 		return payload
 	}
 	return map[string]any{}
+}
+
+func eventFromJobPayload(raw json.RawMessage) (protocol.Event, error) {
+	var event protocol.Event
+	if err := json.Unmarshal(raw, &event); err == nil && (event.Type != "" || event.Payload != nil || event.EventID != "") {
+		if event.Payload == nil {
+			event.Payload = map[string]any{}
+		}
+		return event, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return protocol.Event{}, err
+	}
+	return protocol.Event{Payload: payload}, nil
 }
 
 func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queue.Job, requestContext map[string]any, reason string) {
@@ -1162,31 +1206,124 @@ func (d *Dispatcher) dispatchUsesExplicitBaggage(next router.Dispatch) bool {
 }
 
 func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.Dispatch) (json.RawMessage, error) {
+	var (
+		updates json.RawMessage
+		err     error
+	)
 	if d.dispatchUsesExplicitBaggage(next) {
 		if node, found := d.router.GetNode(next.PipelineName, next.StepID); found && node.Baggage != nil && !node.Baggage.Empty() {
 			parentContext, err := d.contextMap(ctx, next.ParentContextID)
 			if err != nil {
 				return nil, err
 			}
-			updates, err := baggage.ApplyClaims(next.Event.Payload, node.Baggage, parentContext)
+			claims, err := baggage.ApplyClaims(next.Event.Payload, node.Baggage, parentContext)
 			if err != nil {
 				return nil, fmt.Errorf("apply baggage claims for %s:%s: %w", next.PipelineName, next.StepID, err)
 			}
-			raw, err := json.Marshal(updates)
+			raw, err := json.Marshal(claims)
 			if err != nil {
 				return nil, fmt.Errorf("marshal baggage updates: %w", err)
 			}
-			return raw, nil
+			updates = raw
 		}
 	}
 
-	if strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.StepID) != "" {
-		d.logger.Warn("using legacy payload promotion for routed step without baggage",
-			"pipeline", next.PipelineName,
-			"step_id", next.StepID,
-		)
+	if updates == nil {
+		if strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.StepID) != "" {
+			d.logger.Warn("using legacy payload promotion for routed step without baggage",
+				"pipeline", next.PipelineName,
+				"step_id", next.StepID,
+			)
+		}
+		updates, err = payloadObjectFromEvent(next.Event)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return payloadObjectFromEvent(next.Event)
+
+	if next.RouteMaxDepth > 0 {
+		updates, err = state.WithRouteMaxDepth(updates, next.RouteMaxDepth)
+		if err != nil {
+			return nil, fmt.Errorf("seed routed context max depth: %w", err)
+		}
+	}
+	if strings.TrimSpace(next.PipelineInstanceID) != "" {
+		updates, err = state.WithPipelineInstanceID(updates, next.PipelineInstanceID)
+		if err != nil {
+			return nil, fmt.Errorf("seed routed context pipeline instance id: %w", err)
+		}
+	}
+	if next.RouteDepth > 0 {
+		updates, err = state.WithRouteDepth(updates, next.RouteDepth)
+		if err != nil {
+			return nil, fmt.Errorf("seed routed context depth: %w", err)
+		}
+	}
+	return updates, nil
+}
+
+func isCoreSwitchJob(job *queue.Job) bool {
+	if job == nil {
+		return false
+	}
+	return strings.TrimSpace(job.Plugin) == "core.switch" && strings.TrimSpace(job.Command) == "handle"
+}
+
+func (d *Dispatcher) executeCoreSwitch(ctx context.Context, job *queue.Job, requestContext map[string]any, logger *slog.Logger) {
+	if d.router == nil {
+		errMsg := "core.switch requires router"
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	pipelineName, _ := requestContext["ductile_pipeline"].(string)
+	stepID, _ := requestContext["ductile_step_id"].(string)
+	node, ok := d.router.GetNode(pipelineName, stepID)
+	if !ok || node.Kind != dsl.NodeKindSwitch || node.Condition == nil {
+		errMsg := fmt.Sprintf("core.switch node %s/%s missing condition", pipelineName, stepID)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	scope := conditions.Scope{
+		Payload: eventPayloadForCondition(job.Payload),
+		Context: requestContext,
+	}
+	matched, err := conditions.Eval(node.Condition, scope)
+	if err != nil {
+		errMsg := fmt.Sprintf("core.switch evaluate condition: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	event, err := eventFromJobPayload(job.Payload)
+	if err != nil {
+		errMsg := fmt.Sprintf("core.switch parse event: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	if matched {
+		event.Type = "ductile.switch.true"
+	} else {
+		event.Type = "ductile.switch.false"
+	}
+
+	if err := d.routeEvents(ctx, job, []protocol.Event{event}, logger); err != nil {
+		errMsg := fmt.Sprintf("core.switch route events: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	result, err := json.Marshal(map[string]any{
+		"matched": matched,
+		"event":   event.Type,
+	})
+	if err != nil {
+		errMsg := fmt.Sprintf("core.switch marshal result: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusSucceeded, result, nil, nil)
 }
 
 func (d *Dispatcher) contextMap(ctx context.Context, contextID string) (map[string]any, error) {

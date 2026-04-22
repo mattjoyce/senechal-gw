@@ -30,6 +30,8 @@ type Request struct {
 	SourcePipeline           string
 	SourceStepID             string
 	SourcePipelineInstanceID string
+	SourceDepth              int
+	SourceMaxDepth           int
 	SourceEventID            string
 	Event                    protocol.Event
 }
@@ -42,6 +44,8 @@ type Dispatch struct {
 	PipelineName       string
 	StepID             string
 	PipelineInstanceID string
+	RouteDepth         int
+	RouteMaxDepth      int
 	ParentJobID        string
 	ParentContextID    string
 	SourceEventID      string

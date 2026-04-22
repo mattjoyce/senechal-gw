@@ -1289,7 +1289,7 @@ echo '{"status":"ok","result":"step b complete"}'
 	}
 }
 
-func TestDispatcher_ExecuteJob_SkipsConditionalStepAndContinues(t *testing.T) {
+func TestDispatcher_ExecuteJob_ConditionalSwitchBypassesFalseStepAndContinues(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")
 	pluginsDir := filepath.Join(tmpDir, "plugins")
@@ -1385,11 +1385,14 @@ echo '{"status":"ok","result":"ran-c"}'
 	}
 	disp.executeJob(ctx, rootJob)
 
-	stepBJob, err := q.Dequeue(ctx)
-	if err != nil || stepBJob == nil {
-		t.Fatalf("Dequeue(step_b): job=%v err=%v", stepBJob, err)
+	switchJob, err := q.Dequeue(ctx)
+	if err != nil || switchJob == nil {
+		t.Fatalf("Dequeue(step_b switch): job=%v err=%v", switchJob, err)
 	}
-	disp.executeJob(ctx, stepBJob)
+	if switchJob.Plugin != "core.switch" {
+		t.Fatalf("switch job plugin = %q, want %q", switchJob.Plugin, "core.switch")
+	}
+	disp.executeJob(ctx, switchJob)
 
 	stepCJob, err := q.Dequeue(ctx)
 	if err != nil || stepCJob == nil {
@@ -1400,18 +1403,22 @@ echo '{"status":"ok","result":"ran-c"}'
 	}
 	disp.executeJob(ctx, stepCJob)
 
-	stepBResult, err := q.GetJobByID(ctx, stepBJob.ID)
+	switchResult, err := q.GetJobByID(ctx, switchJob.ID)
 	if err != nil {
-		t.Fatalf("GetJobByID(step_b): %v", err)
+		t.Fatalf("GetJobByID(step_b switch): %v", err)
 	}
-	if stepBResult.Status != queue.StatusSkipped {
-		t.Fatalf("step_b status = %q, want %q", stepBResult.Status, queue.StatusSkipped)
+	if switchResult.Status != queue.StatusSucceeded {
+		t.Fatalf("switch status = %q, want %q", switchResult.Status, queue.StatusSucceeded)
 	}
-	if stepBResult.LastError == nil || *stepBResult.LastError != "if condition evaluated false" {
-		t.Fatalf("step_b last_error = %#v", stepBResult.LastError)
+	if string(switchResult.Result) == "" {
+		t.Fatalf("expected switch result payload")
 	}
-	if string(stepBResult.Result) == "" {
-		t.Fatalf("expected skipped result payload")
+	var queuedStepBCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_queue WHERE plugin = ?`, "plugin-b").Scan(&queuedStepBCount); err != nil {
+		t.Fatalf("count step_b jobs: %v", err)
+	}
+	if queuedStepBCount != 0 {
+		t.Fatalf("queued step_b job count = %d, want 0", queuedStepBCount)
 	}
 
 	stepCResult, err := q.GetJobByID(ctx, stepCJob.ID)
@@ -1422,8 +1429,8 @@ echo '{"status":"ok","result":"ran-c"}'
 		t.Fatalf("step_c status = %q, want %q", stepCResult.Status, queue.StatusSucceeded)
 	}
 
-	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepBJob.ID[:2], stepBJob.ID)); err != nil {
-		t.Fatalf("stat skipped step workspace: %v", err)
+	if _, err := os.Stat(filepath.Join(workspaceBaseDir, switchJob.ID[:2], switchJob.ID)); err != nil {
+		t.Fatalf("stat switch workspace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepCJob.ID[:2], stepCJob.ID)); err != nil {
 		t.Fatalf("stat successor workspace: %v", err)

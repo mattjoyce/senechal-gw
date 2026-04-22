@@ -51,6 +51,7 @@ type PipelineRouter interface {
 type EventContextStore interface {
 	Create(ctx context.Context, parentID *string, pipelineName string, stepID string, updates json.RawMessage) (*state.EventContext, error)
 	CreateLegacy(ctx context.Context, parentID *string, pipelineName string, stepID string, updates json.RawMessage) (*state.EventContext, error)
+	Get(ctx context.Context, id string) (*state.EventContext, error)
 }
 
 // PluginRegistry defines the interface for plugin operations

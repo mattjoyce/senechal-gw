@@ -56,13 +56,21 @@ fi
 
 SYNC_JOB_ID=$(jq -r '.job_id' "$ARTIFACT_DIR/sync-response.json")
 SYNC_RESULT=$(jq -r '.result.result' "$ARTIFACT_DIR/sync-response.json")
+ROOT_PLUGIN=$(jq -r '.tree[0].plugin' "$ARTIFACT_DIR/sync-response.json")
 ROOT_STATUS=$(jq -r '.tree[0].status' "$ARTIFACT_DIR/sync-response.json")
+ROOT_EVENT=$(jq -r '.tree[0].result.event' "$ARTIFACT_DIR/sync-response.json")
 
 if [[ -z "$SYNC_JOB_ID" || "$SYNC_JOB_ID" == "null" ]]; then
   fixture_fail "sync response returned no job_id"
 fi
-if [[ "$ROOT_STATUS" != "skipped" ]]; then
-  fixture_fail "expected root tree entry to be skipped, got $ROOT_STATUS"
+if [[ "$ROOT_PLUGIN" != "core.switch" ]]; then
+  fixture_fail "expected root tree entry to be core.switch, got $ROOT_PLUGIN"
+fi
+if [[ "$ROOT_STATUS" != "succeeded" ]]; then
+  fixture_fail "expected root tree entry to succeed, got $ROOT_STATUS"
+fi
+if [[ "$ROOT_EVENT" != "ductile.switch.false" ]]; then
+  fixture_fail "expected root tree event ductile.switch.false, got $ROOT_EVENT"
 fi
 if [[ "$SYNC_RESULT" != "B" ]]; then
   fixture_fail "expected sync terminal result B, got $SYNC_RESULT"

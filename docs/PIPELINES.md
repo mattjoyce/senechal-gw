@@ -75,7 +75,7 @@ steps:
 ```
 
 ### 3.5 `if` (Conditional Step Execution)
-A step may include an optional structured `if` object. If the condition evaluates to `false`, Ductile marks the step as `skipped`, records the reason, and continues to downstream steps without spawning the plugin process.
+A step may include an optional structured `if` object. Sprint 6 compiles that authored condition into an internal `core.switch` hop. The switch evaluates the condition against the current scope and then either dispatches the gated step or bypasses it without spawning the gated plugin.
 
 `if` must be exactly one of:
 - atomic predicate: `path`, `op`, optional `value`
@@ -135,6 +135,8 @@ Semantics:
 - no implicit string-to-number coercion
 - missing paths resolve to absent for `exists`, otherwise compare as `null`
 - invalid conditions fail at pipeline load time
+- branch decisions are observable as internal `ductile.switch.true` / `ductile.switch.false` events
+- a `false` result bypasses the step and continues from the nearest downstream route
 
 ### 3.6 `with` (Payload Remap for `uses` Steps)
 `with` lets a `uses` step add or override top-level payload keys immediately before the plugin is spawned.
@@ -276,7 +278,7 @@ In this example, `status.current` is durable. `message` is just the request sent
 Ductile supports two kinds of decision making:
 
 ### 5.1 Native step gating with `if`
-Use `if` when you want to decide whether a step should run based on the current payload, accumulated context, or plugin config.
+Use `if` when you want to decide whether a step should run based on the current payload, accumulated context, or plugin config. Internally Ductile inserts a `core.switch` decision hop so the branch is explicit and observable.
 
 ### 5.2 Event-driven branching
 Ductile also supports **Event-Driven Branching**. A plugin decides the next path by choosing which event type to emit.
@@ -291,7 +293,7 @@ Use this when the plugin is making a domain decision about what happened. Use `i
 
 ## 6. Dispatcher Preflight
 
-Before spawning a plugin process, the dispatcher runs a **preflight phase** for every job. Preflight separates orchestration decisions from plugin execution, ensuring consistent data-plane semantics regardless of whether a step runs or is skipped.
+Before spawning a plugin process, the dispatcher runs a **preflight phase** for every job. Preflight separates orchestration decisions from plugin execution, ensuring consistent data-plane semantics regardless of whether a step is user-defined or an internal orchestration primitive such as `core.switch`.
 
 ### 6.1 Preflight Steps
 
@@ -301,35 +303,33 @@ Preflight executes three operations in order:
 
 2. **Ensure workspace** — Creates or inherits a workspace directory for the job. If a parent job exists, the workspace is cloned from it (zero-copy hard-link clone). If no parent exists, a fresh workspace is created. This runs *before* condition evaluation so that skipped steps still have a valid workspace for downstream inheritance.
 
-3. **Evaluate `if` condition** — If the job's pipeline step has an `if` condition, evaluates it against the available scope (`payload.*`, `context.*`, `config.*`). Only runs when the job is part of a pipeline with a router.
-
-After preflight, a `handle` job for a pipeline `uses` step applies any configured `with` remap to the event payload. This happens after the governance payload/context merge and before plugin spawn.
+3. **Prepare for execution** — User-defined `uses` steps may apply `with` remaps after the governance payload/context merge. Internal `core.switch` jobs evaluate the compiled condition and emit `ductile.switch.true` or `ductile.switch.false`.
 
 ### 6.2 Preflight Outcomes
 
 | Outcome | When | Effect |
 |---------|------|--------|
-| **run** | No `if` condition, or condition evaluates `true` | Plugin process spawns normally |
-| **skip** | `if` condition evaluates `false` | No plugin spawns; job marked `skipped`; synthetic `ductile.step.skipped` event routed to downstream steps |
-| **fail** | Context load, workspace creation, or condition evaluation returns an error | Job marked `failed`; no plugin spawns; no downstream routing |
+| **run** | Context and workspace are ready | Plugin process or internal builtin executes normally |
+| **skip** | Reserved for explicit orchestration skip paths | Rare for authored Sprint 6 `if:` pipelines |
+| **fail** | Context load, workspace creation, remap, or builtin evaluation returns an error | Job marked `failed`; no downstream routing |
 
-### 6.3 Workspace Inheritance for Skipped Steps
+### 6.3 Workspace Inheritance for Conditional Branches
 
-A skipped step's workspace is created during preflight, before the condition is evaluated. This means:
+The internal `core.switch` hop gets its own workspace before evaluating the condition. This means:
 
-- Downstream steps that inherit from a skipped parent receive a valid workspace (cloned from the skipped step's parent).
-- Workspace clone/inheritance is independent of whether the parent ran or was skipped.
-- No data-plane inconsistency: every job in the execution tree has a workspace, regardless of its terminal status.
+- A false branch can continue immediately from the switch workspace without spawning the gated plugin.
+- A true branch still gives the gated plugin its own cloned workspace.
+- No data-plane inconsistency: every executed hop in the tree has a workspace, including orchestration-only hops.
 
-### 6.4 Skipped Step Routing
+### 6.4 Conditional Branch Routing
 
-When a step is skipped, the dispatcher:
+When a compiled `if:` step is reached, the dispatcher runs the internal `core.switch` job. That job:
 
-1. Publishes a `job.skipped` event (with `reason`) to the event hub.
-2. Routes a synthetic `ductile.step.skipped` event through the router, allowing downstream steps to execute.
-3. Marks the job as `skipped` with a synthetic result payload: `{"status": "skipped", "reason": "..."}`.
+1. Evaluates the compiled condition against `payload.*`, `context.*`, and `config.*`.
+2. Emits either `ductile.switch.true` or `ductile.switch.false`.
+3. Lets the router dispatch either the gated step or the bypass path.
 
-Successor routing happens *before* the job is marked terminal, preventing synchronous callers from seeing the tree as complete before all children are enqueued.
+Successor routing still happens before the deciding job is marked terminal, preventing synchronous callers from seeing the tree as complete before all children are enqueued.
 
 ### 6.5 Preflight Events
 

@@ -141,8 +141,9 @@ func (b *BaggageSpec) clone() *BaggageSpec {
 type NodeKind string
 
 const (
-	NodeKindUses NodeKind = "uses"
-	NodeKindCall NodeKind = "call"
+	NodeKindUses   NodeKind = "uses"
+	NodeKindCall   NodeKind = "call"
+	NodeKindSwitch NodeKind = "switch"
 )
 
 // Node is one executable vertex in a compiled pipeline DAG.
@@ -158,8 +159,15 @@ type Node struct {
 
 // Edge defines a directed dependency between two nodes.
 type Edge struct {
-	From string
-	To   string
+	From      string
+	To        string
+	EventType string
+}
+
+// TerminalExit defines one terminal transition point for a compiled pipeline.
+type TerminalExit struct {
+	StepID    string
+	EventType string
 }
 
 // CompiledRouteDestinationKind identifies what kind of destination a compiled route targets.
@@ -177,6 +185,8 @@ type CompiledRouteSource struct {
 	Pipeline   string
 	StepID     string
 	HookSignal string
+	EventType  string
+	DepthLT    int
 }
 
 // CompiledRouteDestination is the dispatch side of one compiled orchestration rule.
@@ -209,7 +219,9 @@ type Pipeline struct {
 	Edges           []Edge
 	EntryNodeIDs    []string
 	TerminalNodeIDs []string
+	TerminalExits   []TerminalExit
 	CalledPipelines []string
+	MaxRouteDepth   int
 	CompiledRoutes  []CompiledRoute
 	Fingerprint     string // blake3:<hex> of normalized compiled form.
 }

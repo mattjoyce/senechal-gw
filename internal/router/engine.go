@@ -210,11 +210,17 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 func (r *Router) resolveCompiledRoute(route dsl.CompiledRoute, req Request, rootHook bool) ([]Dispatch, error) {
 	switch route.Destination.Kind {
 	case dsl.CompiledRouteDestinationUses:
+		routeMaxDepth := req.SourceMaxDepth
+		if routeMaxDepth == 0 {
+			routeMaxDepth = route.Source.DepthLT
+		}
 		dispatch := Dispatch{
 			Plugin:             route.Destination.Plugin,
 			Command:            route.Destination.Command,
 			Event:              cloneEvent(req.Event),
 			PipelineInstanceID: req.SourcePipelineInstanceID,
+			RouteDepth:         req.SourceDepth + 1,
+			RouteMaxDepth:      routeMaxDepth,
 			ParentJobID:        req.SourceJobID,
 			ParentContextID:    req.SourceContextID,
 			SourceEventID:      req.SourceEventID,
@@ -306,7 +312,17 @@ func matchesCompiledRouteSource(source dsl.CompiledRouteSource, req Request, mod
 		if strings.TrimSpace(source.StepID) != strings.TrimSpace(req.SourceStepID) {
 			return false
 		}
+		if source.EventType != "" && strings.TrimSpace(source.EventType) != strings.TrimSpace(req.Event.Type) {
+			return false
+		}
 		if mode == compiledRouteMatchRequireInstance && strings.TrimSpace(req.SourcePipelineInstanceID) == "" {
+			return false
+		}
+		maxDepth := req.SourceMaxDepth
+		if maxDepth == 0 {
+			maxDepth = source.DepthLT
+		}
+		if maxDepth > 0 && req.SourceDepth >= maxDepth {
 			return false
 		}
 		return true

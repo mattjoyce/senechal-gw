@@ -271,9 +271,21 @@ Goal:
 
 Should verify:
 - a synchronous pipeline returns `200 OK`
+- the compiled `if:` root appears as a `core.switch` job rather than a skipped user step
 - a skipped earlier step does not become the returned result
 - the returned result comes from the actual terminal routed step
 - the runtime still records the expected job completion story in the database
+
+#### `conditional-with-route`
+Goal:
+- validate Sprint 6 compiled `if:` routing and `with:` remapping against a real running service
+
+Should verify:
+- a compiled `if:` step becomes a real `core.switch` hop at runtime
+- the false branch bypasses the gated plugin and still reaches the downstream step
+- the true branch runs the gated plugin and preserves the expected parent/child route shape
+- the gated plugin receives the `with:`-remapped payload values on the true branch
+- route depth and max-depth control-plane state persist in `event_context`
 
 ### Deferred wave-2 concerns
 These are valuable, but should not be in the first Docker wave:

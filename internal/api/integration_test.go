@@ -370,8 +370,8 @@ echo '{"status":"ok","result":"B"}'
 	if len(syncResp.Tree) < 2 {
 		t.Fatalf("response tree len = %d, want >= 2 once settled-tree waiting is applied", len(syncResp.Tree))
 	}
-	if syncResp.Tree[0].Status != string(queue.StatusSkipped) {
-		t.Fatalf("response root status = %q, want %q", syncResp.Tree[0].Status, queue.StatusSkipped)
+	if syncResp.Tree[0].Status != string(queue.StatusSucceeded) {
+		t.Fatalf("response root status = %q, want %q", syncResp.Tree[0].Status, queue.StatusSucceeded)
 	}
 	var finalResult map[string]any
 	if err := json.Unmarshal(syncResp.Result, &finalResult); err != nil {
