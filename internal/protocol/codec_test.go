@@ -94,13 +94,13 @@ func TestDecodeResponse(t *testing.T) {
 		name    string
 		input   string
 		wantErr bool
-		checkFn func(t *testing.T, resp *Response)
+		checkFn func(t *testing.T, resp *Response, compat ResponseCompat)
 	}{
 		{
 			name:    "valid ok response",
 			input:   `{"status":"ok","result":"ran","state_updates":{"last_run":"2026-02-08"}}`,
 			wantErr: false,
-			checkFn: func(t *testing.T, resp *Response) {
+			checkFn: func(t *testing.T, resp *Response, compat ResponseCompat) {
 				if resp.Status != "ok" {
 					t.Errorf("want status=ok, got %s", resp.Status)
 				}
@@ -116,15 +116,15 @@ func TestDecodeResponse(t *testing.T) {
 			name:    "valid error response",
 			input:   `{"status":"error","error":"something went wrong","retry":false}`,
 			wantErr: false,
-			checkFn: func(t *testing.T, resp *Response) {
+			checkFn: func(t *testing.T, resp *Response, compat ResponseCompat) {
 				if resp.Status != "error" {
 					t.Errorf("want status=error, got %s", resp.Status)
 				}
 				if resp.Error != "something went wrong" {
 					t.Errorf("want error message, got %s", resp.Error)
 				}
-				if resp.ShouldRetry() {
-					t.Error("want retry=false")
+				if compat.Retry == nil || *compat.Retry {
+					t.Error("want retry compatibility hint=false")
 				}
 			},
 		},
@@ -132,9 +132,9 @@ func TestDecodeResponse(t *testing.T) {
 			name:    "retry defaults to true",
 			input:   `{"status":"error","error":"temporary failure"}`,
 			wantErr: false,
-			checkFn: func(t *testing.T, resp *Response) {
-				if !resp.ShouldRetry() {
-					t.Error("want retry to default to true")
+			checkFn: func(t *testing.T, resp *Response, compat ResponseCompat) {
+				if compat.Retry != nil {
+					t.Error("want retry compatibility hint to be absent when omitted")
 				}
 			},
 		},
@@ -142,7 +142,7 @@ func TestDecodeResponse(t *testing.T) {
 			name:    "response with events",
 			input:   `{"status":"ok","result":"ok","events":[{"type":"data_ready","payload":{"value":42}}]}`,
 			wantErr: false,
-			checkFn: func(t *testing.T, resp *Response) {
+			checkFn: func(t *testing.T, resp *Response, compat ResponseCompat) {
 				if len(resp.Events) != 1 {
 					t.Fatalf("want 1 event, got %d", len(resp.Events))
 				}
@@ -155,7 +155,7 @@ func TestDecodeResponse(t *testing.T) {
 			name:    "response with logs",
 			input:   `{"status":"ok","result":"ok","logs":[{"level":"info","message":"test log"}]}`,
 			wantErr: false,
-			checkFn: func(t *testing.T, resp *Response) {
+			checkFn: func(t *testing.T, resp *Response, compat ResponseCompat) {
 				if len(resp.Logs) != 1 {
 					t.Fatalf("want 1 log, got %d", len(resp.Logs))
 				}
@@ -199,7 +199,7 @@ func TestDecodeResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := strings.NewReader(tt.input)
-			resp, err := DecodeResponse(reader)
+			resp, compat, err := DecodeResponse(reader)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DecodeResponse() error = %v, wantErr %v", err, tt.wantErr)
@@ -207,7 +207,7 @@ func TestDecodeResponse(t *testing.T) {
 			}
 
 			if !tt.wantErr && tt.checkFn != nil {
-				tt.checkFn(t, resp)
+				tt.checkFn(t, resp, compat)
 			}
 		})
 	}
@@ -243,7 +243,7 @@ func TestDecodeResponseLenient(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := strings.NewReader(tt.input)
-			resp, rawData, err := DecodeResponseLenient(reader)
+			resp, _, rawData, err := DecodeResponseLenient(reader)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DecodeResponseLenient() error = %v, wantErr %v", err, tt.wantErr)

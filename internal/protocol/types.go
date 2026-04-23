@@ -20,11 +20,16 @@ type Request struct {
 type Response struct {
 	Status       string         `json:"status"` // ok | error
 	Error        string         `json:"error,omitempty"`
-	Retry        *bool          `json:"retry,omitempty"`  // defaults to true if omitted
 	Result       string         `json:"result,omitempty"` // human-readable summary
 	Events       []Event        `json:"events,omitempty"`
 	StateUpdates map[string]any `json:"state_updates,omitempty"`
 	Logs         []LogEntry     `json:"logs,omitempty"`
+}
+
+// ResponseCompat carries protocol-v2 compatibility fields that remain on the
+// wire but are not part of the core response model.
+type ResponseCompat struct {
+	Retry *bool
 }
 
 // Event represents an event emitted by a plugin or received via webhook.
@@ -43,13 +48,4 @@ type Event struct {
 type LogEntry struct {
 	Level   string `json:"level"` // info | warn | error | debug
 	Message string `json:"message"`
-}
-
-// ShouldRetry returns true if the response indicates the job should be retried.
-// Defaults to true if retry field is omitted.
-func (r *Response) ShouldRetry() bool {
-	if r.Retry == nil {
-		return true
-	}
-	return *r.Retry
 }

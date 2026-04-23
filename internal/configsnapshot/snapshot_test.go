@@ -129,10 +129,10 @@ func TestBuildRecordsExplicitBaggageSemantics(t *testing.T) {
 	if semantics["baggage_transition"] != "explicit_claims_only" {
 		t.Fatalf("baggage_transition = %q", semantics["baggage_transition"])
 	}
-	if semantics["retry_policy_owner"] != "core_with_v2_shim" {
+	if semantics["retry_policy_owner"] != "core" {
 		t.Fatalf("retry_policy_owner = %q", semantics["retry_policy_owner"])
 	}
-	if semantics["plugin_retry_field"] != "v2_compatibility_signal" {
+	if semantics["plugin_retry_field"] != "v2_boundary_compatibility_signal" {
 		t.Fatalf("plugin_retry_field = %q", semantics["plugin_retry_field"])
 	}
 

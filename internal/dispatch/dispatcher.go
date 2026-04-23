@@ -383,14 +383,14 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Spawn plugin and execute
-	resp, rawResp, stdoutBytes, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
+	resp, respCompat, rawResp, stdoutBytes, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			errMsg := fmt.Sprintf("plugin execution timed out after %v", timeout)
 			jobLogger.Warn(errMsg)
-			decision := decideRetryPolicy(nil, exitCode, job, pluginCfg, retryReasonTimeout)
+			decision := decideRetryPolicy(nil, protocol.ResponseCompat{}, exitCode, job, pluginCfg, retryReasonTimeout)
 			d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusTimedOut, nil, &errMsg, &stderr, decision)
 			return
 		}
@@ -398,7 +398,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		// Handle other spawn errors
 		errMsg := fmt.Sprintf("plugin spawn failed: %v", err)
 		jobLogger.Error(errMsg)
-		decision := decideRetryPolicy(resp, exitCode, job, pluginCfg, retryReasonSpawnError)
+		decision := decideRetryPolicy(resp, respCompat, exitCode, job, pluginCfg, retryReasonSpawnError)
 		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
 		return
 	}
@@ -407,7 +407,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp == nil {
 		errMsg := "plugin returned nil response"
 		jobLogger.Error(errMsg)
-		decision := decideRetryPolicy(nil, exitCode, job, pluginCfg, retryReasonNilResponse)
+		decision := decideRetryPolicy(nil, protocol.ResponseCompat{}, exitCode, job, pluginCfg, retryReasonNilResponse)
 		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
 		return
 	}
@@ -421,7 +421,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	if resp.Status == "error" {
 		jobLogger.Warn("plugin returned error", "error", resp.Error)
 		errMsg := resp.Error
-		decision := decideRetryPolicy(resp, exitCode, job, pluginCfg, retryReasonPluginError)
+		decision := decideRetryPolicy(resp, respCompat, exitCode, job, pluginCfg, retryReasonPluginError)
 		d.failOrRetry(ctx, jobLogger, job, pluginCfg, queue.StatusFailed, rawResp, &errMsg, &stderr, decision)
 		return
 	}
@@ -545,7 +545,7 @@ func (d *Dispatcher) spawnPlugin(
 	req *protocol.Request,
 	timeout time.Duration,
 	logger *slog.Logger,
-) (*protocol.Response, json.RawMessage, []byte, string, int, error) {
+) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
 	// Create timer for timeout enforcement
 	timeoutTimer := time.NewTimer(timeout)
 	defer timeoutTimer.Stop()
@@ -556,7 +556,7 @@ func (d *Dispatcher) spawnPlugin(
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, nil, nil, "", 0, fmt.Errorf("create stdin pipe: %w", err)
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
 	// Capture stdout and stderr
@@ -568,7 +568,7 @@ func (d *Dispatcher) spawnPlugin(
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
-		return nil, nil, nil, "", 0, fmt.Errorf("start process: %w", err)
+		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("start process: %w", err)
 	}
 
 	d.events.Publish("plugin.spawned", map[string]any{
@@ -633,7 +633,7 @@ func (d *Dispatcher) spawnPlugin(
 		}
 
 		stderrStr := truncateStderr(stderr.String())
-		return nil, nil, stdout.Bytes(), stderrStr, 0, context.DeadlineExceeded
+		return nil, protocol.ResponseCompat{}, nil, stdout.Bytes(), stderrStr, 0, context.DeadlineExceeded
 
 	case err := <-waitErr:
 		// Process completed
@@ -649,19 +649,19 @@ func (d *Dispatcher) spawnPlugin(
 				exitCode = exitErr.ExitCode()
 				logger.Warn("plugin exited with non-zero status", "exit_code", exitCode)
 			} else {
-				return nil, nil, stdoutBytes, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
+				return nil, protocol.ResponseCompat{}, nil, stdoutBytes, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
 			}
 		}
 
 		// Decode response from stdout
-		resp, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdoutBytes))
+		resp, compat, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdoutBytes))
 		if err != nil {
 			// If we also had a stdin write error, include it for diagnostics
 			if werr != nil {
 				logger.Warn("stdin write failed (process may not read stdin)", "error", werr)
 			}
 			logger.Error("failed to decode plugin response", "error", err, "stdout", string(rawBytes))
-			return nil, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
+			return nil, protocol.ResponseCompat{}, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
 		}
 
 		// Log stdin write errors as warnings — some plugins don't read stdin
@@ -671,7 +671,7 @@ func (d *Dispatcher) spawnPlugin(
 			logger.Debug("stdin write error (ignored, valid response received)", "error", werr)
 		}
 
-		return resp, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, nil
+		return resp, compat, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, nil
 	}
 }
 

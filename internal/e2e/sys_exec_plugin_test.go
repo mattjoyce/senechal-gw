@@ -18,7 +18,7 @@ func TestSysExecPlugin_HandleSuccessAndPayloadEnv(t *testing.T) {
 		t.Skip("sys_exec plugin relies on /bin/sh semantics")
 	}
 
-	resp, stderr, err := runSysExec(t, "handle", map[string]any{
+	resp, _, stderr, err := runSysExec(t, "handle", map[string]any{
 		"command":                 []any{"printf", "%s", "$DUCTILE_PAYLOAD_NAME"},
 		"include_output_in_event": true,
 	}, map[string]any{
@@ -49,7 +49,7 @@ func TestSysExecPlugin_HandleNonZeroExitReturnsError(t *testing.T) {
 		t.Skip("sys_exec plugin relies on /bin/sh semantics")
 	}
 
-	resp, stderr, err := runSysExec(t, "handle", map[string]any{
+	resp, compat, stderr, err := runSysExec(t, "handle", map[string]any{
 		"command": []any{"/bin/sh", "-c", `echo "boom" 1>&2; exit 7`},
 	}, map[string]any{
 		"ignored": "value",
@@ -63,8 +63,8 @@ func TestSysExecPlugin_HandleNonZeroExitReturnsError(t *testing.T) {
 	if resp.Error == "" {
 		t.Fatalf("expected non-empty error")
 	}
-	if resp.ShouldRetry() {
-		t.Fatalf("expected retry=false by default for non-zero exit")
+	if compat.Retry == nil || *compat.Retry {
+		t.Fatalf("expected retry compatibility hint=false for default non-zero exit")
 	}
 	if len(resp.Events) != 1 {
 		t.Fatalf("events len=%d want 1", len(resp.Events))
@@ -79,7 +79,7 @@ func TestSysExecPlugin_HandleRetryOnConfiguredExitCode(t *testing.T) {
 		t.Skip("sys_exec plugin relies on /bin/sh semantics")
 	}
 
-	resp, stderr, err := runSysExec(t, "handle", map[string]any{
+	resp, compat, stderr, err := runSysExec(t, "handle", map[string]any{
 		"command":             []any{"/bin/sh", "-c", `exit 75`},
 		"retry_on_exit_codes": []any{75},
 	}, map[string]any{})
@@ -89,8 +89,8 @@ func TestSysExecPlugin_HandleRetryOnConfiguredExitCode(t *testing.T) {
 	if resp.Status != "error" {
 		t.Fatalf("status=%q want error", resp.Status)
 	}
-	if !resp.ShouldRetry() {
-		t.Fatalf("expected retry=true for configured retry exit code")
+	if compat.Retry == nil || !*compat.Retry {
+		t.Fatalf("expected retry compatibility hint=true for configured retry exit code")
 	}
 }
 
@@ -99,7 +99,7 @@ func TestSysExecPlugin_HealthRequiresCommand(t *testing.T) {
 		t.Skip("sys_exec plugin relies on /bin/sh semantics")
 	}
 
-	resp, stderr, err := runSysExec(t, "health", map[string]any{}, nil)
+	resp, _, stderr, err := runSysExec(t, "health", map[string]any{}, nil)
 	if err != nil {
 		t.Fatalf("runSysExec(health): %v (stderr=%q)", err, stderr)
 	}
@@ -155,7 +155,7 @@ func TestSysExecPlugin_LogIncludesUpstreamPipelinePlugin(t *testing.T) {
 		t.Fatalf("run sys_exec: %v (stderr=%q)", err, stderr.String())
 	}
 
-	resp, err := protocol.DecodeResponse(&stdout)
+	resp, _, err := protocol.DecodeResponse(&stdout)
 	if err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSysExecPlugin_PollSuccess(t *testing.T) {
 		t.Skip("sys_exec plugin relies on /bin/sh semantics")
 	}
 
-	resp, stderr, err := runSysExec(t, "poll", map[string]any{
+	resp, _, stderr, err := runSysExec(t, "poll", map[string]any{
 		"command": "echo 'poll-success'",
 	}, nil)
 	if err != nil {
@@ -186,7 +186,7 @@ func TestSysExecPlugin_PollSuccess(t *testing.T) {
 	}
 }
 
-func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[string]any) (*protocol.Response, string, error) {
+func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[string]any) (*protocol.Response, protocol.ResponseCompat, string, error) {
 	t.Helper()
 
 	root := repoRoot(t)
@@ -206,7 +206,7 @@ func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[st
 
 	var stdin bytes.Buffer
 	if err := protocol.EncodeRequest(&stdin, req); err != nil {
-		return nil, "", err
+		return nil, protocol.ResponseCompat{}, "", err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -220,9 +220,9 @@ func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[st
 
 	_ = cmd.Run()
 
-	resp, err := protocol.DecodeResponse(&stdout)
+	resp, compat, err := protocol.DecodeResponse(&stdout)
 	if err != nil {
-		return nil, stderr.String(), err
+		return nil, protocol.ResponseCompat{}, stderr.String(), err
 	}
-	return resp, stderr.String(), nil
+	return resp, compat, stderr.String(), nil
 }

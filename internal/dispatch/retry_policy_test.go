@@ -15,6 +15,7 @@ func TestDecideRetryPolicy(t *testing.T) {
 	tests := []struct {
 		name          string
 		resp          *protocol.Response
+		compat        protocol.ResponseCompat
 		exitCode      int
 		job           *queue.Job
 		defaultReason string
@@ -38,8 +39,8 @@ func TestDecideRetryPolicy(t *testing.T) {
 			resp: &protocol.Response{
 				Status: "error",
 				Error:  "bad request",
-				Retry:  &retryFalse,
 			},
+			compat:        protocol.ResponseCompat{Retry: &retryFalse},
 			job:           &queue.Job{Attempt: 1, MaxAttempts: 3},
 			defaultReason: retryReasonPluginError,
 			wantRetryable: false,
@@ -50,8 +51,8 @@ func TestDecideRetryPolicy(t *testing.T) {
 			resp: &protocol.Response{
 				Status: "error",
 				Error:  "invalid config",
-				Retry:  &retryTrue,
 			},
+			compat:        protocol.ResponseCompat{Retry: &retryTrue},
 			exitCode:      nonRetryableExitCode,
 			job:           &queue.Job{Attempt: 1, MaxAttempts: 3},
 			defaultReason: retryReasonPluginError,
@@ -96,7 +97,7 @@ func TestDecideRetryPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := decideRetryPolicy(tt.resp, tt.exitCode, tt.job, config.PluginConf{
+			got := decideRetryPolicy(tt.resp, tt.compat, tt.exitCode, tt.job, config.PluginConf{
 				Retry: &config.RetryConfig{MaxAttempts: 2},
 			}, tt.defaultReason)
 			if got.Retryable != tt.wantRetryable {

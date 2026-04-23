@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	retryPolicyOwner = "core_with_v2_shim"
-	pluginRetryField = "v2_compatibility_signal"
+	retryPolicyOwner = "core"
+	pluginRetryField = "v2_boundary_compatibility_signal"
 
 	retryReasonPluginError       = "plugin_error"
 	retryReasonPluginRetryFalse  = "plugin_retry_false"
@@ -27,7 +27,7 @@ type retryDecision struct {
 	AttemptsExhausted bool
 }
 
-func decideRetryPolicy(resp *protocol.Response, exitCode int, job *queue.Job, pluginCfg config.PluginConf, defaultReason string) retryDecision {
+func decideRetryPolicy(resp *protocol.Response, compat protocol.ResponseCompat, exitCode int, job *queue.Job, pluginCfg config.PluginConf, defaultReason string) retryDecision {
 	reason := strings.TrimSpace(defaultReason)
 	if reason == "" {
 		reason = retryReasonPluginError
@@ -44,7 +44,7 @@ func decideRetryPolicy(resp *protocol.Response, exitCode int, job *queue.Job, pl
 		return decision
 	}
 
-	if resp != nil && resp.Status == "error" && !resp.ShouldRetry() {
+	if resp != nil && resp.Status == "error" && compat.Retry != nil && !*compat.Retry {
 		decision.Retryable = false
 		decision.Reason = retryReasonPluginRetryFalse
 		return decision
