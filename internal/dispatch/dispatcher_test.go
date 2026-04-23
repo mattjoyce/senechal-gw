@@ -193,6 +193,74 @@ echo '{"status": "ok", "result": "ok", "state_updates": {"last_run": "2024-01-01
 	}
 }
 
+func TestDispatcher_ExecuteJob_SchedulerPollLifecycleEvents(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	script := `#!/bin/bash
+read input
+echo '{"status": "ok", "result": "ok"}'
+`
+	plug := createTestPlugin(t, pluginsDir, "echo", script)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(echo): %v", err)
+	}
+	disp.cfg.Plugins["echo"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Poll: 5 * time.Second,
+		},
+	}
+
+	ctx := context.Background()
+	dedupeKey := "echo:poll:primary"
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "echo",
+		Command:     "poll",
+		SubmittedBy: disp.cfg.Service.Name,
+		DedupeKey:   &dedupeKey,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if job == nil {
+		t.Fatal("expected job, got nil")
+	}
+
+	disp.executeJob(ctx, job)
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", jobID).Scan(&status); err != nil {
+		t.Fatalf("query job status: %v", err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", status)
+	}
+
+	started := filterEventsByType(disp.events.SnapshotSince(0), "poll.started")
+	if len(started) != 1 {
+		t.Fatalf("poll.started events = %d, want 1", len(started))
+	}
+	startedPayload := eventPayload(t, started[0])
+	if startedPayload["job_id"] != jobID || startedPayload["schedule_id"] != "primary" {
+		t.Fatalf("poll.started payload = %+v", startedPayload)
+	}
+
+	completed := filterEventsByType(disp.events.SnapshotSince(0), "poll.completed")
+	if len(completed) != 1 {
+		t.Fatalf("poll.completed events = %d, want 1", len(completed))
+	}
+	completedPayload := eventPayload(t, completed[0])
+	if completedPayload["job_id"] != jobID || completedPayload["status"] != "succeeded" || completedPayload["schedule_id"] != "primary" {
+		t.Fatalf("poll.completed payload = %+v", completedPayload)
+	}
+}
+
 func TestDispatcher_ExecuteJob_FileWatchPollRecordsFactAndDerivedState(t *testing.T) {
 	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
 	defer cleanup()

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
@@ -276,6 +277,63 @@ func TestCanScheduleRecordsHalfOpenTransition(t *testing.T) {
 	assert.Equal(t, queue.CircuitOpen, *stub.transitions[0].FromState)
 	assert.Equal(t, queue.CircuitHalfOpen, stub.transitions[0].ToState)
 	assert.Equal(t, lastJobID, *stub.transitions[0].JobID)
+}
+
+func TestPollViewConsumesLifecycleEvents(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	sched := New(cfg, &stubQueueService{}, nil, logger)
+
+	sched.applyPollEvent(events.Event{
+		Type: "scheduler.scheduled",
+		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
+	})
+	if got := sched.pollViewCount("echo", "poll"); got != 1 {
+		t.Fatalf("poll view after scheduled = %d, want 1", got)
+	}
+
+	sched.applyPollEvent(events.Event{
+		Type: "poll.started",
+		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
+	})
+	if got := sched.pollViewCount("echo", "poll"); got != 1 {
+		t.Fatalf("poll view after started = %d, want 1", got)
+	}
+
+	sched.applyPollEvent(events.Event{
+		Type: "poll.completed",
+		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","status":"succeeded"}`),
+	})
+	if got := sched.pollViewCount("echo", "poll"); got != 0 {
+		t.Fatalf("poll view after completed = %d, want 0", got)
+	}
+}
+
+type pollViewQueueStub struct {
+	stubQueueService
+	countOutstandingCalls int
+}
+
+func (s *pollViewQueueStub) CountOutstandingJobs(_ context.Context, _, _ string) (int, error) {
+	s.countOutstandingCalls++
+	return 0, nil
+}
+
+func TestCanScheduleUsesPollViewBeforeQueueSafety(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	stub := &pollViewQueueStub{}
+	sched := New(cfg, stub, nil, logger)
+	sched.applyPollEvent(events.Event{
+		Type: "scheduler.scheduled",
+		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
+	})
+
+	ok, reason, err := sched.canSchedule(context.Background(), "echo", "poll", config.PluginConf{}, config.ScheduleConfig{})
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "already_running", reason)
+	assert.Equal(t, 0, stub.countOutstandingCalls)
 }
 
 func TestReconcileCircuitBreakerRecordsCloseTransition(t *testing.T) {

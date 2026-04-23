@@ -39,6 +39,8 @@ type Scheduler struct {
 	janitorInterval  time.Duration
 	tickCount        uint64
 	recoveryHook     RecoveryHookFunc
+	pollsMu          sync.Mutex
+	polls            map[string]pollJob
 }
 
 const (
@@ -113,6 +115,10 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	if err := s.runStartupCatchUp(ctx); err != nil {
 		return fmt.Errorf("scheduler catch-up failed: %w", err)
 	}
+	if err := s.bootstrapPollView(ctx); err != nil {
+		return fmt.Errorf("scheduler poll view bootstrap failed: %w", err)
+	}
+	s.startPollEventConsumer(ctx)
 
 	s.wg.Add(1)
 	go s.tickLoop(ctx)
@@ -775,10 +781,11 @@ func (s *Scheduler) enqueueScheduledJob(ctx context.Context, pluginName, schedul
 		return false, fmt.Errorf("enqueue scheduled job for %s/%s: %w", pluginName, command, err)
 	}
 	s.events.Publish("scheduler.scheduled", map[string]any{
-		"job_id":      jobID,
-		"plugin":      pluginName,
-		"command":     command,
-		"schedule_id": scheduleID,
+		"job_id":       jobID,
+		"plugin":       pluginName,
+		"command":      command,
+		"schedule_id":  scheduleID,
+		"submitted_by": s.cfg.Service.Name,
 	})
 	s.logger.Info("Enqueued scheduled job", "plugin", pluginName, "command", command, "schedule_id", scheduleID, "job_id", jobID, "dedupe_key", dedupeKey)
 	return false, nil
@@ -822,10 +829,11 @@ func (s *Scheduler) enqueueCatchUpJob(
 		return "", false, err
 	}
 	s.events.Publish("scheduler.scheduled", map[string]any{
-		"job_id":      jobID,
-		"plugin":      pluginName,
-		"command":     command,
-		"schedule_id": "catch_up",
+		"job_id":       jobID,
+		"plugin":       pluginName,
+		"command":      command,
+		"schedule_id":  "catch_up",
+		"submitted_by": s.cfg.Service.Name,
 	})
 	return jobID, false, nil
 }
@@ -969,7 +977,12 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 		s.logger.Info("Circuit breaker moved to half-open", "plugin", pluginName, "command", command)
 	}
 
-	outstanding, err := s.queue.CountOutstandingJobs(ctx, pluginName, command)
+	var outstanding int
+	if command == pollCommand {
+		outstanding, err = s.pollOutstanding(ctx, pluginName, command)
+	} else {
+		outstanding, err = s.queue.CountOutstandingJobs(ctx, pluginName, command)
+	}
 	if err != nil {
 		return false, "", err
 	}
@@ -995,6 +1008,9 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 			cancelled, cancelErr := s.queue.CancelOutstandingJobs(ctx, pluginName, command, "cancelled by scheduler (if_running=cancel)")
 			if cancelErr != nil {
 				return false, "", cancelErr
+			}
+			if command == pollCommand {
+				s.clearPollsFor(pluginName, command)
 			}
 			s.logger.Info("Cancelled outstanding scheduled jobs", "plugin", pluginName, "command", command, "cancelled", cancelled)
 		}
