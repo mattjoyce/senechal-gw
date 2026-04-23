@@ -1270,7 +1270,14 @@ func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.
 			claims, err := baggage.ApplyClaims(next.Event.Payload, node.Baggage, parentContext)
 			if err != nil {
 				if opts.allowMissingExplicitBaggage && errors.Is(err, baggage.ErrPathNotFound) {
-					d.logger.Debug("skipped-step successor missing explicit baggage source; inheriting parent context only",
+					conditionFalse, conditionErr := skippedSuccessorConditionFalse(node, next.Event.Payload, parentContext)
+					if conditionErr != nil {
+						return nil, fmt.Errorf("evaluate skipped successor condition for %s:%s: %w", next.PipelineName, next.StepID, conditionErr)
+					}
+					if !conditionFalse {
+						return nil, fmt.Errorf("apply baggage claims for %s:%s: %w", next.PipelineName, next.StepID, err)
+					}
+					d.logger.Warn("skipped-step successor missing explicit baggage source; target condition is false, inheriting parent context for skip evaluation",
 						"pipeline", next.PipelineName,
 						"step_id", next.StepID,
 						"error", err,
@@ -1321,6 +1328,20 @@ controlPlane:
 		}
 	}
 	return updates, nil
+}
+
+func skippedSuccessorConditionFalse(node dsl.Node, payload map[string]any, parentContext map[string]any) (bool, error) {
+	if node.Condition == nil {
+		return false, nil
+	}
+	matched, err := conditions.Eval(node.Condition, conditions.Scope{
+		Payload: payload,
+		Context: parentContext,
+	})
+	if err != nil {
+		return false, err
+	}
+	return !matched, nil
 }
 
 func isCoreSwitchJob(job *queue.Job) bool {

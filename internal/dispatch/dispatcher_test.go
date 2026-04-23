@@ -1307,6 +1307,71 @@ func TestDispatcherContextUpdatesForDispatchUsesExplicitBaggage(t *testing.T) {
 	}
 }
 
+func TestDispatcherContextUpdatesForDispatchDoesNotMaskMissingBaggage(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	contextStore := state.NewContextStore(db)
+	root, err := contextStore.Create(
+		context.Background(),
+		nil,
+		"chain",
+		"step_a",
+		json.RawMessage(`{"repo":{"name":"demo"}}`),
+	)
+	if err != nil {
+		t.Fatalf("ContextStore.Create(root): %v", err)
+	}
+
+	pipelineYAML := `pipelines:
+  - name: chain
+    on: chain.start
+    steps:
+      - id: step_b
+        uses: plugin-b
+        baggage:
+          commit.changed: payload.changed
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, nil, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	disp := &Dispatcher{
+		contexts: contextStore,
+		router:   routerEngine,
+	}
+	_, err = disp.contextUpdatesForDispatch(context.Background(), router.Dispatch{
+		PipelineName:    "chain",
+		StepID:          "step_b",
+		ParentContextID: root.ID,
+		Event: protocol.Event{
+			Type:    "ductile.step.skipped",
+			Payload: map[string]any{"reason": "if condition evaluated false"},
+		},
+	}, routeEventsOptions{allowMissingExplicitBaggage: true})
+	if err == nil {
+		t.Fatal("contextUpdatesForDispatch() error = nil, want missing baggage failure")
+	}
+	if !strings.Contains(err.Error(), `resolve baggage commit.changed from "payload.changed": path not found`) {
+		t.Fatalf("contextUpdatesForDispatch() error = %v, want missing baggage failure", err)
+	}
+}
+
 func TestDispatcherRoutedChildContextRetainsPipelineInstanceID(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")
