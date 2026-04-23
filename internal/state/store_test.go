@@ -160,12 +160,15 @@ func TestStoreRecordFactFileWatchSnapshotUpdatesCompatibilityState(t *testing.T)
 	if facts[0].ID != "fact-1" || facts[0].JobID != "job-1" || facts[0].Command != "poll" {
 		t.Fatalf("unexpected fact row: %+v", facts[0])
 	}
+	if facts[0].Seq == nil || *facts[0].Seq != 1 {
+		t.Fatalf("Seq = %v, want 1", facts[0].Seq)
+	}
 	if !facts[0].CreatedAt.Equal(createdAt) {
 		t.Fatalf("CreatedAt = %s, want %s", facts[0].CreatedAt, createdAt)
 	}
 }
 
-func TestStoreListFactsFiltersAndOrdersNewestFirst(t *testing.T) {
+func TestStoreListFactsFiltersAndOrdersBySequenceNewestFirst(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "state.db")
@@ -193,7 +196,7 @@ func TestStoreListFactsFiltersAndOrdersNewestFirst(t *testing.T) {
 			JobID:      "job-newer",
 			Command:    "poll",
 			FactJSON:   json.RawMessage(`{"last_poll_at":"2026-04-22T00:01:00Z","watches":{}}`),
-			CreatedAt:  time.Date(2026, 4, 22, 0, 1, 0, 0, time.UTC),
+			CreatedAt:  time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			ID:         "fact-other-type",
@@ -231,6 +234,119 @@ func TestStoreListFactsFiltersAndOrdersNewestFirst(t *testing.T) {
 	}
 	if limited[0].ID != "fact-other-type" {
 		t.Fatalf("limited[0].ID = %q, want fact-other-type", limited[0].ID)
+	}
+}
+
+func TestStoreListFactsHandlesLegacyRowsWithoutSeq(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.ExecContext(context.Background(), `
+INSERT INTO plugin_facts(id, plugin_name, fact_type, job_id, command, fact_json, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?);
+`, "legacy-newer-clock", "file_watch", FactTypeFileWatchSnapshot, "job-legacy", "poll", `{"legacy":true}`, "2026-04-23T00:00:00Z")
+	if err != nil {
+		t.Fatalf("insert legacy plugin fact: %v", err)
+	}
+
+	s := NewStore(db)
+	if _, _, err := s.RecordFact(context.Background(), PluginFact{
+		ID:         "sequenced-older-clock",
+		PluginName: "file_watch",
+		FactType:   FactTypeFileWatchSnapshot,
+		JobID:      "job-sequenced",
+		Command:    "poll",
+		FactJSON:   json.RawMessage(`{"sequenced":true}`),
+		CreatedAt:  time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("RecordFact: %v", err)
+	}
+
+	facts, err := s.ListFacts(context.Background(), "file_watch", FactTypeFileWatchSnapshot, 10)
+	if err != nil {
+		t.Fatalf("ListFacts: %v", err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("len(facts) = %d, want 2", len(facts))
+	}
+	if facts[0].ID != "sequenced-older-clock" {
+		t.Fatalf("facts[0].ID = %q, want sequenced-older-clock", facts[0].ID)
+	}
+	if facts[0].Seq == nil || *facts[0].Seq != 1 {
+		t.Fatalf("sequenced fact Seq = %v, want 1", facts[0].Seq)
+	}
+	if facts[1].ID != "legacy-newer-clock" {
+		t.Fatalf("facts[1].ID = %q, want legacy-newer-clock", facts[1].ID)
+	}
+	if facts[1].Seq != nil {
+		t.Fatalf("legacy fact Seq = %v, want nil", facts[1].Seq)
+	}
+}
+
+func TestStoreRecordFactRollsBackSequenceOnInsertFailure(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := NewStore(db)
+	record := func(id string) error {
+		_, _, err := s.RecordFact(context.Background(), PluginFact{
+			ID:         id,
+			PluginName: "file_watch",
+			FactType:   FactTypeFileWatchSnapshot,
+			JobID:      "job-" + id,
+			Command:    "poll",
+			FactJSON:   json.RawMessage(`{"watches":{},"last_poll_at":"2026-04-22T00:00:00Z"}`),
+			CreatedAt:  time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
+		})
+		return err
+	}
+
+	if err := record("fact-1"); err != nil {
+		t.Fatalf("RecordFact(fact-1): %v", err)
+	}
+	if err := record("fact-2"); err != nil {
+		t.Fatalf("RecordFact(fact-2): %v", err)
+	}
+	if err := record("fact-2"); err == nil {
+		t.Fatal("expected duplicate fact insert to fail")
+	}
+
+	var sequenceValue int64
+	if err := db.QueryRowContext(context.Background(), `
+SELECT value
+FROM storage_sequences
+WHERE name = ?;
+`, pluginFactsSequenceName).Scan(&sequenceValue); err != nil {
+		t.Fatalf("query plugin fact sequence: %v", err)
+	}
+	if sequenceValue != 2 {
+		t.Fatalf("sequence value = %d, want 2", sequenceValue)
+	}
+
+	if err := record("fact-3"); err != nil {
+		t.Fatalf("RecordFact(fact-3): %v", err)
+	}
+	facts, err := s.ListFacts(context.Background(), "file_watch", FactTypeFileWatchSnapshot, 10)
+	if err != nil {
+		t.Fatalf("ListFacts: %v", err)
+	}
+	if len(facts) != 3 {
+		t.Fatalf("len(facts) = %d, want 3", len(facts))
+	}
+	if facts[0].ID != "fact-3" || facts[0].Seq == nil || *facts[0].Seq != 3 {
+		t.Fatalf("newest fact = %+v, want fact-3 seq 3", facts[0])
 	}
 }
 

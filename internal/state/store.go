@@ -14,6 +14,8 @@ import (
 const DefaultMaxStateBytes = 1 << 20 // 1 MiB (SPEC)
 
 const (
+	pluginFactsSequenceName = "plugin_facts"
+
 	// FactTypeFileWatchSnapshot records the latest observed file_watch snapshot.
 	FactTypeFileWatchSnapshot = "file_watch.snapshot"
 	// FactTypeFolderWatchSnapshot records the latest observed folder_watch snapshot.
@@ -29,6 +31,7 @@ const (
 // PluginFact is an append-only plugin fact row.
 type PluginFact struct {
 	ID         string
+	Seq        *int64
 	PluginName string
 	FactType   string
 	JobID      string
@@ -169,10 +172,15 @@ func (s *Store) RecordFact(ctx context.Context, fact PluginFact) (json.RawMessag
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	seq, err := nextStorageSequence(ctx, tx, pluginFactsSequenceName)
+	if err != nil {
+		return nil, false, err
+	}
+
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO plugin_facts(id, plugin_name, fact_type, job_id, command, fact_json, created_at)
-VALUES(?, ?, ?, ?, ?, ?, ?);
-`, fact.ID, fact.PluginName, fact.FactType, fact.JobID, fact.Command, string(fact.FactJSON), createdAt.Format(time.RFC3339Nano))
+INSERT INTO plugin_facts(id, seq, plugin_name, fact_type, job_id, command, fact_json, created_at)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?);
+`, fact.ID, seq, fact.PluginName, fact.FactType, fact.JobID, fact.Command, string(fact.FactJSON), createdAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, false, fmt.Errorf("insert plugin fact: %w", err)
 	}
@@ -203,7 +211,7 @@ func (s *Store) ListFacts(ctx context.Context, plugin string, factType string, l
 	}
 
 	baseQuery := `
-SELECT id, plugin_name, fact_type, job_id, command, fact_json, created_at
+SELECT id, seq, plugin_name, fact_type, job_id, command, fact_json, created_at
 FROM plugin_facts
 WHERE plugin_name = ?`
 	args := []any{plugin}
@@ -211,7 +219,12 @@ WHERE plugin_name = ?`
 		baseQuery += " AND fact_type = ?"
 		args = append(args, factType)
 	}
-	baseQuery += " ORDER BY created_at DESC LIMIT ?;"
+	baseQuery += `
+ORDER BY
+  CASE WHEN seq IS NULL THEN 1 ELSE 0 END ASC,
+  seq DESC,
+  created_at DESC
+LIMIT ?;`
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, baseQuery, args...)
@@ -224,11 +237,16 @@ WHERE plugin_name = ?`
 	for rows.Next() {
 		var (
 			fact      PluginFact
+			seq       sql.NullInt64
 			rawJSON   string
 			createdAt string
 		)
-		if err := rows.Scan(&fact.ID, &fact.PluginName, &fact.FactType, &fact.JobID, &fact.Command, &rawJSON, &createdAt); err != nil {
+		if err := rows.Scan(&fact.ID, &seq, &fact.PluginName, &fact.FactType, &fact.JobID, &fact.Command, &rawJSON, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan plugin fact: %w", err)
+		}
+		if seq.Valid {
+			seqValue := seq.Int64
+			fact.Seq = &seqValue
 		}
 		if !json.Valid([]byte(rawJSON)) {
 			return nil, fmt.Errorf("stored plugin fact is invalid JSON for plugin=%q fact_id=%q", plugin, fact.ID)
@@ -247,6 +265,30 @@ WHERE plugin_name = ?`
 		return nil, fmt.Errorf("iterate plugin facts: %w", err)
 	}
 	return facts, nil
+}
+
+func nextStorageSequence(ctx context.Context, tx *sql.Tx, name string) (int64, error) {
+	if strings.TrimSpace(name) == "" {
+		return 0, fmt.Errorf("storage sequence name is empty")
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO storage_sequences(name, value)
+VALUES(?, 0)
+ON CONFLICT(name) DO NOTHING;
+`, name); err != nil {
+		return 0, fmt.Errorf("ensure storage sequence %q: %w", name, err)
+	}
+
+	var seq int64
+	if err := tx.QueryRowContext(ctx, `
+UPDATE storage_sequences
+SET value = value + 1
+WHERE name = ?
+RETURNING value;
+`, name).Scan(&seq); err != nil {
+		return 0, fmt.Errorf("allocate storage sequence %q: %w", name, err)
+	}
+	return seq, nil
 }
 
 func (s *Store) upsertState(ctx context.Context, execer interface {

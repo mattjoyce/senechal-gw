@@ -74,7 +74,7 @@ func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
 	if err := ValidateSQLiteSchema(ctx, db); err != nil {
 		_ = db.Close()
 		if errors.Is(err, errSchemaValidation) {
-			return nil, fmt.Errorf("%w; run scripts/migrate-hickey-sprint-7-plugin-facts.py %s before deploy", err, path)
+			return nil, fmt.Errorf("%w; run scripts/migrate-hickey-sprint-7-plugin-facts.py if plugin_facts is missing, then scripts/migrate-hickey-sprint-9-plugin-fact-seq.py %s before deploy", err, path)
 		}
 		return nil, err
 	}
@@ -103,6 +103,7 @@ func BootstrapSQLite(ctx context.Context, db *sql.DB) error {
 // Ductile runtime shape. It does not mutate the schema.
 func ValidateSQLiteSchema(ctx context.Context, db *sql.DB) error {
 	requiredTables := []string{
+		"storage_sequences",
 		"job_queue",
 		"job_transitions",
 		"job_attempts",
@@ -137,6 +138,9 @@ func ValidateSQLiteSchema(ctx context.Context, db *sql.DB) error {
 		{"schedule_entries", "last_fired_at"},
 		{"schedule_entries", "last_success_at"},
 		{"schedule_entries", "next_run_at"},
+		{"storage_sequences", "name"},
+		{"storage_sequences", "value"},
+		{"plugin_facts", "seq"},
 		{"plugin_facts", "fact_type"},
 		{"plugin_facts", "fact_json"},
 		{"plugin_facts", "created_at"},
@@ -156,6 +160,8 @@ func ValidateSQLiteSchema(ctx context.Context, db *sql.DB) error {
 		"job_queue_dedupe_status_completed_idx",
 		"plugin_facts_plugin_created_at_idx",
 		"plugin_facts_plugin_type_created_at_idx",
+		"plugin_facts_plugin_seq_idx",
+		"plugin_facts_plugin_type_seq_idx",
 		"plugin_facts_job_id_idx",
 	}
 	for _, index := range requiredIndexes {

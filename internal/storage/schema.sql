@@ -90,8 +90,14 @@ CREATE TABLE IF NOT EXISTS plugin_state (
 -- Hickey Sprint 7 plugin facts:
 -- append-only plugin observations. plugin_state remains the
 -- compatibility/current-state row for legacy plugin state reads.
+CREATE TABLE IF NOT EXISTS storage_sequences (
+  name  TEXT PRIMARY KEY,
+  value INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS plugin_facts (
   id          TEXT PRIMARY KEY,
+  seq         INTEGER,
   plugin_name TEXT NOT NULL,
   fact_type   TEXT NOT NULL,
   job_id      TEXT NOT NULL,
@@ -105,6 +111,12 @@ ON plugin_facts(plugin_name, created_at);
 
 CREATE INDEX IF NOT EXISTS plugin_facts_plugin_type_created_at_idx
 ON plugin_facts(plugin_name, fact_type, created_at);
+
+CREATE INDEX IF NOT EXISTS plugin_facts_plugin_seq_idx
+ON plugin_facts(plugin_name, seq);
+
+CREATE INDEX IF NOT EXISTS plugin_facts_plugin_type_seq_idx
+ON plugin_facts(plugin_name, fact_type, seq);
 
 CREATE INDEX IF NOT EXISTS plugin_facts_job_id_idx
 ON plugin_facts(job_id);

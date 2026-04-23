@@ -260,21 +260,12 @@ cd /path/to/ductile && go build -o ~/.local/bin/ductile ./cmd/ductile && systemc
 If a release adds additive SQLite schema, apply the matching migration script to
 the existing state DB before the normal deploy/restart.
 
-Sprint 7 example:
-
-```bash
-python3 /path/to/ductile/scripts/migrate-hickey-sprint-7-plugin-facts.py \
-  ~/admin/ductile-local/data/ductile.db
-```
-
-Then proceed with the normal binary rollout and restart.
-
 This is especially relevant for instances that already have a populated
-database. The binary still carries the mono-schema, but the preferred
-operational path is to run the explicit migration first so schema changes are
-intentional and visible in deployment steps.
+database. The binary still carries the mono-schema for fresh databases, but the
+preferred operational path for existing databases is to run explicit migrations
+first so schema changes are intentional and visible in deployment steps.
 
-For non-empty existing databases, Ductile now validates schema on startup
-instead of silently adding missing upgrade-era tables or indexes. If the DB is
-behind, startup should fail with a migration hint rather than mutating the
-schema implicitly.
+For non-empty existing databases, Ductile validates schema on startup instead
+of silently adding missing upgrade-era tables or indexes. If the DB is behind,
+startup should fail with a migration hint rather than mutating the schema
+implicitly.

@@ -106,6 +106,7 @@ For a first migration, prefer a **full snapshot** over incremental diffs.
 
 Core then:
 - stores that JSON in `plugin_facts.fact_json`
+- assigns a Ductile-owned `plugin_facts.seq` for new facts
 - tags it `file_watch.snapshot`
 - updates `plugin_state` for `file_watch` to the same snapshot shape
 
@@ -187,15 +188,14 @@ If those answers are vague, the plugin is not ready for `plugin_facts` yet.
 
 ## 8. Deployment Note
 
-For existing databases, apply the Sprint 7 schema migration before a normal
-deploy:
+For existing databases, apply required schema migrations before a normal deploy,
+then restart or deploy the updated binary.
 
-```bash
-python3 scripts/migrate-hickey-sprint-7-plugin-facts.py /path/to/ductile.db
-```
+For non-empty existing databases, startup should validate and fail if required
+schema is missing. It should not silently add `plugin_facts`, `seq`, or related
+indexes during normal open. Startup errors should name the migration script
+needed for the current database shape.
 
-Then restart or deploy the updated binary.
-
-For non-empty existing databases, startup should validate and fail if the
-required Sprint 7 schema is missing. It should not silently add `plugin_facts`
-or related indexes during normal open.
+Existing rows without `seq` keep `seq` as `NULL`. Ductile does not backfill
+guessed order for legacy facts; new rows use `seq` for ordering, and legacy rows
+fall back to their previous timestamp order.

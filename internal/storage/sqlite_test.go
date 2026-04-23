@@ -18,7 +18,7 @@ func TestOpenSQLiteBootstrapsTables(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	for _, table := range []string{"job_queue", "job_transitions", "job_attempts", "plugin_state", "plugin_facts", "event_context", "job_log", "circuit_breakers", "circuit_breaker_transitions"} {
+	for _, table := range []string{"storage_sequences", "job_queue", "job_transitions", "job_attempts", "plugin_state", "plugin_facts", "event_context", "job_log", "circuit_breakers", "circuit_breaker_transitions", "schedule_entries"} {
 		var name string
 		if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?;", table).Scan(&name); err != nil {
 			t.Fatalf("table %q missing: %v", table, err)
@@ -31,6 +31,14 @@ func TestOpenSQLiteBootstrapsTables(t *testing.T) {
 	}
 	if jobIDColumn != "job_id" {
 		t.Fatalf("job_log column = %q, want job_id", jobIDColumn)
+	}
+
+	var seqColumn string
+	if err := db.QueryRow("SELECT name FROM pragma_table_info('plugin_facts') WHERE name = 'seq';").Scan(&seqColumn); err != nil {
+		t.Fatalf("plugin_facts.seq missing: %v", err)
+	}
+	if seqColumn != "seq" {
+		t.Fatalf("plugin_facts column = %q, want seq", seqColumn)
 	}
 }
 
@@ -65,6 +73,9 @@ func TestOpenSQLiteRejectsExistingOutdatedSchema(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "migrate-hickey-sprint-7-plugin-facts.py") {
 		t.Fatalf("expected migration guidance, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "migrate-hickey-sprint-9-plugin-fact-seq.py") {
+		t.Fatalf("expected Sprint 9 migration guidance, got %v", err)
 	}
 
 	var name string

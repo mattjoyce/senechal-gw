@@ -11,6 +11,31 @@ The database is typically named `ductile.db` and resides in your configured `sta
 
 ## Schema Overview
 
+### Fact Rows vs Current Rows
+
+Ductile keeps current/cache rows for fast operational reads and append-only
+fact rows for durable explanation.
+
+Current/cache rows:
+- `job_queue`
+- `plugin_state`
+- `circuit_breakers`
+- `schedule_entries`
+
+Fact/history rows:
+- `job_transitions`
+- `job_attempts`
+- `config_snapshots`
+- `plugin_facts`
+- `event_context`
+- `job_log`
+- `circuit_breaker_transitions`
+
+`storage_sequences` is an internal allocator for Ductile-owned fact ordering.
+New `plugin_facts` rows receive a monotonic `seq`. Legacy `plugin_facts` rows
+may have `seq IS NULL`; those rows keep their old timestamp-only ordering and
+should not be treated as perfectly ordered facts.
+
 ### 1. `job_queue`
 The active work queue. Contains pending, running, and recently completed jobs.
 
@@ -40,10 +65,12 @@ The "Control Plane" ledger. Stores metadata (Baggage) that propagates through pi
 Persistent key-value store for plugins (e.g., OAuth tokens, cursors).
 
 ### 5. `plugin_facts`
-Append-only plugin observations. Sprint 7 starts this pattern with `file_watch.snapshot`, while `plugin_state` remains the compatibility/current-state row for existing runtime reads.
+Append-only plugin observations. `plugin_state` remains the
+compatibility/current-state row for existing runtime reads.
 
-For existing databases, apply the matching migration script before deploy:
-`python3 scripts/migrate-hickey-sprint-7-plugin-facts.py /path/to/ductile.db`
+For existing databases, apply required schema migrations before deploy. Startup
+validation reports the migration script to run when the database is behind the
+runtime schema.
 
 ### 6. `schedule_entries`
 The persistent state of the scheduler. Tracks when each schedule last fired and when it is due next.
@@ -106,10 +133,13 @@ LIMIT 1;
 SELECT state FROM plugin_state WHERE plugin_name = 'my-plugin';
 
 -- Inspect recent append-only plugin facts
-SELECT created_at, fact_type, job_id, command, fact_json
+SELECT seq, created_at, fact_type, job_id, command, fact_json
 FROM plugin_facts
 WHERE plugin_name = 'file_watch'
-ORDER BY created_at DESC
+ORDER BY
+  CASE WHEN seq IS NULL THEN 1 ELSE 0 END ASC,
+  seq DESC,
+  created_at DESC
 LIMIT 20;
 ```
 
