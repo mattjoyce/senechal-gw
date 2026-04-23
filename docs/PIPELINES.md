@@ -154,6 +154,7 @@ steps:
 Rules:
 - `with` is only valid on `uses` steps.
 - Each value is evaluated against a snapshot of the merged `payload.*` and `context.*` scope.
+- `context.*` values only exist if an upstream step claimed them with `baggage`.
 - A pure reference such as `{payload.count}` preserves the original type.
 - A mixed template such as `Build: {payload.status}` produces a string.
 - `with` entries do not see each other's output. They all read from the same pre-remap snapshot.
@@ -262,7 +263,7 @@ In this example, `status.current` is durable. `message` is just the request sent
 - Every step receives durable context claimed by upstream steps.
 - New durable facts are claimed explicitly with `baggage`.
 - Existing durable paths are immutable: descendants may add new paths or repeat the same value, but may not rewrite inherited facts.
-- During the Sprint 3 transition, steps without `baggage` use legacy payload promotion. Ductile logs this as a migration diagnostic.
+- If a step does not declare `baggage`, it contributes no new durable facts. Its event payload is still the immediate input to downstream routing and plugin execution, but it is not written into `event_context` implicitly.
 
 ### 4.3 Results & Payloads
 - The event `payload` from Step A is passed to Step B as the immediate payload.

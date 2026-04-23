@@ -1157,6 +1157,8 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
     steps:
       - id: step_b
         uses: plugin-b
+        baggage:
+          origin_channel_id: payload.origin_channel_id
 `
 	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
 	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0644); err != nil {
@@ -1527,9 +1529,9 @@ echo '{"status":"ok","result":"step b complete"}'
 	if err != nil {
 		t.Fatalf("ContextStore.Create(root): %v", err)
 	}
-	stepCtx, err := contextStore.CreateLegacy(ctx, &rootCtx.ID, "chain", "step_a", json.RawMessage(`{"trigger":"go"}`))
+	stepCtx, err := contextStore.Create(ctx, &rootCtx.ID, "chain", "step_a", json.RawMessage(`{}`))
 	if err != nil {
-		t.Fatalf("ContextStore.CreateLegacy(step_a): %v", err)
+		t.Fatalf("ContextStore.Create(step_a): %v", err)
 	}
 
 	payload, err := json.Marshal(protocol.Event{Type: "chain.start", Payload: map[string]any{"trigger": "go"}})
@@ -1579,6 +1581,191 @@ echo '{"status":"ok","result":"step b complete"}'
 	}
 	if got := state.PipelineInstanceIDFromAccumulated(childCtx.AccumulatedJSON); got != instanceID {
 		t.Fatalf("child pipeline instance id = %q, want %q", got, instanceID)
+	}
+	var accumulated map[string]any
+	if err := json.Unmarshal(childCtx.AccumulatedJSON, &accumulated); err != nil {
+		t.Fatalf("unmarshal child accumulated: %v", err)
+	}
+	if _, exists := accumulated["origin_channel_id"]; exists {
+		t.Fatalf("unexpected implicit durable payload in child context: %+v", accumulated)
+	}
+}
+
+func TestDispatcherCrossPipelineRouteCreatesDestinationRootContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	pluginsDir := filepath.Join(tmpDir, "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(pluginsDir): %v", err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db.Close(): %v", err)
+		}
+	}()
+
+	q := queue.New(db)
+	st := state.NewStore(db)
+	contextStore := state.NewContextStore(db)
+
+	scriptA := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"source step complete","events":[{"type":"target.begin","payload":{"content":"hello world"}}]}'
+`
+	scriptB := `#!/bin/bash
+cat >/dev/null
+echo '{"status":"ok","result":"target step complete"}'
+`
+
+	registry := plugin.NewRegistry()
+	plugA := createTestPlugin(t, pluginsDir, "plugin-a", scriptA)
+	plugB := createTestPlugin(t, pluginsDir, "plugin-b", scriptB)
+	if err := registry.Add(plugA); err != nil {
+		t.Fatalf("registry.Add(plugin-a): %v", err)
+	}
+	if err := registry.Add(plugB); err != nil {
+		t.Fatalf("registry.Add(plugin-b): %v", err)
+	}
+
+	pipelineYAML := `pipelines:
+  - name: source
+    on: source.start
+    steps:
+      - id: emit
+        uses: plugin-a
+  - name: target
+    on: target.begin
+    steps:
+      - id: consume
+        uses: plugin-b
+        baggage:
+          target.content: payload.content
+`
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile(pipelines.yaml): %v", err)
+	}
+
+	routerEngine, err := router.LoadFromConfigFiles([]string{pipelinePath}, registry, nil)
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.PluginRoots = []string{pluginsDir}
+	cfg.Plugins["plugin-a"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Handle: 5 * time.Second,
+		},
+	}
+	cfg.Plugins["plugin-b"] = config.PluginConf{
+		Enabled: true,
+		Timeouts: &config.TimeoutsConfig{
+			Handle: 5 * time.Second,
+		},
+	}
+
+	disp := New(q, st, contextStore, nil, routerEngine, registry, events.NewHub(32), cfg)
+	ctx := context.Background()
+
+	sourceInstanceID := "source-instance-123"
+	rootUpdates, err := state.WithPipelineInstanceID(nil, sourceInstanceID)
+	if err != nil {
+		t.Fatalf("WithPipelineInstanceID(root): %v", err)
+	}
+	rootCtx, err := contextStore.Create(ctx, nil, "source", "", rootUpdates)
+	if err != nil {
+		t.Fatalf("ContextStore.Create(root): %v", err)
+	}
+	stepCtx, err := contextStore.Create(ctx, &rootCtx.ID, "source", "emit", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("ContextStore.Create(step): %v", err)
+	}
+
+	payload, err := json.Marshal(protocol.Event{Type: "source.start", Payload: map[string]any{"trigger": "go"}})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:         "plugin-a",
+		Command:        "handle",
+		Payload:        payload,
+		SubmittedBy:    "test",
+		EventContextID: &stepCtx.ID,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue(root): %v", err)
+	}
+
+	rootJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(root): %v", err)
+	}
+	if rootJob == nil {
+		t.Fatal("expected root job")
+	}
+	disp.executeJob(ctx, rootJob)
+
+	childJob, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue(child): %v", err)
+	}
+	if childJob == nil {
+		t.Fatal("expected routed child job")
+	}
+	if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
+		t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
+	}
+	if childJob.EventContextID == nil {
+		t.Fatal("child event_context_id is nil")
+	}
+
+	childCtx, err := contextStore.Get(ctx, *childJob.EventContextID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(child): %v", err)
+	}
+	if childCtx.ParentID == nil {
+		t.Fatal("child parent_id is nil")
+	}
+	if *childCtx.ParentID == stepCtx.ID {
+		t.Fatalf("child parent_id = %s, want destination pipeline root context", *childCtx.ParentID)
+	}
+	if childCtx.PipelineName != "target" || childCtx.StepID != "consume" {
+		t.Fatalf("child context = %s/%s, want target/consume", childCtx.PipelineName, childCtx.StepID)
+	}
+
+	targetRootCtx, err := contextStore.Get(ctx, *childCtx.ParentID)
+	if err != nil {
+		t.Fatalf("ContextStore.Get(target root): %v", err)
+	}
+	if targetRootCtx.ParentID != nil {
+		t.Fatalf("target root parent_id = %v, want nil", targetRootCtx.ParentID)
+	}
+	if targetRootCtx.PipelineName != "target" || targetRootCtx.StepID != "" {
+		t.Fatalf("target root context = %s/%s, want target/<root>", targetRootCtx.PipelineName, targetRootCtx.StepID)
+	}
+
+	targetInstanceID := state.PipelineInstanceIDFromAccumulated(childCtx.AccumulatedJSON)
+	if targetInstanceID == "" {
+		t.Fatal("target pipeline instance id is empty")
+	}
+	if targetInstanceID == sourceInstanceID {
+		t.Fatalf("target pipeline instance id = %q, want a new destination instance id", targetInstanceID)
+	}
+	if got := state.PipelineInstanceIDFromAccumulated(targetRootCtx.AccumulatedJSON); got != targetInstanceID {
+		t.Fatalf("target root pipeline instance id = %q, want %q", got, targetInstanceID)
+	}
+	if got := state.RouteDepthFromAccumulated(targetRootCtx.AccumulatedJSON); got != 0 {
+		t.Fatalf("target root route depth = %d, want 0", got)
+	}
+	if got := state.RouteDepthFromAccumulated(childCtx.AccumulatedJSON); got != 1 {
+		t.Fatalf("child route depth = %d, want 1", got)
 	}
 }
 

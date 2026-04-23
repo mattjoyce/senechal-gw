@@ -85,7 +85,7 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 
 Ductile employs a "Governance Hybrid" model to manage state and data across multi-hop plugin chains.
 
-*   **Control Plane (Baggage):** Metadata about the execution (e.g., `origin_user_id`, `trace_id`). This data is stored in the `event_context` SQLite ledger and is automatically merged and carried forward as "Baggage" to every subsequent job in the chain. Keys starting with `origin_` are immutable.
+*   **Control Plane (Baggage):** Metadata about the execution (e.g., `origin_user_id`, `trace_id`). This data is stored in the `event_context` SQLite ledger. Values become durable only when a pipeline step claims them with `baggage`, and inherited baggage paths are immutable.
 *   **Data Plane (Workspaces):** Large physical artifacts (e.g., audio files, documents). Every job is assigned a unique `workspace_dir` on the filesystem. When a pipeline branches, Ductile performs a **Zero-Copy Clone** (using hardlinks) to isolate workspaces while saving disk space.
 
 ---

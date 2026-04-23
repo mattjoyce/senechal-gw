@@ -486,7 +486,7 @@ func currentSemantics() map[string]any {
 		"baggage_bulk_import":  "author_namespace_required",
 		"baggage_durability":   "author_explicit_claims",
 		"baggage_immutability": "deep_accretion_immutable_paths",
-		"baggage_transition":   "legacy_payload_promotion_without_baggage",
+		"baggage_transition":   "explicit_claims_only",
 		"plugin_retry_field":   "v2_compatibility_signal",
 		"retry_policy_owner":   "core_with_v2_shim",
 	}

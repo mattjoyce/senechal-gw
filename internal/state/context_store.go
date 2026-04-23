@@ -79,21 +79,7 @@ func (s *ContextStore) Create(
 	stepID string,
 	updates json.RawMessage,
 ) (*EventContext, error) {
-	return s.create(ctx, parentID, pipelineName, stepID, updates, true)
-}
-
-// CreateLegacy appends a context row using legacy shallow payload promotion.
-//
-// This is a transition path for pipelines that have not yet adopted explicit
-// baggage claims. Prefer Create for new durable facts.
-func (s *ContextStore) CreateLegacy(
-	ctx context.Context,
-	parentID *string,
-	pipelineName string,
-	stepID string,
-	updates json.RawMessage,
-) (*EventContext, error) {
-	return s.create(ctx, parentID, pipelineName, stepID, updates, false)
+	return s.create(ctx, parentID, pipelineName, stepID, updates)
 }
 
 func (s *ContextStore) create(
@@ -102,7 +88,6 @@ func (s *ContextStore) create(
 	pipelineName string,
 	stepID string,
 	updates json.RawMessage,
-	deepAccrete bool,
 ) (*EventContext, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -126,12 +111,8 @@ func (s *ContextStore) create(
 		}
 		accumulated = cloneRawMap(parentMap)
 
-		if deepAccrete {
-			if err := deepAccreteRawMap(accumulated, updateMap, ""); err != nil {
-				return nil, err
-			}
-		} else {
-			maps.Copy(accumulated, updateMap)
+		if err := deepAccreteRawMap(accumulated, updateMap, ""); err != nil {
+			return nil, err
 		}
 	} else {
 		maps.Copy(accumulated, updateMap)

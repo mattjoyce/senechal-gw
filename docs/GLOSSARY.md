@@ -45,7 +45,7 @@ The JSON object attached to an event. Payload fields are passed to downstream pl
 
 ## Context (Baggage)
 
-Immutable metadata (e.g., `origin_user_id`, `trace_id`) that persists across every hop of a multi-step pipeline. Carried in the `event_context` ledger and automatically merged into downstream requests.
+Immutable metadata (e.g., `origin_user_id`, `trace_id`) that persists across every hop of a multi-step pipeline once a step claims it with `baggage`. Carried in the `event_context` ledger and merged into downstream requests.
 
 ## Worker Pool (Max Workers)
 

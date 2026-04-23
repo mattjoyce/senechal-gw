@@ -232,6 +232,8 @@ except Exception as e:
     steps:
       - id: step_process
         uses: processor
+        baggage:
+          origin_user: payload.origin_user
       - id: step_notify
         uses: notifier
 `

@@ -44,7 +44,7 @@ func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
 		t.Fatalf("Enqueue(root): %v", err)
 	}
 
-	childCtx, err := ctxStore.CreateLegacy(ctx, &rootCtx.ID, "chain", "step_b", json.RawMessage(`{"message":"goodbye"}`))
+	childCtx, err := ctxStore.Create(ctx, &rootCtx.ID, "chain", "step_b", json.RawMessage(`{"farewell":"goodbye"}`))
 	if err != nil {
 		t.Fatalf("Create(child context): %v", err)
 	}
@@ -189,7 +189,7 @@ func testSnapshot(id, reason string, loadedAt time.Time) *configsnapshot.Snapsho
 		DuctileVersion:     &version,
 		BinaryPath:         &binaryPath,
 		SnapshotFormat:     configsnapshot.SnapshotFormat,
-		Semantics:          json.RawMessage(`{"baggage_durability":"author_explicit_claims","baggage_immutability":"deep_accretion_immutable_paths","baggage_transition":"legacy_payload_promotion_without_baggage","plugin_retry_field":"v2_compatibility_signal","retry_policy_owner":"core_with_v2_shim"}`),
+		Semantics:          json.RawMessage(`{"baggage_durability":"author_explicit_claims","baggage_immutability":"deep_accretion_immutable_paths","baggage_transition":"explicit_claims_only","plugin_retry_field":"v2_compatibility_signal","retry_policy_owner":"core_with_v2_shim"}`),
 		PluginFingerprints: json.RawMessage(`[]`),
 		SanitizedConfig:    json.RawMessage(`{}`),
 		SecretFingerprints: json.RawMessage(`[]`),

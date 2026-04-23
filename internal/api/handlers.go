@@ -142,9 +142,8 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type entryContextPlan struct {
-		stepID   string
-		updates  json.RawMessage
-		explicit bool
+		stepID  string
+		updates json.RawMessage
 	}
 
 	jobIDs := make([]string, 0, len(dispatches))
@@ -155,7 +154,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			if stepID == "" {
 				stepID = pipeline.EntryStepID
 			}
-			updates, explicit, err := s.pipelineEntryContextUpdates(pipeline.Name, stepID, event.Payload)
+			updates, err := s.pipelineEntryContextUpdates(pipeline.Name, stepID, event.Payload)
 			if err != nil {
 				if errors.Is(err, errRootBaggageClaims) {
 					s.writeError(w, http.StatusBadRequest, err.Error())
@@ -166,9 +165,8 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			contextPlans[i] = entryContextPlan{
-				stepID:   stepID,
-				updates:  updates,
-				explicit: explicit,
+				stepID:  stepID,
+				updates: updates,
 			}
 		}
 	}
@@ -187,7 +185,7 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 	for i, d := range dispatches {
 		var eventContextID *string
 		if s.contextStore != nil {
-			root, err := s.createPipelineEntryContext(r.Context(), pipelineRootContextID, pipeline.Name, contextPlans[i].stepID, contextPlans[i].updates, contextPlans[i].explicit, d.RouteDepth, d.RouteMaxDepth)
+			root, err := s.createPipelineEntryContext(r.Context(), pipelineRootContextID, pipeline.Name, contextPlans[i].stepID, contextPlans[i].updates, d.RouteDepth, d.RouteMaxDepth)
 			if err != nil {
 				s.logger.Error("failed to create event context for pipeline entry", "pipeline", pipeline.Name, "step_id", contextPlans[i].stepID, "error", err)
 				s.writeError(w, http.StatusInternalServerError, "failed to create event context")
@@ -469,7 +467,6 @@ func (s *Server) createPipelineEntryContext(
 	pipelineName string,
 	stepID string,
 	updates json.RawMessage,
-	explicit bool,
 	routeDepth int,
 	routeMaxDepth int,
 ) (*state.EventContext, error) {
@@ -498,38 +495,26 @@ func (s *Server) createPipelineEntryContext(
 			return nil, fmt.Errorf("seed pipeline entry route max depth: %w", err)
 		}
 	}
-	if explicit {
-		return s.contextStore.Create(ctx, parentID, pipelineName, stepID, updates)
-	}
-	return s.contextStore.CreateLegacy(ctx, parentID, pipelineName, stepID, updates)
+	return s.contextStore.Create(ctx, parentID, pipelineName, stepID, updates)
 }
 
 func (s *Server) pipelineEntryContextUpdates(
 	pipelineName string,
 	stepID string,
 	payload map[string]any,
-) (json.RawMessage, bool, error) {
+) (json.RawMessage, error) {
 	if node, ok := s.router.GetNode(pipelineName, stepID); ok && node.Baggage != nil && !node.Baggage.Empty() {
 		updates, err := baggage.ApplyClaims(payload, node.Baggage, nil)
 		if err != nil {
-			return nil, false, fmt.Errorf("%w: apply baggage claims for %s:%s: %v", errRootBaggageClaims, pipelineName, stepID, err)
+			return nil, fmt.Errorf("%w: apply baggage claims for %s:%s: %v", errRootBaggageClaims, pipelineName, stepID, err)
 		}
 		raw, err := json.Marshal(updates)
 		if err != nil {
-			return nil, false, fmt.Errorf("marshal root baggage updates: %w", err)
+			return nil, fmt.Errorf("marshal root baggage updates: %w", err)
 		}
-		return raw, true, nil
+		return raw, nil
 	}
-
-	triggerPayload, err := json.Marshal(payload)
-	if err != nil {
-		return nil, false, fmt.Errorf("marshal trigger payload: %w", err)
-	}
-	s.logger.Warn("using legacy payload promotion for pipeline entry without baggage",
-		"pipeline", pipelineName,
-		"step_id", stepID,
-	)
-	return json.RawMessage(triggerPayload), false, nil
+	return json.RawMessage(`{}`), nil
 }
 
 func terminalStepSet(routes []dsl.CompiledRoute, fallback []string) map[string]struct{} {

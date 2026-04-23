@@ -112,7 +112,7 @@ baggage:
 
 This imports `payload.metadata` as `context.whisper.*`. Omitting `namespace` is rejected until plugin manifest default namespaces exist.
 
-During the Sprint 3 transition, a step with no `baggage` uses legacy shallow payload promotion. This preserves existing workflows while making migration visible through transition diagnostics.
+If a step declares no `baggage`, Core creates no new durable context for that hop beyond inherited baggage and control-plane fields. Immediate event payload still flows to downstream steps, but it is not promoted into `event_context` implicitly.
 
 ---
 

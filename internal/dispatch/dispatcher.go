@@ -961,20 +961,12 @@ func (d *Dispatcher) routeEventsWithOptions(
 				if err != nil {
 					return err
 				}
-				parentCtxID := strPtrOrNil(next.ParentContextID)
-				if parentCtxID == nil && strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.PipelineInstanceID) != "" {
-					rootContextID, err := d.ensurePipelineInstanceRootContext(ctx, rootContextIDs, next)
-					if err != nil {
-						return err
-					}
-					parentCtxID = &rootContextID
+				parentCtxID, err := d.parentContextIDForDispatch(ctx, rootContextIDs, next)
+				if err != nil {
+					return err
 				}
 				var createdCtx *state.EventContext
-				if d.dispatchUsesExplicitBaggage(next) {
-					createdCtx, err = d.contexts.Create(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
-				} else {
-					createdCtx, err = d.contexts.CreateLegacy(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
-				}
+				createdCtx, err = d.contexts.Create(ctx, parentCtxID, next.PipelineName, next.StepID, updates)
 				if err != nil {
 					return fmt.Errorf("create routed context (%s:%s): %w", next.PipelineName, next.StepID, err)
 				}
@@ -1064,6 +1056,35 @@ func (d *Dispatcher) ensurePipelineInstanceRootContext(ctx context.Context, cach
 	}
 	cache[key] = rootCtx.ID
 	return rootCtx.ID, nil
+}
+
+func (d *Dispatcher) parentContextIDForDispatch(ctx context.Context, cache map[string]string, next router.Dispatch) (*string, error) {
+	parentCtxID := strPtrOrNil(next.ParentContextID)
+	if d.contexts == nil || strings.TrimSpace(next.PipelineName) == "" || strings.TrimSpace(next.PipelineInstanceID) == "" {
+		return parentCtxID, nil
+	}
+	if parentCtxID == nil {
+		rootContextID, err := d.ensurePipelineInstanceRootContext(ctx, cache, next)
+		if err != nil {
+			return nil, err
+		}
+		return &rootContextID, nil
+	}
+
+	parentCtx, err := d.contexts.Get(ctx, *parentCtxID)
+	if err != nil {
+		return nil, fmt.Errorf("load parent context %q for routed dispatch: %w", *parentCtxID, err)
+	}
+	parentInstanceID := state.PipelineInstanceIDFromAccumulated(parentCtx.AccumulatedJSON)
+	if parentCtx.PipelineName == next.PipelineName && parentInstanceID == next.PipelineInstanceID {
+		return parentCtxID, nil
+	}
+
+	rootContextID, err := d.ensurePipelineInstanceRootContext(ctx, cache, next)
+	if err != nil {
+		return nil, err
+	}
+	return &rootContextID, nil
 }
 
 type preflightDecision string
@@ -1260,20 +1281,12 @@ func (d *Dispatcher) routeSkippedStepSuccessors(ctx context.Context, logger *slo
 	return nil
 }
 
-func (d *Dispatcher) dispatchUsesExplicitBaggage(next router.Dispatch) bool {
-	if d.router == nil || strings.TrimSpace(next.PipelineName) == "" || strings.TrimSpace(next.StepID) == "" {
-		return false
-	}
-	node, found := d.router.GetNode(next.PipelineName, next.StepID)
-	return found && node.Baggage != nil && !node.Baggage.Empty()
-}
-
 func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.Dispatch, opts routeEventsOptions) (json.RawMessage, error) {
 	var (
 		updates json.RawMessage
 		err     error
 	)
-	if d.dispatchUsesExplicitBaggage(next) {
+	if d.router != nil && strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.StepID) != "" {
 		if node, found := d.router.GetNode(next.PipelineName, next.StepID); found && node.Baggage != nil && !node.Baggage.Empty() {
 			parentContext, err := d.contextMap(ctx, next.ParentContextID)
 			if err != nil {
@@ -1304,19 +1317,6 @@ func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.
 				return nil, fmt.Errorf("marshal baggage updates: %w", err)
 			}
 			updates = raw
-		}
-	}
-
-	if updates == nil {
-		if strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.StepID) != "" {
-			d.logger.Warn("using legacy payload promotion for routed step without baggage",
-				"pipeline", next.PipelineName,
-				"step_id", next.StepID,
-			)
-		}
-		updates, err = payloadObjectFromEvent(next.Event)
-		if err != nil {
-			return nil, err
 		}
 	}
 
@@ -1437,21 +1437,6 @@ func (d *Dispatcher) contextMap(ctx context.Context, contextID string) (map[stri
 		return nil, fmt.Errorf("decode parent accumulated context: %w", err)
 	}
 	return out, nil
-}
-
-func payloadObjectFromEvent(event protocol.Event) (json.RawMessage, error) {
-	if event.Payload == nil {
-		return json.RawMessage(`{}`), nil
-	}
-	raw, err := json.Marshal(event.Payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal event payload: %w", err)
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, fmt.Errorf("event payload must be a JSON object: %w", err)
-	}
-	return raw, nil
 }
 
 func strPtrOrNil(v string) *string {

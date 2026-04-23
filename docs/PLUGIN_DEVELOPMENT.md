@@ -200,7 +200,7 @@ Simply emit your event with standard fields (`text`, `result`, `source_url`, `so
 
 ### Baggage (Context) Fallback
 
-Every event payload is shallow-merged into the persistent **context** ledger. Downstream plugins receive this accumulated baggage in `request.context`. If a field may be produced by an upstream step, prefer:
+Only values claimed by pipeline `baggage` are written into the persistent **context** ledger. Downstream plugins receive this accumulated baggage in `request.context`. If a field may be produced by an upstream step, prefer:
 
 1. Read from `event.payload` (step-specific input).
 2. Fall back to `request.context` for accumulated values.

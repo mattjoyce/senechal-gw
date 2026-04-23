@@ -126,7 +126,7 @@ func TestBuildRecordsExplicitBaggageSemantics(t *testing.T) {
 	if semantics["baggage_immutability"] != "deep_accretion_immutable_paths" {
 		t.Fatalf("baggage_immutability = %q", semantics["baggage_immutability"])
 	}
-	if semantics["baggage_transition"] != "legacy_payload_promotion_without_baggage" {
+	if semantics["baggage_transition"] != "explicit_claims_only" {
 		t.Fatalf("baggage_transition = %q", semantics["baggage_transition"])
 	}
 	if semantics["retry_policy_owner"] != "core_with_v2_shim" {

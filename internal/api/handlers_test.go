@@ -704,13 +704,14 @@ func TestHandlePipelineTrigger_FanoutCreatesPerDispatchContext(t *testing.T) {
 		if ctx.PipelineName != "test-pipe" {
 			t.Errorf("unexpected pipeline name %s", ctx.PipelineName)
 		}
-		// Verify root context is seeded with the trigger payload, not {}.
+		// Trigger payload remains immediate request data; it should not become
+		// durable baggage without explicit claims.
 		var accumulated map[string]any
 		if err := json.Unmarshal(ctx.AccumulatedJSON, &accumulated); err != nil {
 			t.Fatalf("unmarshal AccumulatedJSON: %v", err)
 		}
-		if got := accumulated["x"]; got == nil {
-			t.Errorf("expected trigger payload key 'x' in AccumulatedJSON, got %v", accumulated)
+		if _, exists := accumulated["x"]; exists {
+			t.Errorf("unexpected trigger payload key 'x' in AccumulatedJSON, got %v", accumulated)
 		}
 		gotPipelineInstanceID := state.PipelineInstanceIDFromAccumulated(ctx.AccumulatedJSON)
 		if gotPipelineInstanceID == "" {
