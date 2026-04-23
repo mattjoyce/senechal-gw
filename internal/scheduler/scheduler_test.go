@@ -312,11 +312,12 @@ func TestPollViewConsumesLifecycleEvents(t *testing.T) {
 type pollViewQueueStub struct {
 	stubQueueService
 	countOutstandingCalls int
+	countOutstanding      int
 }
 
 func (s *pollViewQueueStub) CountOutstandingJobs(_ context.Context, _, _ string) (int, error) {
 	s.countOutstandingCalls++
-	return 0, nil
+	return s.countOutstanding, nil
 }
 
 func TestCanScheduleUsesPollViewBeforeQueueSafety(t *testing.T) {
@@ -334,6 +335,25 @@ func TestCanScheduleUsesPollViewBeforeQueueSafety(t *testing.T) {
 	assert.False(t, ok)
 	assert.Equal(t, "already_running", reason)
 	assert.Equal(t, 0, stub.countOutstandingCalls)
+}
+
+func TestCanScheduleUsesQueueSafetyWhenPollViewBelowLimit(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	stub := &pollViewQueueStub{countOutstanding: 2}
+	sched := New(cfg, stub, nil, logger)
+	sched.applyPollEvent(events.Event{
+		Type: "scheduler.scheduled",
+		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
+	})
+
+	ok, reason, err := sched.canSchedule(context.Background(), "echo", "poll", config.PluginConf{
+		MaxOutstandingPolls: 2,
+	}, config.ScheduleConfig{IfRunning: "queue"})
+	assert.NoError(t, err)
+	assert.False(t, ok)
+	assert.Equal(t, "outstanding_limit", reason)
+	assert.Equal(t, 1, stub.countOutstandingCalls)
 }
 
 func TestReconcileCircuitBreakerRecordsCloseTransition(t *testing.T) {

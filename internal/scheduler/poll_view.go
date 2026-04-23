@@ -123,19 +123,33 @@ func (s *Scheduler) applyPollEvent(ev events.Event) {
 	s.pollsMu.Unlock()
 }
 
-func (s *Scheduler) pollOutstanding(ctx context.Context, pluginName, command string) (int, error) {
+func (s *Scheduler) pollOutstanding(ctx context.Context, pluginName, command string, threshold int) (int, error) {
 	viewCount := s.pollViewCount(pluginName, command)
-	if viewCount > 0 {
+	if threshold <= 0 {
+		threshold = 1
+	}
+	if viewCount >= threshold {
 		return viewCount, nil
 	}
 
 	// Temporary safety net while the event-derived view proves itself: if this
-	// process missed an event, queue truth prevents duplicate scheduler polls.
+	// process missed one or more lifecycle events, queue truth prevents duplicate
+	// scheduler polls without replacing the event-derived view as the first read.
 	queueCount, err := s.queue.CountOutstandingJobs(ctx, pluginName, command)
 	if err != nil {
 		return 0, err
 	}
-	return queueCount, nil
+	if queueCount > viewCount {
+		return queueCount, nil
+	}
+	return viewCount, nil
+}
+
+func (s *Scheduler) outstandingForPolicy(ctx context.Context, pluginName, command string, threshold int) (int, error) {
+	if command == pollCommand {
+		return s.pollOutstanding(ctx, pluginName, command, threshold)
+	}
+	return s.queue.CountOutstandingJobs(ctx, pluginName, command)
 }
 
 func (s *Scheduler) pollViewCount(pluginName, command string) int {
