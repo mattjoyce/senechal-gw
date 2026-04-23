@@ -977,21 +977,16 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 		s.logger.Info("Circuit breaker moved to half-open", "plugin", pluginName, "command", command)
 	}
 
-	var outstanding int
-	if command == pollCommand {
-		outstanding, err = s.pollOutstanding(ctx, pluginName, command)
-	} else {
-		outstanding, err = s.queue.CountOutstandingJobs(ctx, pluginName, command)
-	}
-	if err != nil {
-		return false, "", err
-	}
 	ifRunning := strings.TrimSpace(schedule.IfRunning)
 	if ifRunning == "" {
 		ifRunning = "skip"
 	}
 	switch ifRunning {
 	case "skip":
+		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command, 1)
+		if err != nil {
+			return false, "", err
+		}
 		if outstanding > 0 {
 			return false, "already_running", nil
 		}
@@ -1000,10 +995,18 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 		if maxOutstanding <= 0 {
 			maxOutstanding = 1
 		}
+		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command, maxOutstanding)
+		if err != nil {
+			return false, "", err
+		}
 		if outstanding >= maxOutstanding {
 			return false, "outstanding_limit", nil
 		}
 	case "cancel":
+		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command, 1)
+		if err != nil {
+			return false, "", err
+		}
 		if outstanding > 0 {
 			cancelled, cancelErr := s.queue.CancelOutstandingJobs(ctx, pluginName, command, "cancelled by scheduler (if_running=cancel)")
 			if cancelErr != nil {
