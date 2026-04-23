@@ -54,8 +54,17 @@ type Dispatcher struct {
 
 	// completions tracks jobs being waited on for synchronous execution.
 	// Map key is root job ID. Value is a channel that is closed when the tree is complete.
-	completions map[string]chan struct{}
-	mu          sync.RWMutex
+	completions    map[string]chan struct{}
+	pollLifecycles map[string]pollLifecycleJob
+	mu             sync.RWMutex
+}
+
+type pollLifecycleJob struct {
+	Plugin      string
+	Command     string
+	ScheduleID  string
+	SubmittedBy string
+	Attempt     int
 }
 
 // New creates a new Dispatcher.
@@ -70,16 +79,17 @@ func New(
 	cfg *config.Config,
 ) *Dispatcher {
 	return &Dispatcher{
-		queue:       q,
-		state:       st,
-		contexts:    contexts,
-		workspace:   ws,
-		router:      rt,
-		registry:    reg,
-		events:      hub,
-		cfg:         cfg,
-		logger:      log.WithComponent("dispatch"),
-		completions: make(map[string]chan struct{}),
+		queue:          q,
+		state:          st,
+		contexts:       contexts,
+		workspace:      ws,
+		router:         rt,
+		registry:       reg,
+		events:         hub,
+		cfg:            cfg,
+		logger:         log.WithComponent("dispatch"),
+		completions:    make(map[string]chan struct{}),
+		pollLifecycles: make(map[string]pollLifecycleJob),
 	}
 }
 
@@ -205,12 +215,14 @@ func (d *Dispatcher) ExecuteJob(ctx context.Context, job *queue.Job) {
 func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	jobLogger := d.logger.With("job_id", job.ID, "plugin", job.Plugin, "command", job.Command)
 	jobLogger.Info("job started", "attempt", job.Attempt)
+	d.publishPollStarted(job)
 	d.events.Publish("job.started", map[string]any{
 		"job_id":        job.ID,
 		"plugin":        job.Plugin,
 		"command":       job.Command,
 		"attempt":       job.Attempt,
 		"parent_job_id": deref(job.ParentJobID),
+		"submitted_by":  job.SubmittedBy,
 	})
 
 	preflight, err := d.preflightJob(ctx, job)
@@ -1529,6 +1541,92 @@ func (d *Dispatcher) getTimeout(timeouts *config.TimeoutsConfig, command string)
 	}
 }
 
+func (d *Dispatcher) publishPollStarted(job *queue.Job) {
+	if job == nil || !d.isSchedulerPollJob(job) {
+		return
+	}
+
+	scheduleID := scheduleIDFromDedupeKey(job.Plugin, job.Command, job.DedupeKey)
+	lifecycle := pollLifecycleJob{
+		Plugin:      job.Plugin,
+		Command:     job.Command,
+		ScheduleID:  scheduleID,
+		SubmittedBy: job.SubmittedBy,
+		Attempt:     job.Attempt,
+	}
+
+	d.mu.Lock()
+	d.pollLifecycles[job.ID] = lifecycle
+	d.mu.Unlock()
+
+	d.events.Publish("poll.started", map[string]any{
+		"job_id":       job.ID,
+		"plugin":       job.Plugin,
+		"command":      job.Command,
+		"schedule_id":  scheduleID,
+		"submitted_by": job.SubmittedBy,
+		"attempt":      job.Attempt,
+	})
+}
+
+func (d *Dispatcher) publishPollCompleted(jobID string, status queue.Status, jobEventData map[string]any) {
+	d.mu.Lock()
+	lifecycle, ok := d.pollLifecycles[jobID]
+	if ok {
+		delete(d.pollLifecycles, jobID)
+	}
+	d.mu.Unlock()
+	if !ok {
+		return
+	}
+
+	payload := map[string]any{
+		"job_id":       jobID,
+		"plugin":       lifecycle.Plugin,
+		"command":      lifecycle.Command,
+		"schedule_id":  lifecycle.ScheduleID,
+		"submitted_by": lifecycle.SubmittedBy,
+		"attempt":      lifecycle.Attempt,
+		"status":       string(status),
+		"outcome":      string(status),
+	}
+	if duration, ok := jobEventData["duration_ms"]; ok {
+		payload["duration_ms"] = duration
+	}
+	if errText, ok := jobEventData["error"]; ok {
+		payload["error"] = errText
+	}
+
+	d.events.Publish("poll.completed", payload)
+}
+
+func (d *Dispatcher) isSchedulerPollJob(job *queue.Job) bool {
+	if job == nil || d.cfg == nil {
+		return false
+	}
+	submitter := strings.TrimSpace(d.cfg.Service.Name)
+	return strings.TrimSpace(submitter) != "" &&
+		strings.TrimSpace(job.SubmittedBy) == submitter &&
+		strings.TrimSpace(job.Command) == "poll"
+}
+
+func scheduleIDFromDedupeKey(pluginName, command string, dedupeKey *string) string {
+	if dedupeKey == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(*dedupeKey)
+	prefix := pluginName + ":" + command + ":"
+	if raw == "" || !strings.HasPrefix(raw, prefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(raw, prefix)
+	if rest == "" {
+		return ""
+	}
+	parts := strings.Split(rest, ":")
+	return strings.TrimSpace(parts[0])
+}
+
 // completeJob marks a job as complete with the given status and logs the outcome.
 func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID string, plugin string, startTime *time.Time, status queue.Status, result json.RawMessage, lastError, stderr *string) {
 	duration := time.Duration(0)
@@ -1566,6 +1664,7 @@ func (d *Dispatcher) completeJob(ctx context.Context, logger *slog.Logger, jobID
 		}
 		d.events.Publish("job.failed", eventData)
 	}
+	d.publishPollCompleted(jobID, status, eventData)
 
 	if err := d.queue.CompleteWithResult(ctx, jobID, status, result, lastError, stderr); err != nil {
 		d.logger.Error("failed to complete job", "job_id", jobID, "error", err)
