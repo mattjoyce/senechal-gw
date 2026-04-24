@@ -202,6 +202,7 @@ func loadPlugin(name, pluginPath, pluginsDir string, allowSymlinks bool, logger 
 		Description:     manifest.Description,
 		ConcurrencySafe: concurrencySafe,
 		Commands:        manifest.Commands,
+		FactOutputs:     manifest.FactOutputs,
 		ConfigKeys:      manifest.ConfigKeys,
 	}, nil
 }
@@ -256,8 +257,52 @@ func validateManifest(m *Manifest) error {
 			return fmt.Errorf("command %q values: %w", cmd.Name, err)
 		}
 	}
+	for i, rule := range m.FactOutputs {
+		if err := validateFactOutputRule(m.Commands, rule); err != nil {
+			return fmt.Errorf("fact_outputs[%d]: %w", i, err)
+		}
+	}
 
 	return nil
+}
+
+func validateFactOutputRule(commands Commands, rule FactOutputRule) error {
+	command := strings.TrimSpace(rule.When.Command)
+	if command == "" {
+		return fmt.Errorf("when.command is required")
+	}
+	if !commands.hasName(command) {
+		return fmt.Errorf("when.command %q is not declared in commands", command)
+	}
+
+	from := strings.TrimSpace(rule.From)
+	if from == "" {
+		return fmt.Errorf("from is required")
+	}
+	if from != "state_updates" {
+		return fmt.Errorf("unsupported from %q", from)
+	}
+
+	if strings.TrimSpace(rule.FactType) == "" {
+		return fmt.Errorf("fact_type is required")
+	}
+
+	view := strings.TrimSpace(rule.CompatibilityView)
+	switch view {
+	case "", "mirror_object":
+		return nil
+	default:
+		return fmt.Errorf("unsupported compatibility_view %q", view)
+	}
+}
+
+func (c Commands) hasName(name string) bool {
+	for _, cmd := range c {
+		if cmd.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func validateCommandValues(cmd Command) error {

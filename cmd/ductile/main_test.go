@@ -616,7 +616,7 @@ plugins:
 		Command:    "poll",
 		FactJSON:   json.RawMessage(`{"last_poll_at":"2026-04-22T01:02:03Z","watches":{"single-file":{"exists":true}}}`),
 		CreatedAt:  time.Date(2026, 4, 22, 1, 2, 3, 0, time.UTC),
-	}); err != nil {
+	}, "mirror_object"); err != nil {
 		t.Fatalf("RecordFact: %v", err)
 	}
 

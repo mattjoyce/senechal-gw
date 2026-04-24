@@ -398,6 +398,41 @@ func TestValidateManifest(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "fact output declaration is valid",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
+				FactOutputs: []FactOutputRule{{
+					When:              FactOutputWhen{Command: "poll"},
+					From:              "state_updates",
+					FactType:          "test.snapshot",
+					CompatibilityView: "mirror_object",
+				}},
+			},
+			wantErr: false,
+		},
+		{
+			name: "fact output must reference declared command",
+			manifest: &Manifest{
+				ManifestSpec:    SupportedManifestSpec,
+				ManifestVersion: SupportedManifestVersion,
+				Name:            "test",
+				Protocol:        2,
+				Entrypoint:      "run.sh",
+				Commands:        Commands{{Name: "poll", Type: CommandTypeWrite}},
+				FactOutputs: []FactOutputRule{{
+					When:     FactOutputWhen{Command: "handle"},
+					From:     "state_updates",
+					FactType: "test.snapshot",
+				}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "names-only values are valid",
 			manifest: &Manifest{
 				ManifestSpec:    SupportedManifestSpec,
@@ -788,5 +823,52 @@ commands:
 	}
 	if p.ConcurrencySafe {
 		t.Fatalf("expected ConcurrencySafe=false from manifest hint")
+	}
+}
+
+func TestDiscover_FactOutputsLoaded(t *testing.T) {
+	tmpDir := t.TempDir()
+	pluginDir := filepath.Join(tmpDir, "watcher")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	manifest := `manifest_spec: ductile.plugin
+manifest_version: 1
+name: watcher
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: watcher.snapshot
+    compatibility_view: mirror_object
+`
+	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("WriteFile(manifest): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(run.sh): %v", err)
+	}
+
+	reg, err := DiscoverManyWithOptions([]string{tmpDir}, func(level, msg string, args ...any) {}, DiscoverOptions{AllowSymlinks: true})
+	if err != nil {
+		t.Fatalf("DiscoverManyWithOptions: %v", err)
+	}
+
+	p, ok := reg.Get("watcher")
+	if !ok {
+		t.Fatal("expected plugin watcher to be discovered")
+	}
+	if len(p.FactOutputs) != 1 {
+		t.Fatalf("len(FactOutputs) = %d, want 1", len(p.FactOutputs))
+	}
+	if p.FactOutputs[0].FactType != "watcher.snapshot" || p.FactOutputs[0].CompatibilityView != "mirror_object" {
+		t.Fatalf("unexpected FactOutputs[0] = %+v", p.FactOutputs[0])
 	}
 }

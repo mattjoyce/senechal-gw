@@ -1,6 +1,6 @@
 # Plugin Facts Compliance
 
-This document explains how to make a plugin compatible with the Sprint 7
+This document explains how to make a plugin compatible with the declared
 `plugin_facts` pattern.
 
 The goal is to move durable plugin truth toward **append-only facts** while
@@ -15,8 +15,10 @@ shallow-merged them directly into `plugin_state`.
 With `plugin_facts`, a plugin can instead participate in a stricter pattern:
 
 1. The plugin emits a successful, stable snapshot in `state_updates`.
-2. Core records that snapshot as an append-only row in `plugin_facts`.
-3. Core derives the compatibility `plugin_state` row from the newest fact.
+2. The plugin manifest declares that snapshot as a fact output.
+3. Core records that snapshot as an append-only row in `plugin_facts`.
+4. Core derives the compatibility `plugin_state` row from the newest fact when
+   the declaration says to do so.
 
 This means:
 - `plugin_facts` is the historical truth.
@@ -56,11 +58,22 @@ need a clear, defensible contract.
 
 ### Core-side rules
 
-- Assign an explicit fact type.
+- Declare an explicit fact type in `manifest.yaml`.
 - Record each fact append-only in `plugin_facts`.
-- Define how compatibility `plugin_state` is derived from that fact type.
+- Declare how compatibility `plugin_state` is derived from that fact.
 - Add an operator-visible read path.
 - Add tests that prove both fact persistence and derived compatibility state.
+
+The smallest useful manifest shape is:
+
+```yaml
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: file_watch.snapshot
+    compatibility_view: mirror_object
+```
 
 ## 4. Recommended Fact Shape
 
@@ -165,8 +178,8 @@ When migrating another plugin to `plugin_facts`, do all of the following:
 3. Make the plugin emit a stable object snapshot.
 4. Ensure the snapshot is a full compatibility-state view, not just a partial
    patch.
-5. Update core to recognize that plugin+command and record the fact.
-6. Add or update the reducer that derives `plugin_state`.
+5. Add `fact_outputs` to the plugin manifest.
+6. Declare the compatibility view policy for `plugin_state`.
 7. Add operator inspection support.
 8. Add unit tests for persistence and derived state.
 9. Add a Docker or similarly realistic fixture when runtime behavior matters.

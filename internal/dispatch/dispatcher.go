@@ -458,14 +458,16 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		}
 
 		handledByFacts := false
-		if fact, ok, err := pluginFactFromStateUpdates(job, updatesJSON); err != nil {
+		declaredFacts, err := pluginFactsFromStateUpdates(job, d.registry, updatesJSON)
+		if err != nil {
 			errMsg := fmt.Sprintf("failed to build plugin fact: %v", err)
 			jobLogger.Error(errMsg)
 			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
-		} else if ok {
-			if _, _, err := d.state.RecordFact(ctx, *fact); err != nil {
+		}
+		for _, declaredFact := range declaredFacts {
+			if _, _, err := d.state.RecordFact(ctx, declaredFact.Fact, declaredFact.CompatibilityView); err != nil {
 				errMsg := fmt.Sprintf("failed to record plugin fact: %v", err)
 				jobLogger.Error(errMsg)
 				recordBlackBox(queue.StatusFailed, &errMsg)
@@ -473,7 +475,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 				return
 			}
 			handledByFacts = true
-			jobLogger.Debug("recorded plugin fact", "fact_type", fact.FactType, "job_id", fact.JobID)
+			jobLogger.Debug("recorded plugin fact", "fact_type", declaredFact.Fact.FactType, "job_id", declaredFact.Fact.JobID)
 		}
 
 		if !handledByFacts {
@@ -1454,31 +1456,48 @@ func deref(v *string) string {
 	return *v
 }
 
-func pluginFactFromStateUpdates(job *queue.Job, updates json.RawMessage) (*state.PluginFact, bool, error) {
-	if job == nil || len(updates) == 0 {
-		return nil, false, nil
-	}
-
-	switch {
-	case job.Plugin == "file_watch" && job.Command == "poll":
-		return buildPluginFact(job, updates, state.FactTypeFileWatchSnapshot)
-	case job.Plugin == "folder_watch" && job.Command == "poll":
-		return buildPluginFact(job, updates, state.FactTypeFolderWatchSnapshot)
-	case job.Plugin == "py-greet" && job.Command == "poll":
-		return buildPluginFact(job, updates, state.FactTypePyGreetSnapshot)
-	case job.Plugin == "ts-bun-greet" && job.Command == "poll":
-		return buildPluginFact(job, updates, state.FactTypeTSBunGreetSnapshot)
-	case job.Plugin == "stress" && job.Command == "state":
-		return buildPluginFact(job, updates, state.FactTypeStressStateSnapshot)
-	default:
-		return nil, false, nil
-	}
+type declaredPluginFact struct {
+	Fact              state.PluginFact
+	CompatibilityView string
 }
 
-func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (*state.PluginFact, bool, error) {
+func pluginFactsFromStateUpdates(job *queue.Job, registry *plugin.Registry, updates json.RawMessage) ([]declaredPluginFact, error) {
+	if job == nil || registry == nil || len(updates) == 0 {
+		return nil, nil
+	}
+
+	plug, ok := registry.Get(job.Plugin)
+	if !ok {
+		return nil, nil
+	}
+
+	rules := plug.FactOutputRulesForCommand(job.Command)
+	if len(rules) == 0 {
+		return nil, nil
+	}
+
+	facts := make([]declaredPluginFact, 0, len(rules))
+	for _, rule := range rules {
+		if rule.From != "state_updates" {
+			continue
+		}
+		fact, err := buildPluginFact(job, updates, rule.FactType)
+		if err != nil {
+			return nil, err
+		}
+		facts = append(facts, declaredPluginFact{
+			Fact:              *fact,
+			CompatibilityView: rule.CompatibilityView,
+		})
+	}
+
+	return facts, nil
+}
+
+func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (*state.PluginFact, error) {
 	var snapshot map[string]json.RawMessage
 	if err := json.Unmarshal(updates, &snapshot); err != nil {
-		return nil, false, fmt.Errorf("normalize %s snapshot: %w", factType, err)
+		return nil, fmt.Errorf("normalize %s snapshot: %w", factType, err)
 	}
 	if snapshot == nil {
 		snapshot = map[string]json.RawMessage{}
@@ -1491,7 +1510,7 @@ func buildPluginFact(job *queue.Job, updates json.RawMessage, factType string) (
 		Command:    job.Command,
 		FactJSON:   updates,
 		CreatedAt:  time.Now().UTC(),
-	}, true, nil
+	}, nil
 }
 
 // getTimeout returns the timeout for a given command, falling back to defaults.
