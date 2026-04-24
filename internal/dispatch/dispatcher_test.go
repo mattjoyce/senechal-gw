@@ -23,6 +23,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 	"github.com/mattjoyce/ductile/internal/workspace"
+	"gopkg.in/yaml.v3"
 )
 
 func TestMain(m *testing.M) {
@@ -73,6 +74,11 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 
 func createTestPlugin(t *testing.T, pluginsDir, name, script string) *plugin.Plugin {
 	t.Helper()
+	return createTestPluginWithManifestExtra(t, pluginsDir, name, script, "")
+}
+
+func createTestPluginWithManifestExtra(t *testing.T, pluginsDir, name, script, manifestExtra string) *plugin.Plugin {
+	t.Helper()
 
 	pluginDir := filepath.Join(pluginsDir, name)
 	if err := os.MkdirAll(pluginDir, 0755); err != nil {
@@ -93,7 +99,7 @@ commands:
     type: write
   - name: health
     type: read
-`, name)
+%s`, name, manifestExtra)
 
 	manifestPath := filepath.Join(pluginDir, "manifest.yaml")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0644); err != nil {
@@ -269,7 +275,13 @@ func TestDispatcher_ExecuteJob_FileWatchPollRecordsFactAndDerivedState(t *testin
 read input
 echo '{"status":"ok","result":"file_watch poll complete: watches=1 events=0","state_updates":{"watches":{"single-file":{"exists":true,"fingerprint":"abc123","path":"/tmp/file.txt","updated_at":"2026-04-22T01:02:03Z"}},"last_poll_at":"2026-04-22T01:02:03Z"}}'
 `
-	plug := createTestPlugin(t, pluginsDir, "file_watch", script)
+	plug := createTestPluginWithManifestExtra(t, pluginsDir, "file_watch", script, `
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: file_watch.snapshot
+    compatibility_view: mirror_object`)
 	if err := disp.registry.Add(plug); err != nil {
 		t.Fatalf("registry.Add(file_watch): %v", err)
 	}
@@ -329,91 +341,151 @@ echo '{"status":"ok","result":"file_watch poll complete: watches=1 events=0","st
 	}
 }
 
-func TestPluginFactFromStateUpdatesRecognizesMigratedPlugins(t *testing.T) {
+func TestPluginFactsFromStateUpdatesUsesManifestDeclarations(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		job       *queue.Job
-		updates   json.RawMessage
-		wantType  string
-		wantMatch bool
+		name                  string
+		manifest              string
+		job                   *queue.Job
+		updates               json.RawMessage
+		wantTypes             []string
+		wantCompatibilityView string
 	}{
 		{
-			name:      "file_watch poll",
-			job:       &queue.Job{ID: "job-1", Plugin: "file_watch", Command: "poll"},
-			updates:   json.RawMessage(`{"last_poll_at":"2026-04-22T00:00:00Z","watches":{}}`),
-			wantType:  state.FactTypeFileWatchSnapshot,
-			wantMatch: true,
+			name: "file_watch poll",
+			manifest: `manifest_spec: ductile.plugin
+manifest_version: 1
+name: file_watch
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: file_watch.snapshot
+    compatibility_view: mirror_object
+`,
+			job:                   &queue.Job{ID: "job-1", Plugin: "file_watch", Command: "poll"},
+			updates:               json.RawMessage(`{"last_poll_at":"2026-04-22T00:00:00Z","watches":{}}`),
+			wantTypes:             []string{state.FactTypeFileWatchSnapshot},
+			wantCompatibilityView: "mirror_object",
 		},
 		{
-			name:      "folder_watch poll",
-			job:       &queue.Job{ID: "job-2", Plugin: "folder_watch", Command: "poll"},
-			updates:   json.RawMessage(`{"last_poll_at":"2026-04-22T00:00:00Z","watches":{}}`),
-			wantType:  state.FactTypeFolderWatchSnapshot,
-			wantMatch: true,
+			name: "multiple declarations for one command",
+			manifest: `manifest_spec: ductile.plugin
+manifest_version: 1
+name: file_watch
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: file_watch.snapshot
+    compatibility_view: mirror_object
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: file_watch.audit
+`,
+			job:                   &queue.Job{ID: "job-2", Plugin: "file_watch", Command: "poll"},
+			updates:               json.RawMessage(`{"last_poll_at":"2026-04-22T00:00:00Z","watches":{}}`),
+			wantTypes:             []string{state.FactTypeFileWatchSnapshot, "file_watch.audit"},
+			wantCompatibilityView: "mirror_object",
 		},
 		{
-			name:      "py-greet poll",
-			job:       &queue.Job{ID: "job-3", Plugin: "py-greet", Command: "poll"},
-			updates:   json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z","last_greeting":"Hello, Ductile!"}`),
-			wantType:  state.FactTypePyGreetSnapshot,
-			wantMatch: true,
+			name: "command without declaration is ignored",
+			manifest: `manifest_spec: ductile.plugin
+manifest_version: 1
+name: stress
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+  - name: state
+    type: write
+fact_outputs:
+  - when:
+      command: state
+    from: state_updates
+    fact_type: stress.state_snapshot
+    compatibility_view: mirror_object
+`,
+			job:     &queue.Job{ID: "job-3", Plugin: "stress", Command: "poll"},
+			updates: json.RawMessage(`{"count":42}`),
 		},
 		{
-			name:      "ts-bun-greet poll",
-			job:       &queue.Job{ID: "job-4", Plugin: "ts-bun-greet", Command: "poll"},
-			updates:   json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z","last_greeting":"Hello, Ductile!"}`),
-			wantType:  state.FactTypeTSBunGreetSnapshot,
-			wantMatch: true,
-		},
-		{
-			name:      "stress state",
-			job:       &queue.Job{ID: "job-5", Plugin: "stress", Command: "state"},
-			updates:   json.RawMessage(`{"count":42}`),
-			wantType:  state.FactTypeStressStateSnapshot,
-			wantMatch: true,
-		},
-		{
-			name:      "stress health ignored",
-			job:       &queue.Job{ID: "job-6", Plugin: "stress", Command: "health"},
-			updates:   json.RawMessage(`{"count":42}`),
-			wantMatch: false,
-		},
-		{
-			name:      "unknown plugin ignored",
-			job:       &queue.Job{ID: "job-7", Plugin: "echo", Command: "poll"},
-			updates:   json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z"}`),
-			wantMatch: false,
+			name: "unknown plugin is ignored",
+			manifest: `manifest_spec: ductile.plugin
+manifest_version: 1
+name: other
+version: 1.0.0
+protocol: 2
+entrypoint: run.sh
+commands:
+  - name: poll
+    type: write
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: other.snapshot
+`,
+			job:     &queue.Job{ID: "job-4", Plugin: "echo", Command: "poll"},
+			updates: json.RawMessage(`{"last_run":"2026-04-22T00:00:00Z"}`),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fact, ok, err := pluginFactFromStateUpdates(tt.job, tt.updates)
+			var manifest plugin.Manifest
+			if err := yaml.Unmarshal([]byte(tt.manifest), &manifest); err != nil {
+				t.Fatalf("yaml.Unmarshal: %v", err)
+			}
+			registry := plugin.NewRegistry()
+			if err := registry.Add(&plugin.Plugin{
+				Name:        manifest.Name,
+				Commands:    manifest.Commands,
+				FactOutputs: manifest.FactOutputs,
+			}); err != nil {
+				t.Fatalf("registry.Add: %v", err)
+			}
+
+			facts, err := pluginFactsFromStateUpdates(tt.job, registry, tt.updates)
 			if err != nil {
-				t.Fatalf("pluginFactFromStateUpdates() error = %v", err)
+				t.Fatalf("pluginFactsFromStateUpdates() error = %v", err)
 			}
-			if ok != tt.wantMatch {
-				t.Fatalf("pluginFactFromStateUpdates() ok = %v, want %v", ok, tt.wantMatch)
+			if len(facts) != len(tt.wantTypes) {
+				t.Fatalf("len(facts) = %d, want %d", len(facts), len(tt.wantTypes))
 			}
-			if !tt.wantMatch {
-				if fact != nil {
-					t.Fatalf("expected nil fact for unmatched plugin, got %+v", fact)
-				}
+			if len(tt.wantTypes) == 0 {
 				return
 			}
-			if fact == nil {
-				t.Fatal("expected fact, got nil")
+
+			for i, fact := range facts {
+				if fact.Fact.PluginName != tt.job.Plugin || fact.Fact.Command != tt.job.Command || fact.Fact.JobID != tt.job.ID {
+					t.Fatalf("unexpected fact identity: %+v", fact.Fact)
+				}
+				if fact.Fact.FactType != tt.wantTypes[i] {
+					t.Fatalf("fact[%d] type = %q, want %q", i, fact.Fact.FactType, tt.wantTypes[i])
+				}
+				if string(fact.Fact.FactJSON) != string(tt.updates) {
+					t.Fatalf("fact[%d] json = %s, want %s", i, string(fact.Fact.FactJSON), string(tt.updates))
+				}
 			}
-			if fact.PluginName != tt.job.Plugin || fact.Command != tt.job.Command || fact.JobID != tt.job.ID {
-				t.Fatalf("unexpected fact identity: %+v", fact)
-			}
-			if fact.FactType != tt.wantType {
-				t.Fatalf("fact type = %q, want %q", fact.FactType, tt.wantType)
-			}
-			if string(fact.FactJSON) != string(tt.updates) {
-				t.Fatalf("fact json = %s, want %s", string(fact.FactJSON), string(tt.updates))
+			if facts[0].CompatibilityView != tt.wantCompatibilityView {
+				t.Fatalf("CompatibilityView = %q, want %q", facts[0].CompatibilityView, tt.wantCompatibilityView)
 			}
 		})
 	}

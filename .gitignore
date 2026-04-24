@@ -41,7 +41,9 @@ go.work.sum
 *~
 
 # Claude Code local settings
+.codex
 .claude/
+.codex/
 
 # Beads local database
 .beads/

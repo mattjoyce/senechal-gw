@@ -15,6 +15,12 @@ commands:
   - name: health
     type: read
     description: "Returns plugin health and version information."
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: ts-bun-greet.snapshot
+    compatibility_view: mirror_object
 config_keys:
   required: []
   optional: [greeting, name]

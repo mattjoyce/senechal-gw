@@ -137,8 +137,8 @@ func (s *Store) ShallowMerge(ctx context.Context, plugin string, updates json.Ra
 }
 
 // RecordFact appends a plugin fact row and updates compatibility state when the
-// fact has a known reducer.
-func (s *Store) RecordFact(ctx context.Context, fact PluginFact) (json.RawMessage, bool, error) {
+// caller declares a compatibility view policy.
+func (s *Store) RecordFact(ctx context.Context, fact PluginFact, compatibilityView string) (json.RawMessage, bool, error) {
 	if strings.TrimSpace(fact.ID) == "" {
 		return nil, false, fmt.Errorf("fact id is empty")
 	}
@@ -185,7 +185,7 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?);
 		return nil, false, fmt.Errorf("insert plugin fact: %w", err)
 	}
 
-	compatibilityState, hasCompatibilityState, err := reduceCompatibilityState(fact.PluginName, fact.FactType, fact.FactJSON)
+	compatibilityState, hasCompatibilityState, err := reduceCompatibilityState(fact.FactType, compatibilityView, fact.FactJSON)
 	if err != nil {
 		return nil, false, err
 	}
@@ -311,20 +311,14 @@ ON CONFLICT(plugin_name) DO UPDATE SET
 	return nil
 }
 
-func reduceCompatibilityState(pluginName, factType string, factJSON json.RawMessage) (json.RawMessage, bool, error) {
-	switch {
-	case pluginName == "file_watch" && factType == FactTypeFileWatchSnapshot:
-		return mirrorFactAsCompatibilityState(FactTypeFileWatchSnapshot, factJSON)
-	case pluginName == "folder_watch" && factType == FactTypeFolderWatchSnapshot:
-		return mirrorFactAsCompatibilityState(FactTypeFolderWatchSnapshot, factJSON)
-	case pluginName == "py-greet" && factType == FactTypePyGreetSnapshot:
-		return mirrorFactAsCompatibilityState(FactTypePyGreetSnapshot, factJSON)
-	case pluginName == "ts-bun-greet" && factType == FactTypeTSBunGreetSnapshot:
-		return mirrorFactAsCompatibilityState(FactTypeTSBunGreetSnapshot, factJSON)
-	case pluginName == "stress" && factType == FactTypeStressStateSnapshot:
-		return mirrorFactAsCompatibilityState(FactTypeStressStateSnapshot, factJSON)
-	default:
+func reduceCompatibilityState(factType, compatibilityView string, factJSON json.RawMessage) (json.RawMessage, bool, error) {
+	switch strings.TrimSpace(compatibilityView) {
+	case "":
 		return nil, false, nil
+	case "mirror_object":
+		return mirrorFactAsCompatibilityState(factType, factJSON)
+	default:
+		return nil, false, fmt.Errorf("unsupported compatibility view %q for fact type %q", compatibilityView, factType)
 	}
 }
 

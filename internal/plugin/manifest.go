@@ -52,6 +52,19 @@ type EmittedValues struct {
 	Values []string `yaml:"values,omitempty"`
 }
 
+// FactOutputWhen declares when a fact output rule applies.
+type FactOutputWhen struct {
+	Command string `yaml:"command"`
+}
+
+// FactOutputRule declares how a plugin response becomes a durable fact.
+type FactOutputRule struct {
+	When              FactOutputWhen `yaml:"when"`
+	From              string         `yaml:"from"`
+	FactType          string         `yaml:"fact_type"`
+	CompatibilityView string         `yaml:"compatibility_view,omitempty"`
+}
+
 // GetFullInputSchema returns the expanded JSON Schema for the input.
 func (c Command) GetFullInputSchema() any {
 	return expandSchema(c.InputSchema)
@@ -136,16 +149,17 @@ func (c *Commands) UnmarshalYAML(n *yaml.Node) error {
 
 // Manifest defines the structure of a plugin's manifest.yaml file.
 type Manifest struct {
-	ManifestSpec    string      `yaml:"manifest_spec"`
-	ManifestVersion int         `yaml:"manifest_version"`
-	Name            string      `yaml:"name"`
-	Version         string      `yaml:"version"`
-	Protocol        int         `yaml:"protocol"`
-	Entrypoint      string      `yaml:"entrypoint"`
-	Description     string      `yaml:"description,omitempty"`
-	ConcurrencySafe *bool       `yaml:"concurrency_safe,omitempty"`
-	Commands        Commands    `yaml:"commands"`
-	ConfigKeys      *ConfigKeys `yaml:"config_keys,omitempty"`
+	ManifestSpec    string           `yaml:"manifest_spec"`
+	ManifestVersion int              `yaml:"manifest_version"`
+	Name            string           `yaml:"name"`
+	Version         string           `yaml:"version"`
+	Protocol        int              `yaml:"protocol"`
+	Entrypoint      string           `yaml:"entrypoint"`
+	Description     string           `yaml:"description,omitempty"`
+	ConcurrencySafe *bool            `yaml:"concurrency_safe,omitempty"`
+	Commands        Commands         `yaml:"commands"`
+	FactOutputs     []FactOutputRule `yaml:"fact_outputs,omitempty"`
+	ConfigKeys      *ConfigKeys      `yaml:"config_keys,omitempty"`
 }
 
 // ConfigKeys defines required and optional configuration keys for a plugin.
@@ -166,6 +180,7 @@ type Plugin struct {
 	Description     string   // Human-readable description.
 	ConcurrencySafe bool     // Manifest concurrency safety hint (default true when unspecified).
 	Commands        Commands // Supported commands (poll, handle, health, init).
+	FactOutputs     []FactOutputRule
 	ConfigKeys      *ConfigKeys
 }
 
@@ -206,6 +221,21 @@ func (p *Plugin) GetWriteCommands() []string {
 	for _, c := range p.Commands {
 		if c.Type == CommandTypeWrite {
 			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+// FactOutputRulesForCommand returns declared fact output rules for a command.
+func (p *Plugin) FactOutputRulesForCommand(cmd string) []FactOutputRule {
+	if p == nil {
+		return nil
+	}
+
+	var out []FactOutputRule
+	for _, rule := range p.FactOutputs {
+		if rule.When.Command == cmd {
+			out = append(out, rule)
 		}
 	}
 	return out

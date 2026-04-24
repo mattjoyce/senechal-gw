@@ -134,7 +134,7 @@ func TestStoreRecordFactFileWatchSnapshotUpdatesCompatibilityState(t *testing.T)
 		Command:    "poll",
 		FactJSON:   json.RawMessage(`{"watches":{"single-file":{"exists":true,"fingerprint":"abc"}},"last_poll_at":"2026-04-22T01:02:03Z"}`),
 		CreatedAt:  createdAt,
-	})
+	}, "mirror_object")
 	if err != nil {
 		t.Fatalf("RecordFact: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestStoreListFactsFiltersAndOrdersBySequenceNewestFirst(t *testing.T) {
 		},
 	}
 	for _, fact := range factsToInsert {
-		if _, _, err := s.RecordFact(context.Background(), fact); err != nil {
+		if _, _, err := s.RecordFact(context.Background(), fact, ""); err != nil {
 			t.Fatalf("RecordFact(%s): %v", fact.ID, err)
 		}
 	}
@@ -264,7 +264,7 @@ VALUES(?, ?, ?, ?, ?, ?, ?);
 		Command:    "poll",
 		FactJSON:   json.RawMessage(`{"sequenced":true}`),
 		CreatedAt:  time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
-	}); err != nil {
+	}, "mirror_object"); err != nil {
 		t.Fatalf("RecordFact: %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestStoreRecordFactRollsBackSequenceOnInsertFailure(t *testing.T) {
 			Command:    "poll",
 			FactJSON:   json.RawMessage(`{"watches":{},"last_poll_at":"2026-04-22T00:00:00Z"}`),
 			CreatedAt:  time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
-		})
+		}, "mirror_object")
 		return err
 	}
 
@@ -403,7 +403,7 @@ func TestStoreRecordFactMirrorsCompatibilityStateForMigratedPlugins(t *testing.T
 				Command:    "poll",
 				FactJSON:   tt.factJSON,
 				CreatedAt:  time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC),
-			})
+			}, "mirror_object")
 			if err != nil {
 				t.Fatalf("RecordFact: %v", err)
 			}

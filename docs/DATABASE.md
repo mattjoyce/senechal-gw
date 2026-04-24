@@ -62,7 +62,8 @@ The historical record of completed jobs. Used for auditing and the TUI "Overwatc
 The "Control Plane" ledger. Stores metadata (Baggage) that propagates through pipelines.
 
 ### 4. `plugin_state`
-Persistent key-value store for plugins (e.g., OAuth tokens, cursors).
+Persistent plugin compatibility/cache row. Some plugins still write directly to
+it, while fact-migrated plugins derive it from declared `plugin_facts`.
 
 ### 5. `plugin_facts`
 Append-only plugin observations. `plugin_state` remains the

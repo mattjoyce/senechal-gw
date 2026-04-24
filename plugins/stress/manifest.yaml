@@ -66,3 +66,9 @@ commands:
     description: "Standard health check."
     idempotent: true
     retry_safe: true
+fact_outputs:
+  - when:
+      command: state
+    from: state_updates
+    fact_type: stress.state_snapshot
+    compatibility_view: mirror_object

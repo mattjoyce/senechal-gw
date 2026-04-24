@@ -33,6 +33,12 @@ commands:
   - name: health
     type: read
     description: "Validate folder watch roots and glob configuration."
+fact_outputs:
+  - when:
+      command: poll
+    from: state_updates
+    fact_type: folder_watch.snapshot
+    compatibility_view: mirror_object
 config_keys:
   required: []
   optional: [watches]
