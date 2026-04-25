@@ -51,6 +51,13 @@
       },
       "description": "Commands supported by this plugin."
     },
+    "fact_outputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FactOutputRule"
+      },
+      "description": "Optional declaration of durable fact rows derived from command state_updates."
+    },
     "config_keys": {
       "$ref": "#/$defs/ConfigKeys"
     }
@@ -142,6 +149,39 @@
     "PayloadValueName": {
       "type": "string",
       "pattern": "^payload\\.(\\*|[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*)$"
+    },
+    "FactOutputWhen": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["command"],
+      "additionalProperties": false
+    },
+    "FactOutputRule": {
+      "type": "object",
+      "properties": {
+        "when": {
+          "$ref": "#/$defs/FactOutputWhen"
+        },
+        "from": {
+          "type": "string",
+          "const": "state_updates"
+        },
+        "fact_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compatibility_view": {
+          "type": "string",
+          "enum": ["mirror_object"]
+        }
+      },
+      "required": ["when", "from", "fact_type"],
+      "additionalProperties": false
     },
     "ConfigKeys": {
       "type": "object",
