@@ -56,7 +56,7 @@
       "items": {
         "$ref": "#/$defs/FactOutputRule"
       },
-      "description": "Optional declaration of durable fact rows derived from command state_updates."
+      "description": "Declares the durable fact rows derived from a command's state_updates snapshot. The append-only plugin_facts stream is the durable record; plugin_state is rebuilt as a compatibility view from the latest fact via the rule's compatibility_view. Recommended for any plugin with durable memory."
     },
     "config_keys": {
       "$ref": "#/$defs/ConfigKeys"
