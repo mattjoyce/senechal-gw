@@ -2,8 +2,12 @@
 
 Ductile is built on a **spawn-per-command** model. Any executable that can read JSON from `stdin` and write JSON to `stdout` can serve as a Ductile plugin (or "Skill").
 
-See also: [Plugin Facts Compliance](./PLUGIN_FACTS.md) for the Sprint 7
-append-only fact pattern and the current `file_watch` exemplar.
+**Durable plugin memory is the append-only `plugin_facts` stream.** A plugin
+that needs to remember anything across invocations should declare a
+`fact_outputs` rule in its manifest, return a stable snapshot from its durable
+command, and let core record that snapshot append-only and rebuild the
+compatibility view automatically. See [Plugin Facts](./PLUGIN_FACTS.md) for the
+contract and worked examples.
 
 ---
 
@@ -50,14 +54,13 @@ When a job is triggered (via scheduler, API, or webhook):
 ```
 -   `result`: **Required for `status: ok`**. A short human-readable summary of what the plugin did.
 -   `retry`: Protocol v2 compatibility signal for permanent failures. Omit it for the default retryable error path; set `false` only when retrying the same request cannot succeed. Core owns the final retry decision.
--   `state_updates`: Top-level keys here are shallow-merged into the plugin's persistent state unless the plugin manifest declares them as `fact_outputs`.
--   Plugins can declare successful `state_updates` as append-only `plugin_facts` rows in `manifest.yaml`, while keeping protocol v2 unchanged.
+-   `state_updates`: The plugin's emitted snapshot for this invocation. When the manifest declares a matching `fact_outputs` rule, core records the snapshot as an append-only row in `plugin_facts` and rebuilds the compatibility view (`plugin_state`) from it via the declared `compatibility_view` (currently `mirror_object`). Plugins without a declared `fact_outputs` rule still get protocol-v2 write-through into `plugin_state` directly during the compatibility window, but new plugins should always declare `fact_outputs`.
 -   `events`: An array of `{ "type": "...", "payload": {} }` to trigger downstream pipelines.
 
-For a plugin to participate in `plugin_facts`, the emitted `state_updates`
-should be a stable object snapshot with an explicit compatibility/cache story,
-not just arbitrary mutable metadata. `health` commands should remain diagnostic
-unless there is a very strong reason otherwise.
+The emitted `state_updates` should be a stable object snapshot with a clear
+compatibility-view story, not arbitrary mutable metadata. `health` commands
+should remain diagnostic and emit no `state_updates`. See
+[PLUGIN_FACTS.md](./PLUGIN_FACTS.md) for the full contract.
 
 ---
 
@@ -117,11 +120,13 @@ def main():
         # ... logic ...
         pass
 
-    # Build response
+    # Build response. state_updates is the snapshot; declare a fact_outputs
+    # rule in manifest.yaml so core records it append-only and rebuilds the
+    # compatibility view.
     resp = {
         "status": "ok",
         "result": "Python plugin active",
-        "state_updates": {"last_seen": "now"},
+        "state_updates": {"last_seen_at": "2026-04-25T01:00:00+00:00"},
         "logs": [{"level": "info", "message": "Python plugin active"}]
     }
 

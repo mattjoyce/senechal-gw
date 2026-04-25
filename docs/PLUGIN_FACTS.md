@@ -1,44 +1,55 @@
-# Plugin Facts Compliance
+# Plugin Facts
 
-This document explains how to make a plugin compatible with the declared
-`plugin_facts` pattern.
+This document is the canonical reference for durable plugin memory in Ductile.
 
-The goal is to move durable plugin truth toward **append-only facts** while
-keeping `plugin_state` as a compatibility/current-state row for existing code
-paths.
+**The model:** durable plugin truth is the append-only `plugin_facts` stream.
+`plugin_state` is a compatibility/cache view of the latest fact, kept current
+automatically by core so that protocol-v2 readers see the same shape they
+always have. New plugins declare `fact_outputs` in their manifest and let the
+view come for free.
 
-## 1. What Changes For A Plugin
+## 1. What A Plugin Does
 
-Before Sprint 7, a plugin typically returned `state_updates` and core
-shallow-merged them directly into `plugin_state`.
-
-With `plugin_facts`, a plugin can instead participate in a stricter pattern:
+A plugin that needs to remember anything across invocations follows this
+pattern:
 
 1. The plugin emits a successful, stable snapshot in `state_updates`.
 2. The plugin manifest declares that snapshot as a fact output.
-3. Core records that snapshot as an append-only row in `plugin_facts`.
-4. Core derives the compatibility `plugin_state` row from the newest fact when
-   the declaration says to do so.
+3. Core records the snapshot as an append-only row in `plugin_facts`, with a
+   Ductile-owned monotonic `seq` and the declared `fact_type`.
+4. Core rebuilds the compatibility `plugin_state` row from the newest fact
+   according to the declared `compatibility_view` (currently `mirror_object`).
 
 This means:
-- `plugin_facts` is the historical truth.
-- `plugin_state` is the compatibility cache/current view.
+- `plugin_facts` is the durable record.
+- `plugin_state` is the compatibility/cache view.
 
-## 2. Current Migrated Plugins
+```historical-note
+Before Sprint 7, plugins wrote durable truth directly into `plugin_state` via
+shallow merge of `state_updates`. That model is now legacy; new plugins should
+always declare `fact_outputs`. Plugins still on direct write-through are
+running in the protocol-v2 compatibility window.
+```
 
-Sprint 7 started with `file_watch` as the exemplar, and the current branch now
-applies the pattern to the shipped plugins that still emitted durable
-`state_updates`.
+## 2. Migrated Plugins
 
-Current fact contracts:
-- `file_watch` `poll` -> `file_watch.snapshot`
-- `folder_watch` `poll` -> `folder_watch.snapshot`
-- `py-greet` `poll` -> `py-greet.snapshot`
-- `ts-bun-greet` `poll` -> `ts-bun-greet.snapshot`
-- `stress` `state` -> `stress.state_snapshot`
+In-tree (codex repo):
+- `file_watch` `poll` → `file_watch.snapshot`
+- `folder_watch` `poll` → `folder_watch.snapshot`
+- `py-greet` `poll` → `py-greet.snapshot`
+- `ts-bun-greet` `poll` → `ts-bun-greet.snapshot`
+- `stress` `state` → `stress.state_snapshot`
 
-Watcher `health` commands are intentionally **not** part of this durable fact
-flow. Health is diagnostic and should not mutate durable state.
+External (Sprint 13, `~/Projects/ductile-plugins` and `~/Projects/ductile-withings`):
+- `gmail_poller` `poll` → `gmail_poller.snapshot`
+- `youtube_playlist` `poll` → `youtube_playlist.snapshot`
+- `jina-reader` `poll` → `jina-reader.snapshot`
+- `birdnet_firstday` `poll` → `birdnet_firstday.snapshot`
+- `sqlite_change` `poll` → `sqlite_change.snapshot`
+- `withings` `poll` and `token_refresh` → `withings.snapshot`
+
+`health` commands are intentionally **not** part of the durable fact flow.
+Health is diagnostic and should not mutate durable state.
 
 ## 3. Compliance Rules
 
@@ -49,12 +60,12 @@ need a clear, defensible contract.
 
 - Emit facts only from commands that produce meaningful durable truth.
 - Prefer successful `poll` or equivalent snapshot-producing commands.
-- Do not use `health` as durable state.
+- Do not use `health` or `init` as durable state — they should emit no `state_updates`.
 - Keep the emitted snapshot shape stable and explicit.
-- Return a full snapshot, not a partial patch, when the fact is intended to
-  represent current durable truth.
-- Keep the snapshot JSON object-shaped and deterministic enough for operators to
-  inspect.
+- Return a full snapshot, not a partial patch. The compatibility view is
+  rebuilt wholesale from the latest fact, so partial patches lose information.
+- Keep the snapshot JSON object-shaped and deterministic enough for operators
+  to inspect; avoid non-deterministic ordering inside lists or maps.
 
 ### Core-side rules
 
@@ -185,19 +196,24 @@ When migrating another plugin to `plugin_facts`, do all of the following:
 9. Add a Docker or similarly realistic fixture when runtime behavior matters.
 10. Document the fact type, snapshot shape, and non-goals.
 
-## 7. Questions To Resolve Before Migrating A Plugin
+## 7. Questions To Resolve Before Adding A New Plugin Or Migrating One
 
-Before making a plugin compliant, answer these questions:
+Before declaring `fact_outputs` for a plugin, answer:
 
 - What exact command owns durable truth?
-- Is the emitted JSON a full snapshot or only a delta?
-- Should `plugin_state` mirror the newest fact exactly, or should a reducer
-  transform it?
+- Is the emitted JSON a full snapshot or only a delta? It must be a full
+  snapshot — partial patches break the compatibility view.
+- Should the compatibility view mirror the newest fact exactly
+  (`compatibility_view: mirror_object`), or does the plugin need a different
+  reduction policy? Today only `mirror_object` is supported; a reducer-based
+  policy would be a future extension.
 - What data should remain diagnostic only and stay out of durable storage?
 - How will an operator inspect recent facts?
 - What realistic test proves the fact path end to end?
 
-If those answers are vague, the plugin is not ready for `plugin_facts` yet.
+If those answers are vague, the plugin should remain on protocol-v2
+write-through (action-bookkeeping non-candidates) rather than declaring a
+half-thought fact contract.
 
 ## 8. Deployment Note
 

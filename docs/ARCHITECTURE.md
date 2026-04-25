@@ -77,7 +77,7 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Execution | Bounded Worker Pool | High-throughput, resource-safe, per-plugin concurrency caps |
 | Routing | Config-declared, fan-out, exact match | Plugins stay dumb, core controls flow |
 | Pipeline Execution | Async by default; Sync opt-in | Preserves event-driven core while enabling interactive results |
-| State | SQLite | Proven, zero-ops, single JSON blob per plugin |
+| State | SQLite | Proven, zero-ops; append-only `plugin_facts` with derived compatibility view |
 | Delivery | At-least-once | Plugins own idempotency; core never drops work |
 | Plugin lifecycle | Spawn-per-command | Eliminates daemon management, memory leaks, zombie processes |
 
@@ -308,7 +308,7 @@ config_keys:
 **Command type semantics (Sprint 3+):**
 - `type: read` - No external side effects, idempotent (safe for automated retries)
   - Examples: poll, fetch, get, list, health
-  - Can update local plugin state (e.g., cache, timestamps)
+  - May emit a durable snapshot via `state_updates` (declared as a `fact_outputs` rule for append-only persistence; the compatibility view is updated automatically).
   - Cannot POST/PUT/DELETE to external APIs
 - `type: write` - Modifies external state, may not be idempotent
   - Examples: sync, send, notify, oauth_callback, delete
@@ -411,29 +411,43 @@ plugins:
 
 ### 5.9 State Model
 
-**Config is static. State is dynamic.**
+**Config is static. Facts are durable. `plugin_state` is a compatibility view.**
 
 - `config` — from `config.yaml`, interpolated with env vars, read-only. Contains credentials, endpoints — things the operator sets.
   - Config paths (config dir, includes, backups) are local operator-controlled inputs; Ductile does not accept untrusted remote file paths.
   - `service.allow_symlinks` controls whether symlinks are permitted in config/plugin paths (warnings are always emitted when symlinks are detected).
-- `state` — single JSON blob per plugin in SQLite. Plugins read it, return `state_updates`, core applies shallow merge (top-level keys replaced, not deep-merged).
+- `plugin_facts` — append-only record of durable plugin observations. Each row carries a stable snapshot the plugin emitted as `state_updates`, plus a `fact_type` declared in the plugin manifest's `fact_outputs` and a Ductile-owned monotonic `seq`. This is the durable record. See [PLUGIN_FACTS.md](PLUGIN_FACTS.md).
+- `plugin_state` — single JSON row per plugin maintained as a compatibility/cache view of the latest fact. Existing readers see the same shape they saw before facts existed. The view is rebuilt automatically by core when a fact lands, governed by the manifest's `compatibility_view` declaration (currently `mirror_object`). Plugins that have not declared `fact_outputs` still get write-through behaviour during the protocol-v2 compatibility window; new plugins should declare `fact_outputs` rather than treating this row as their durable home.
 
 ```sql
+-- Append-only durable record (primary).
+plugin_facts (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  seq         INTEGER NOT NULL,         -- Ductile-owned monotonic
+  plugin_name TEXT NOT NULL,
+  fact_type   TEXT NOT NULL,
+  job_id      TEXT,
+  command     TEXT,
+  fact_json   JSON NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
+-- Compatibility/cache view of the latest fact (derived).
 plugin_state (
   plugin_name TEXT PRIMARY KEY,
   state       JSON NOT NULL DEFAULT '{}',
   updated_at  TIMESTAMP
-)
+);
 ```
 
-**Size limit:** 1 MB per plugin state blob. Exceeding this rejects the update and fails the job.
+**Size limit:** 1 MB per `plugin_state` row. Exceeding this rejects the update and fails the job. The same limit constrains the snapshot a plugin emits, since the compatibility view mirrors it.
 
 ### 5.10 OAuth
 
 Plugins manage their own OAuth token lifecycle. The core does not understand OAuth.
 
 - `client_id`, `client_secret` → `config` (static, set by operator).
-- `access_token`, `refresh_token`, `token_expiry` → `state` (dynamic, managed by plugin).
+- `access_token`, `refresh_token`, `token_expiry` → managed by the plugin and emitted as part of its `state_updates` snapshot. The plugin should declare a `fact_outputs` rule so each token-refresh observation is recorded append-only and the compatibility view stays current for downstream readers.
 - Plugin checks expiry on each invocation, refreshes if needed, returns new tokens via `state_updates`.
 - Shared OAuth helpers can live in `plugins/lib/`.
 
@@ -460,7 +474,7 @@ Single JSON object written to plugin's stdin:
 ```
 
 - `event` — present only for `handle`.
-- `state` — the plugin's full state blob.
+- `state` — the plugin's current compatibility-view row (the latest fact's snapshot, or write-through state for plugins not yet declaring `fact_outputs`).
 - `context` — shared metadata (Baggage) carried across the pipeline chain.
 - `workspace_dir` — local filesystem directory for ephemeral artifacts.
 - `deadline_at` — informational. Plugins MAY use it to abandon long-running work early. The core enforces the real deadline externally.
@@ -484,7 +498,7 @@ Single JSON object written to plugin's stdout:
 - `result` — required when `status=ok`. Summarizes what the plugin did.
 - `retry` — protocol v2 compatibility signal. Defaults to `true` if omitted. Set `false` for permanent failures; core still owns the retry decision with exit status, attempts, and config as inputs.
 - `events` — array of event envelopes (see 6.3).
-- `state_updates` — shallow-merged into plugin state.
+- `state_updates` — the plugin's emitted snapshot. When the manifest declares a matching `fact_outputs` rule, core records this snapshot as an append-only `plugin_facts` row and rebuilds the compatibility view from it. Plugins without a declared `fact_outputs` rule get protocol-v2 write-through into `plugin_state` directly during the compatibility window.
 - `logs` — array of `{"level": "info|warn|error", "message": "..."}`. Optional. Stored with the job record.
 
 ### 6.3 Event Envelope
@@ -845,7 +859,7 @@ Default 30 days. Configurable via `service.job_log_retention`.
 ```
 ductile system start       # run the service (foreground)
 ductile run <plugin>       # manually run a plugin once
-ductile status             # show plugin states, queue depth, last runs
+ductile status             # show plugin compatibility views, queue depth, last runs
 # send SIGHUP to reload config without restart
 ductile system reset <plugin>     # reset circuit breaker for a plugin
 ductile plugins            # list discovered plugins
@@ -890,7 +904,20 @@ job_queue (
   source_event_id TEXT                 -- UUID assigned by core
 );
 
--- Plugin state (one row per plugin)
+-- Append-only durable plugin record (primary).
+plugin_facts (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  seq         INTEGER NOT NULL,         -- Ductile-owned monotonic
+  plugin_name TEXT NOT NULL,
+  fact_type   TEXT NOT NULL,            -- e.g. "<plugin>.snapshot"
+  job_id      TEXT,
+  command     TEXT,
+  fact_json   JSON NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
+-- Compatibility/cache view of the latest fact (derived).
+-- One row per plugin. Existing readers see the same shape as before facts existed.
 plugin_state (
   plugin_name TEXT PRIMARY KEY,
   state       JSON NOT NULL DEFAULT '{}',

@@ -16,20 +16,20 @@ The database is typically named `ductile.db` and resides in your configured `sta
 Ductile keeps current/cache rows for fast operational reads and append-only
 fact rows for durable explanation.
 
-Current/cache rows:
-- `job_queue`
-- `plugin_state`
-- `circuit_breakers`
-- `schedule_entries`
-
-Fact/history rows:
+Fact/history rows (durable record):
+- `plugin_facts`
 - `job_transitions`
 - `job_attempts`
 - `config_snapshots`
-- `plugin_facts`
 - `event_context`
 - `job_log`
 - `circuit_breaker_transitions`
+
+Current/cache rows (derived views and operational state):
+- `job_queue`
+- `plugin_state` (compatibility view of the latest `plugin_facts` row per plugin)
+- `circuit_breakers`
+- `schedule_entries`
 
 `storage_sequences` is an internal allocator for Ductile-owned fact ordering.
 New `plugin_facts` rows receive a monotonic `seq`. Legacy `plugin_facts` rows
@@ -61,13 +61,19 @@ The historical record of completed jobs. Used for auditing and the TUI "Overwatc
 ### 3. `event_context`
 The "Control Plane" ledger. Stores metadata (Baggage) that propagates through pipelines.
 
-### 4. `plugin_state`
-Persistent plugin compatibility/cache row. Some plugins still write directly to
-it, while fact-migrated plugins derive it from declared `plugin_facts`.
+### 4. `plugin_facts`
+Append-only durable record of plugin observations. Each row carries a stable
+snapshot a plugin emitted as `state_updates`, plus a manifest-declared
+`fact_type` and a Ductile-owned monotonic `seq`. **This is the durable plugin
+record.** New plugins should declare `fact_outputs` and emit a snapshot from
+their durable command.
 
-### 5. `plugin_facts`
-Append-only plugin observations. `plugin_state` remains the
-compatibility/current-state row for existing runtime reads.
+### 5. `plugin_state`
+Compatibility/cache view of the latest fact, one row per plugin. Existing
+readers and protocol-v2 plugins still on direct write-through see the same
+shape they always have. The view is rebuilt automatically by core when a new
+fact lands, governed by the manifest's `compatibility_view` (currently
+`mirror_object`).
 
 For existing databases, apply required schema migrations before deploy. Startup
 validation reports the migration script to run when the database is behind the
@@ -130,10 +136,7 @@ WHERE plugin = 'my-plugin' AND status = 'failed'
 ORDER BY completed_at DESC
 LIMIT 1;
 
--- Inspect a plugin's persistent state
-SELECT state FROM plugin_state WHERE plugin_name = 'my-plugin';
-
--- Inspect recent append-only plugin facts
+-- Inspect recent append-only plugin facts (the durable record)
 SELECT seq, created_at, fact_type, job_id, command, fact_json
 FROM plugin_facts
 WHERE plugin_name = 'file_watch'
@@ -142,6 +145,9 @@ ORDER BY
   seq DESC,
   created_at DESC
 LIMIT 20;
+
+-- Inspect a plugin's compatibility view (latest fact, mirrored)
+SELECT state FROM plugin_state WHERE plugin_name = 'my-plugin';
 ```
 
 ### Scheduler Inspection

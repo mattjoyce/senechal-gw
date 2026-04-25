@@ -67,9 +67,21 @@ The logic that skips jobs in the queue if their target plugin has already reache
 
 The human-readable summary or data returned by a plugin in its protocol response. Often used as the input for the next step in a pipeline.
 
-## State (Plugin State)
+## Plugin Facts
 
-A persistent JSON blob stored in SQLite for each plugin instance. Plugins can read their state and return `state_updates` to store data (e.g., OAuth tokens, last-seen IDs) across runs.
+The append-only record of durable plugin observations. Each row carries a
+stable snapshot a plugin emitted as `state_updates`, plus a manifest-declared
+`fact_type` and a Ductile-owned monotonic `seq`. This is the durable record
+of what a plugin remembers across runs. See [PLUGIN_FACTS.md](./PLUGIN_FACTS.md).
+
+## Plugin State (Compatibility View)
+
+A single JSON row per plugin maintained as the compatibility/cache view of
+the latest fact. Existing readers (and protocol-v2 plugins that have not yet
+declared `fact_outputs`) see the same shape they always have. The view is
+rebuilt automatically by core when a new fact lands. New plugins should
+declare `fact_outputs` rather than treating this row as the place where
+durable truth lives.
 
 ## Job
 
