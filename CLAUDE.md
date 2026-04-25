@@ -23,7 +23,8 @@ Ductile is a lightweight, YAML-configured integration gateway written in Go. It 
 
 3. **State Model:**
    - `config` — Static, from config files, interpolated with env vars
-   - `state` — Dynamic, single JSON blob per plugin in SQLite, shallow-merged on updates
+   - `plugin_facts` — Append-only durable record of plugin observations (the durable place a plugin remembers things)
+   - `plugin_state` — Compatibility/cache view of the latest fact, rebuilt automatically by core via the manifest's `compatibility_view` declaration; protocol-v2 plugins without declared `fact_outputs` still get write-through during the compatibility window
    - `workspace` — Per-job directory on disk for file artifacts; inherited across pipeline steps
 
 4. **Pipeline Engine** — YAML DSL for event-driven orchestration. Steps can `uses` a plugin, `call` another pipeline, `split` for parallel fan-out, gate with `if` conditions, and remap payload with `with`.
@@ -50,7 +51,7 @@ ductile/
 │   ├── router/            # Config-declared event routing, fan-out
 │   ├── scheduler/         # Heartbeat tick, interval/cron, poll guard
 │   ├── scheduleexpr/      # Schedule expression parser
-│   ├── state/             # SQLite plugin_state table, shallow merge
+│   ├── state/             # plugin_facts (append-only) + plugin_state (compatibility view)
 │   ├── storage/           # SQLite helpers
 │   ├── tui/               # Terminal UI (system watch)
 │   ├── webhook/           # HTTP listener, HMAC verification

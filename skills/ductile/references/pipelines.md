@@ -113,10 +113,15 @@ Plugin response via stdout:
 {
   "status": "ok",
   "events": [{"type": "video_downloaded", "payload": {"filename": "out.mp4"}}],
-  "state_updates": {"last_run": "2026-03-03T10:00:00Z"},
+  "state_updates": {"last_video_id": "abc123", "last_processed_at": "2026-03-03T10:00:00Z"},
   "logs": [{"level": "info", "message": "processed"}]
 }
 ```
+
+`state_updates` carries the plugin's full snapshot for this invocation. When
+the manifest declares a matching `fact_outputs` rule, core records the
+snapshot append-only in `plugin_facts` and rebuilds the compatibility view
+(`plugin_state`) automatically. See `docs/PLUGIN_FACTS.md`.
 
 ## Plugin Manifest (manifest.yaml)
 
