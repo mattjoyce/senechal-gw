@@ -826,3 +826,361 @@ func TestCloneEvent(t *testing.T) {
 		})
 	}
 }
+
+// --- Sprint 17 -------------------------------------------------------------
+//
+// from_plugin: scopes a pipeline's trigger or hook signal to a single source
+// plugin. Entry-route 'if:' predicates evaluate against payload + context so
+// authors can gate fan-out on durable baggage already claimed upstream.
+
+func TestRouterNextHookFromPluginMatches(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:       "page-on-claude-failure",
+		OnHook:     "job.failed",
+		FromPlugin: "claude_harvest",
+		Steps:      []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.failed",
+		map[string]any{"plugin": "claude_harvest"}, nil)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (matching from_plugin)", len(out))
+	}
+	if out[0].Plugin != "pagerduty" {
+		t.Fatalf("unexpected plugin: %+v", out[0])
+	}
+}
+
+func TestRouterNextHookFromPluginDoesNotMatchOtherSourcePlugins(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:       "page-on-claude-failure",
+		OnHook:     "job.failed",
+		FromPlugin: "claude_harvest",
+		Steps:      []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.NextHook(context.Background(), "fabric", "job.failed",
+		map[string]any{"plugin": "fabric"}, nil)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (mismatched from_plugin)", len(out))
+	}
+}
+
+func TestRouterNextHookFromPluginRejectsEmptySourcePlugin(t *testing.T) {
+	// from_plugin: is a positive selector. Empty source plugin must not match
+	// it — the route's selector is an explicit assertion.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:       "page-on-claude-failure",
+		OnHook:     "job.failed",
+		FromPlugin: "claude_harvest",
+		Steps:      []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.NextHook(context.Background(), "", "job.failed",
+		map[string]any{"plugin": ""}, nil)
+	if err != nil {
+		t.Fatalf("NextHook: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (empty source plugin against from_plugin selector)", len(out))
+	}
+}
+
+func TestRouterNextHookEmptyFromPluginPreservesBehaviour(t *testing.T) {
+	// No from_plugin selector — every job.failed signal still triggers the
+	// hook, regardless of source plugin.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:   "notify-any-failure",
+		OnHook: "job.failed",
+		Steps:  []dsl.StepSpec{{ID: "notify", Uses: "discord"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	for _, plugin := range []string{"claude_harvest", "fabric", ""} {
+		out, err := r.NextHook(context.Background(), plugin, "job.failed",
+			map[string]any{"plugin": plugin}, nil)
+		if err != nil {
+			t.Fatalf("NextHook(%q): %v", plugin, err)
+		}
+		if len(out) != 1 {
+			t.Fatalf("dispatch count for plugin=%q = %d, want 1", plugin, len(out))
+		}
+	}
+}
+
+func TestRouterNextRootTriggerFromPluginScopes(t *testing.T) {
+	// from_plugin: on a plugin-emitted event (on:) — only fires when the
+	// upstream plugin matches.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:       "garmin-only",
+		On:         "data.change",
+		FromPlugin: "garmin",
+		Steps:      []dsl.StepSpec{{ID: "consume", Uses: "summary"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.Next(context.Background(), Request{
+		SourcePlugin: "garmin",
+		Event:        protocol.Event{Type: "data.change", Payload: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (matching from_plugin)", len(out))
+	}
+
+	out, err = r.Next(context.Background(), Request{
+		SourcePlugin: "weatherman",
+		Event:        protocol.Event{Type: "data.change", Payload: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (mismatched from_plugin)", len(out))
+	}
+}
+
+func TestRouterNextRootTriggerFromPluginEmptySourcePluginRejected(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:       "garmin-only",
+		On:         "data.change",
+		FromPlugin: "garmin",
+		Steps:      []dsl.StepSpec{{ID: "consume", Uses: "summary"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.Next(context.Background(), Request{
+		// Webhook-style trigger: no source plugin known.
+		Event: protocol.Event{Type: "data.change", Payload: map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (empty source plugin against from_plugin selector)", len(out))
+	}
+}
+
+func TestRouterNextRootTriggerIfEvaluatesAgainstSourceContext(t *testing.T) {
+	// Pipeline-level if: against context.* — true branch fires, false branch
+	// does not. Demonstrates that durable upstream baggage is reachable from
+	// entry-route predicates without copying values into payload.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name: "notify-on-first-attempt",
+		On:   "git_repo_sync.completed",
+		If: &conditions.Condition{
+			Path:  "context.whisper.attempt",
+			Op:    conditions.OpEq,
+			Value: 1,
+		},
+		Steps: []dsl.StepSpec{{ID: "notify", Uses: "discord"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	// First attempt: predicate true.
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{Type: "git_repo_sync.completed", Payload: map[string]any{}},
+		SourceContext: map[string]any{
+			"whisper": map[string]any{"attempt": 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next (true): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (predicate-true on context.*)", len(out))
+	}
+
+	// Retry: predicate false.
+	out, err = r.Next(context.Background(), Request{
+		Event: protocol.Event{Type: "git_repo_sync.completed", Payload: map[string]any{}},
+		SourceContext: map[string]any{
+			"whisper": map[string]any{"attempt": 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next (false): %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (predicate-false on context.*)", len(out))
+	}
+}
+
+func TestRouterNextRootTriggerIfAbsentContextPredicateFails(t *testing.T) {
+	// Absent context: predicate against context.* simply fails to match.
+	// No special-case error — same semantics as a payload predicate against
+	// an absent payload key. Documented behaviour for routes that fire from
+	// surfaces with no upstream context (webhook ingress, scheduler tick).
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name: "notify-on-first-attempt",
+		On:   "git_repo_sync.completed",
+		If: &conditions.Condition{
+			Path:  "context.whisper.attempt",
+			Op:    conditions.OpEq,
+			Value: 1,
+		},
+		Steps: []dsl.StepSpec{{ID: "notify", Uses: "discord"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{Type: "git_repo_sync.completed", Payload: map[string]any{}},
+		// SourceContext intentionally nil
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (absent context against context.* predicate)", len(out))
+	}
+}
+
+func TestRouterNextHookIfEvaluatesAgainstSourceContext(t *testing.T) {
+	// Hook-side context-aware if: — predicate evaluates against the
+	// upstream job's accumulated context passed by the dispatcher.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:   "page-on-high-severity",
+		OnHook: "job.failed",
+		If: &conditions.Condition{
+			Path:  "context.severity",
+			Op:    conditions.OpEq,
+			Value: "high",
+		},
+		Steps: []dsl.StepSpec{{ID: "page", Uses: "pagerduty"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	r := New(set, nil)
+
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.failed",
+		map[string]any{"plugin": "claude_harvest"},
+		map[string]any{"severity": "high"})
+	if err != nil {
+		t.Fatalf("NextHook (high): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (predicate-true on hook context.*)", len(out))
+	}
+
+	out, err = r.NextHook(context.Background(), "claude_harvest", "job.failed",
+		map[string]any{"plugin": "claude_harvest"},
+		map[string]any{"severity": "low"})
+	if err != nil {
+		t.Fatalf("NextHook (low): %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("dispatch count = %d, want 0 (predicate-false on hook context.*)", len(out))
+	}
+}
+
+func TestCompileSpecsFromPluginAffectsFingerprint(t *testing.T) {
+	specA := []dsl.PipelineSpec{{
+		Name:   "p",
+		OnHook: "job.failed",
+		Steps:  []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}}
+	specB := []dsl.PipelineSpec{{
+		Name:       "p",
+		OnHook:     "job.failed",
+		FromPlugin: "claude_harvest",
+		Steps:      []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}}
+	a, err := dsl.CompileSpecs(specA)
+	if err != nil {
+		t.Fatalf("CompileSpecs A: %v", err)
+	}
+	b, err := dsl.CompileSpecs(specB)
+	if err != nil {
+		t.Fatalf("CompileSpecs B: %v", err)
+	}
+	if a.Pipelines["p"].Fingerprint == b.Pipelines["p"].Fingerprint {
+		t.Fatalf("fingerprint should differ when from_plugin: changes (a=%s b=%s)",
+			a.Pipelines["p"].Fingerprint, b.Pipelines["p"].Fingerprint)
+	}
+}
+
+func TestCompileSpecsFromPluginFingerprintStable(t *testing.T) {
+	spec := []dsl.PipelineSpec{{
+		Name:       "p",
+		OnHook:     "job.failed",
+		FromPlugin: "claude_harvest",
+		Steps:      []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}}
+	a, err := dsl.CompileSpecs(spec)
+	if err != nil {
+		t.Fatalf("CompileSpecs A: %v", err)
+	}
+	b, err := dsl.CompileSpecs(spec)
+	if err != nil {
+		t.Fatalf("CompileSpecs B: %v", err)
+	}
+	if a.Pipelines["p"].Fingerprint != b.Pipelines["p"].Fingerprint {
+		t.Fatalf("fingerprint must be stable across compile runs (a=%s b=%s)",
+			a.Pipelines["p"].Fingerprint, b.Pipelines["p"].Fingerprint)
+	}
+}
+
+func TestCompiledRouteSourcePluginPropagatesToCompiledRoutes(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:       "p",
+		OnHook:     "job.failed",
+		FromPlugin: "claude_harvest",
+		Steps:      []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	pipeline := set.Pipelines["p"]
+	if pipeline.FromPlugin != "claude_harvest" {
+		t.Fatalf("Pipeline.FromPlugin = %q, want %q", pipeline.FromPlugin, "claude_harvest")
+	}
+	var sawEntry bool
+	for _, route := range pipeline.CompiledRoutes {
+		if route.Source.HookSignal != "" {
+			sawEntry = true
+			if route.Source.SourcePlugin != "claude_harvest" {
+				t.Fatalf("entry route source plugin = %q, want %q",
+					route.Source.SourcePlugin, "claude_harvest")
+			}
+		}
+	}
+	if !sawEntry {
+		t.Fatalf("expected at least one hook entry route in compiled manifest")
+	}
+}
