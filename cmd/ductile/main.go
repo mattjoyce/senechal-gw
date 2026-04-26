@@ -26,7 +26,6 @@ import (
 	"syscall"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattjoyce/ductile/internal/api"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/config"
@@ -43,7 +42,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"github.com/mattjoyce/ductile/internal/tui/watch"
 	"github.com/mattjoyce/ductile/internal/webhook"
 	"github.com/mattjoyce/ductile/internal/workspace"
 	"gopkg.in/yaml.v3"
@@ -261,7 +259,6 @@ System Commands:
   system scheduler  Show scheduler-submitted polls currently in flight
   system reset      Reset a plugin/connector circuit breaker
   system reload     Reload configuration in a running gateway
-  system watch      Real-time diagnostic monitoring TUI
   system skills     Export capability registry (Skills) as LLM-readable Markdown
 
 Config Commands:
@@ -362,12 +359,6 @@ func runSystemNoun(args []string) int {
 		return runSystemReload(actionArgs)
 	case "skills":
 		return runSystemSkills(actionArgs)
-	case "watch":
-		if hasHelpFlag(actionArgs) {
-			printSystemWatchHelp()
-			return 0
-		}
-		return runWatch(actionArgs)
 	case "help":
 		printSystemNounHelp(os.Stdout)
 		return 0
@@ -992,7 +983,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, scheduler, reset, reload, watch, skills")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, scheduler, reset, reload, skills")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -1848,73 +1839,6 @@ func boolToInt(v bool) int {
 		return 1
 	}
 	return 0
-}
-
-func runWatch(args []string) int {
-	fs := flag.NewFlagSet("watch", flag.ExitOnError)
-	apiURL := fs.String("api-url", "http://localhost:8080", "Gateway API URL")
-	apiKey := fs.String("api-key", os.Getenv("DUCTILE_API_KEY"), "API Bearer Token")
-	configPath := fs.String("config", "", "Path to configuration file or directory")
-	configDir := fs.String("config-dir", "", "Path to configuration directory")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
-		return 1
-	}
-
-	if *apiKey == "" {
-		fmt.Fprintln(os.Stderr, "Error: API key required. Use --api-key or DUCTILE_API_KEY env var.")
-		return 1
-	}
-
-	resolvedConfigPath := strings.TrimSpace(*configPath)
-	if strings.TrimSpace(*configDir) != "" {
-		resolvedConfigPath = strings.TrimSpace(*configDir)
-	}
-
-	var cfg *config.Config
-	if resolvedConfigPath == "" {
-		if discovered, err := config.DiscoverConfigDir(); err == nil {
-			resolvedConfigPath = discovered
-		}
-	}
-
-	if resolvedConfigPath != "" {
-		loaded, err := config.Load(resolvedConfigPath)
-		if err != nil {
-			if *configPath != "" || *configDir != "" {
-				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-				return 1
-			}
-			fmt.Fprintf(os.Stderr, "Warning: unable to load config from %s: %v\n", resolvedConfigPath, err)
-		} else {
-			cfg = loaded
-		}
-	}
-
-	m := watch.New(*apiURL, *apiKey, cfg)
-	p := tea.NewProgram(m)
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
-func printSystemWatchHelp() {
-	fmt.Println("Usage: ductile system watch [flags]")
-	fmt.Println()
-	fmt.Println("Real-time diagnostic monitoring TUI (Overwatch).")
-	fmt.Println("Shows gateway health, active pipelines, and event stream.")
-	fmt.Println()
-	fmt.Println("Flags:")
-	fmt.Println("  --api-url URL      Gateway API URL (default: http://localhost:8080)")
-	fmt.Println("  --api-key KEY      API Bearer Token (or DUCTILE_API_KEY env var)")
-	fmt.Println("  --config PATH      Path to configuration file or directory")
-	fmt.Println("  --config-dir PATH  Path to configuration directory")
-	fmt.Println()
-	fmt.Println("Keybindings:")
-	fmt.Println("  q, Ctrl+C        Quit")
-	fmt.Println("  ↑/↓, k/j         Navigate pipelines")
 }
 
 func printConfigLockHelp() {

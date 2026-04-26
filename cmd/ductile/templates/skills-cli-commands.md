@@ -3,7 +3,7 @@
 > Operator guidance: use `--json` for structured output; use `--dry-run` before
 > any mutation; prefer `config check --json` as the first diagnostic step.
 
-Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json|tui> [flags="<...>"] d="<intent>"`
+Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json> [flags="<...>"] d="<intent>"`
 
 ### System & Lifecycle
 - system.start tier=WRITE mut=1 out=human d="Start the gateway service in foreground."
@@ -12,7 +12,6 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json|tui> [flags="<...
 - system.breaker tier=READ mut=0 out=human|json flags="<plugin> [--command <command>] [--json] [--limit <n>]" d="Inspect circuit breaker current state and transition history."
 - system.reload tier=WRITE mut=1 out=human|json flags="[--json] [--api-url <url>] [--api-key <key>]" d="Hot-reload configuration without restart."
 - system.reset tier=WRITE mut=1 out=human flags="<plugin>" d="Reset a tripped circuit breaker for a plugin."
-- system.watch tier=READ mut=0 out=tui d="Open real-time diagnostic dashboard (Overwatch)."
 - system.skills tier=READ mut=0 out=markdown flags="[--config <dir>]" d="Export live capability manifest for LLM consumption."
 
 ### Configuration Management
