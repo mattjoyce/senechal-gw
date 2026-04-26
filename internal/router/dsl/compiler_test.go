@@ -668,6 +668,121 @@ func hasEdge(edges []Edge, from, to string) bool {
 	return false
 }
 
+func TestLoadFileParsesPipelineLevelIfAndMaxDepth(t *testing.T) {
+	configDir := t.TempDir()
+	pipelineYAML := `pipelines:
+  - name: filtered-trigger
+    on: data.change.garmin
+    if:
+      path: payload.kind
+      op: eq
+      value: workout
+    max_depth: 4
+    steps:
+      - id: consume
+        uses: summary
+`
+	path := filepath.Join(configDir, "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	fileSpec, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	spec := fileSpec.Pipelines[0]
+	if spec.If == nil {
+		t.Fatalf("pipeline.If = nil, want parsed predicate")
+	}
+	if spec.If.Path != "payload.kind" || spec.If.Op != conditions.OpEq || spec.If.Value != "workout" {
+		t.Fatalf("pipeline.If = %+v, want path/op/value parsed", spec.If)
+	}
+	if spec.MaxDepth == nil || *spec.MaxDepth != 4 {
+		t.Fatalf("MaxDepth = %v, want *4", spec.MaxDepth)
+	}
+}
+
+func TestCompileSpecsStampsPipelineLevelIfOnEntryRoutes(t *testing.T) {
+	cond := &conditions.Condition{
+		Path:  "payload.run",
+		Op:    conditions.OpEq,
+		Value: true,
+	}
+	set, err := CompileSpecs([]PipelineSpec{{
+		Name:  "guarded",
+		On:    "x",
+		If:    cond,
+		Steps: []StepSpec{{ID: "s", Uses: "p"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	p := set.Pipelines["guarded"]
+	if p.If == nil {
+		t.Fatalf("compiled pipeline missing If")
+	}
+	entryFound := false
+	for _, route := range p.CompiledRoutes {
+		if route.Source.Trigger != "x" {
+			continue
+		}
+		if route.Source.If == nil {
+			t.Fatalf("entry route missing Source.If: %+v", route)
+		}
+		if route.Source.If.Path != "payload.run" || route.Source.If.Op != conditions.OpEq {
+			t.Fatalf("entry route If = %+v", route.Source.If)
+		}
+		entryFound = true
+	}
+	if !entryFound {
+		t.Fatalf("no entry route found in compiled set")
+	}
+}
+
+func TestCompileSpecsRejectsInvalidPipelineLevelIf(t *testing.T) {
+	_, err := CompileSpecs([]PipelineSpec{{
+		Name: "bad-if",
+		On:   "x",
+		If: &conditions.Condition{
+			// Missing op + value while having a path: invalid.
+			Path: "payload.k",
+		},
+		Steps: []StepSpec{{ID: "s", Uses: "p"}},
+	}})
+	if err == nil {
+		t.Fatal("expected validation failure for malformed pipeline-level if")
+	}
+	if !strings.Contains(err.Error(), "if:") {
+		t.Fatalf("error %v should be tagged with 'if:'", err)
+	}
+}
+
+func TestCompileSpecsPipelineFingerprintIncludesIfPredicate(t *testing.T) {
+	withIf := []PipelineSpec{{
+		Name:  "p",
+		On:    "x",
+		If:    &conditions.Condition{Path: "payload.k", Op: conditions.OpEq, Value: "a"},
+		Steps: []StepSpec{{ID: "s", Uses: "plug"}},
+	}}
+	withoutIf := []PipelineSpec{{
+		Name:  "p",
+		On:    "x",
+		Steps: []StepSpec{{ID: "s", Uses: "plug"}},
+	}}
+	a, err := CompileSpecs(withIf)
+	if err != nil {
+		t.Fatalf("withIf: %v", err)
+	}
+	b, err := CompileSpecs(withoutIf)
+	if err != nil {
+		t.Fatalf("withoutIf: %v", err)
+	}
+	if a.Pipelines["p"].Fingerprint == b.Pipelines["p"].Fingerprint {
+		t.Fatalf("fingerprint unchanged after adding pipeline-level If — expected divergence (route fingerprint must include predicate)")
+	}
+}
+
 func assertCompiledRoute(t *testing.T, got, want CompiledRoute) {
 	t.Helper()
 	if got.ID != want.ID {

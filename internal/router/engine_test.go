@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
@@ -495,6 +496,253 @@ func TestRouterGetEntryDispatchesExpandsCalledPipeline(t *testing.T) {
 	}
 	if out[0].PipelineName != "process-audio" || out[0].StepID != "transcribe" {
 		t.Fatalf("unexpected pipeline metadata: %+v", out[0])
+	}
+}
+
+func TestRouterNextRootTriggerSkipsWhenIfFalse(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name: "filtered",
+		On:   "data.change.garmin",
+		If: &conditions.Condition{
+			Path:  "payload.kind",
+			Op:    conditions.OpEq,
+			Value: "workout",
+		},
+		Steps: []dsl.StepSpec{{ID: "consume", Uses: "summary"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "data.change.garmin",
+			Payload: map[string]any{"kind": "weight"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("predicate-false dispatched %d jobs, want 0: %+v", len(out), out)
+	}
+
+	out, err = r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "data.change.garmin",
+			Payload: map[string]any{"kind": "workout"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next (true): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("predicate-true dispatch count = %d, want 1", len(out))
+	}
+	if out[0].Plugin != "summary" {
+		t.Fatalf("unexpected plugin: %+v", out[0])
+	}
+}
+
+func TestRouterNextRootTriggerNoIfPreservesBehaviour(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:  "unfiltered",
+		On:    "data.change.garmin",
+		Steps: []dsl.StepSpec{{ID: "consume", Uses: "summary"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "data.change.garmin",
+			Payload: map[string]any{"kind": "anything"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (no predicate = today's behaviour)", len(out))
+	}
+}
+
+func TestRouterNextRootTriggerIfPartitionsMultipleConsumers(t *testing.T) {
+	// Two pipelines on the same trigger, one with an if: predicate.
+	// The unconditioned one must always fire; the conditioned one only when
+	// payload satisfies the predicate.
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{
+		{
+			Name:  "always",
+			On:    "git_repo_sync.completed",
+			Steps: []dsl.StepSpec{{ID: "policy", Uses: "repo_policy"}},
+		},
+		{
+			Name: "only-with-changes",
+			On:   "git_repo_sync.completed",
+			If: &conditions.Condition{
+				Path:  "payload.new_commits",
+				Op:    conditions.OpEq,
+				Value: true,
+			},
+			Steps: []dsl.StepSpec{{ID: "log", Uses: "changelog"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+
+	// new_commits=false: only "always" fires.
+	out, err := r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "git_repo_sync.completed",
+			Payload: map[string]any{"new_commits": false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next (false): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("dispatch count = %d, want 1 (predicate-false skips conditioned consumer)", len(out))
+	}
+	if out[0].PipelineName != "always" {
+		t.Fatalf("expected only the unconditioned pipeline to fire, got %q", out[0].PipelineName)
+	}
+
+	// new_commits=true: both fire.
+	out, err = r.Next(context.Background(), Request{
+		Event: protocol.Event{
+			Type:    "git_repo_sync.completed",
+			Payload: map[string]any{"new_commits": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Next (true): %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("dispatch count = %d, want 2 (both consumers fire)", len(out))
+	}
+}
+
+func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:   "scoped-failure-notify",
+		OnHook: "job.failed",
+		If: &conditions.Condition{
+			Path:  "payload.plugin",
+			Op:    conditions.OpEq,
+			Value: "fabric",
+		},
+		Steps: []dsl.StepSpec{{ID: "n", Uses: "discord-notifier"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	r := New(set, nil)
+
+	out, err := r.NextHook(context.Background(), "check_youtube", "job.failed",
+		map[string]any{"plugin": "check_youtube"})
+	if err != nil {
+		t.Fatalf("NextHook (false): %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("predicate-false hook dispatched %d jobs, want 0", len(out))
+	}
+
+	out, err = r.NextHook(context.Background(), "fabric", "job.failed",
+		map[string]any{"plugin": "fabric"})
+	if err != nil {
+		t.Fatalf("NextHook (true): %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("predicate-true hook dispatch count = %d, want 1", len(out))
+	}
+}
+
+func TestRouterCompileRejectsInvalidPipelineIf(t *testing.T) {
+	_, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name: "bad-if",
+		On:   "x",
+		If: &conditions.Condition{
+			// Invalid: path with no op.
+			Path: "payload.k",
+		},
+		Steps: []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}})
+	if err == nil {
+		t.Fatal("expected compile error for malformed pipeline-level if")
+	}
+}
+
+func TestRouterAuthorMaxDepthOverridesAutoComputed(t *testing.T) {
+	override := 7
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:     "with-max",
+		On:       "x",
+		MaxDepth: &override,
+		Steps:    []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+
+	pipeline := set.Pipelines["with-max"]
+	if pipeline.MaxRouteDepth != 7 {
+		t.Fatalf("MaxRouteDepth = %d, want 7 (author override)", pipeline.MaxRouteDepth)
+	}
+	for _, route := range pipeline.CompiledRoutes {
+		if route.Source.Trigger == "" {
+			continue
+		}
+		if route.Source.DepthLT != 7 {
+			t.Fatalf("entry route DepthLT = %d, want 7", route.Source.DepthLT)
+		}
+	}
+}
+
+func TestRouterAuthorMaxDepthZeroMeansUnlimited(t *testing.T) {
+	zero := 0
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:     "unlimited",
+		On:       "x",
+		MaxDepth: &zero,
+		Steps: []dsl.StepSpec{
+			{ID: "a", Uses: "p"},
+			{ID: "b", Uses: "p"},
+			{ID: "c", Uses: "p"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	pipeline := set.Pipelines["unlimited"]
+	if pipeline.MaxRouteDepth != 0 {
+		t.Fatalf("MaxRouteDepth = %d, want 0 (author-set 0 = unlimited per §11.3)", pipeline.MaxRouteDepth)
+	}
+	for _, route := range pipeline.CompiledRoutes {
+		if route.Source.DepthLT != 0 {
+			t.Fatalf("DepthLT = %d, want 0 (unlimited)", route.Source.DepthLT)
+		}
+	}
+}
+
+func TestRouterCompileRejectsNegativeMaxDepth(t *testing.T) {
+	neg := -1
+	_, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name:     "bad-max",
+		On:       "x",
+		MaxDepth: &neg,
+		Steps:    []dsl.StepSpec{{ID: "s", Uses: "p"}},
+	}})
+	if err == nil {
+		t.Fatal("expected compile error for negative max_depth")
 	}
 }
 
