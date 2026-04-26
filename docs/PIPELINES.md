@@ -27,7 +27,8 @@ pipelines:
 | `name` | String | A unique name for the pipeline. Used for logging and API triggers. |
 | `on` | String | The event type that triggers this pipeline. Must match exactly. |
 | `on-hook` | String | Lifecycle signal that triggers this pipeline (`job.completed` / `job.failed` / `job.timed_out`). Mutually exclusive with `on`. |
-| `if` | Condition | **Optional pipeline-level trigger predicate.** Evaluated against the event's payload after the trigger/hook name match; a false result skips dispatch entirely. Same shape as step-level `if:` (see §3.5). Trigger-time scope is **payload-only** in v1. |
+| `from_plugin` | String | **Optional source-plugin selector.** When set, the trigger or hook signal only matches when the upstream source plugin is exactly this plugin. Empty (default) preserves today's behaviour — match regardless of source plugin. See §2.2. |
+| `if` | Condition | **Optional pipeline-level trigger predicate.** Evaluated against the event's payload (and the upstream job's accumulated durable context, when available) after the trigger/hook name match; a false result skips dispatch entirely. Same shape as step-level `if:` (see §3.5). |
 | `max_depth` | Integer | **Optional author-set route depth cap.** Overrides the auto-computed cap. `0` means *unlimited*. Negative values are rejected at config load. |
 | `execution_mode`| Enum | `async` (fire-and-forget) or `synchronous` (API blocks for result). |
 | `timeout` | Duration| Max time to wait for a `synchronous` pipeline (e.g., `5s`, `2m`). |
@@ -40,12 +41,29 @@ Both `if:` blocks share the same predicate engine — atomic
 
 | Surface | Evaluated when | Scope | Effect on false |
 |---|---|---|---|
-| Pipeline-level `if:` | Trigger/hook name has matched, before any dispatch | `payload` only | No dispatch at all — no workspace, no `core.switch`, no plugin spawn |
+| Pipeline-level `if:` | Trigger/hook name has matched, before any dispatch | `payload`, `context` (when available) | No dispatch at all — no workspace, no `core.switch`, no plugin spawn |
 | Step-level `if:` (§3.5) | At each step, after upstream steps run | `payload`, `context`, `config` | Step bypassed via internal `core.switch`; downstream steps still run |
 
 Use pipeline-level `if:` to **suppress dispatch** when an event isn't
 relevant to a pipeline at all. Use step-level `if:` to **gate a step**
 within a pipeline that is otherwise running.
+
+#### Context availability at trigger time
+
+`context.*` paths in a pipeline-level `if:` resolve against the upstream
+job's *accumulated durable context* — the same baggage view that
+downstream pipeline steps see. Context is available when the routed
+event was emitted by a plugin running inside an existing pipeline; it
+is empty for events from the scheduler tick, webhook ingress, and
+direct API triggers. A predicate that tests `context.*` against an
+absent context simply evaluates to false (no special-case error), the
+same way a payload predicate against an absent key returns false.
+
+For hook pipelines (`on-hook:`), context is currently empty at hook
+fire time because hooks fire only for root jobs that have no upstream
+context of their own. The predicate engine and runtime plumbing accept
+`context.*` paths in hook predicates so authors can prepare for future
+architectures that surface upstream context at hook time.
 
 A pipeline may use **both** in the same definition.
 
@@ -96,6 +114,58 @@ is the correct surface for scoping a hook pipeline:
 Hook predicates evaluate against the lifecycle event's payload, which
 includes the plugin name, status, attempt count, and other lifecycle
 fields documented in §9.
+
+### 2.2 `from_plugin:` source-plugin selector
+
+Pipelines that fire from plugin-emitted events (`on:`) or lifecycle
+hooks (`on-hook:`) can be scoped to a single upstream plugin with the
+optional `from_plugin:` field. When set, the route only matches when
+the event's source plugin is exactly the named plugin.
+
+```yaml
+- name: page-on-claude-failure
+  on-hook: job.failed
+  from_plugin: claude_harvest
+  steps:
+    - uses: pagerduty_notify
+```
+
+`from_plugin:` is a positive assertion: an empty source plugin (e.g.
+webhook ingress, scheduler tick) never matches a route that declares
+one. Use this to keep a hook pipeline silent for unrelated plugins
+without smuggling the filter through `if:` against `payload.plugin`.
+
+`from_plugin:` and `if:` compose. The selector is checked first; the
+predicate runs only when the source plugin matches.
+
+```yaml
+- name: page-on-high-severity-claude-failure
+  on-hook: job.failed
+  from_plugin: claude_harvest
+  if:
+    path: payload.severity
+    op: eq
+    value: high
+  steps:
+    - uses: pagerduty_notify
+```
+
+For multi-plugin scoping, prefer either multiple narrowly-scoped
+pipelines or an `if:` predicate against `payload.plugin`. Sprint 17
+intentionally exposes the simplest single-plugin selector; a generic
+multi-value source matcher is deferred.
+
+#### Inspection
+
+The richer compiled-route shape (including `source_plugin` and `if`)
+is exposed via the `GET /config/view` API endpoint under the
+`compiled_routes` key, keyed by pipeline name. Operators can use this
+to answer:
+
+- what signal does this route match?
+- does it require a source plugin?
+- what predicate is evaluated?
+- what depth guard exists?
 
 ---
 

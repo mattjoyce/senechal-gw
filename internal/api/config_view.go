@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/mattjoyce/ductile/internal/config"
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 )
 
 // sensitiveKeyPatterns are substrings that flag a plugin config key as sensitive.
@@ -72,16 +73,90 @@ type configViewWebhook struct {
 }
 
 type configViewResponse struct {
-	Service   config.ServiceConfig        `json:"service"`
-	API       configViewAPI               `json:"api"`
-	State     config.StateConfig          `json:"state"`
-	Workspace config.WorkspaceConfig      `json:"workspace"`
-	Plugins   map[string]configViewPlugin `json:"plugins"`
-	Pipelines []config.PipelineEntry      `json:"pipelines"`
-	Webhooks  []configViewWebhook         `json:"webhooks,omitempty"`
-	Tokens    []configViewToken           `json:"tokens,omitempty"`
-	Routes    []config.RouteConfig        `json:"routes,omitempty"`
+	Service        config.ServiceConfig                    `json:"service"`
+	API            configViewAPI                           `json:"api"`
+	State          config.StateConfig                      `json:"state"`
+	Workspace      config.WorkspaceConfig                  `json:"workspace"`
+	Plugins        map[string]configViewPlugin             `json:"plugins"`
+	Pipelines      []config.PipelineEntry                  `json:"pipelines"`
+	Webhooks       []configViewWebhook                     `json:"webhooks,omitempty"`
+	Tokens         []configViewToken                       `json:"tokens,omitempty"`
+	Routes         []config.RouteConfig                    `json:"routes,omitempty"`
+	CompiledRoutes map[string][]configViewCompiledRoute    `json:"compiled_routes,omitempty"`
 }
+
+// configViewCompiledRoute exposes one compiled route's match-and-dispatch
+// shape for operator inspection. Includes Sprint 17's source-plugin selector
+// and the entry-route predicate so the richer match shape is visible rather
+// than implicit.
+type configViewCompiledRoute struct {
+	ID          string                            `json:"id"`
+	Source      configViewCompiledRouteSource     `json:"source"`
+	Destination configViewCompiledRouteDestination `json:"destination"`
+}
+
+type configViewCompiledRouteSource struct {
+	Trigger      string                `json:"trigger,omitempty"`
+	HookSignal   string                `json:"hook_signal,omitempty"`
+	SourcePlugin string                `json:"source_plugin,omitempty"`
+	Pipeline     string                `json:"pipeline,omitempty"`
+	StepID       string                `json:"step_id,omitempty"`
+	EventType    string                `json:"event_type,omitempty"`
+	DepthLT      int                   `json:"depth_lt,omitempty"`
+	If           *conditions.Condition `json:"if,omitempty"`
+}
+
+type configViewCompiledRouteDestination struct {
+	Kind         string `json:"kind"`
+	StepID       string `json:"step_id,omitempty"`
+	Plugin       string `json:"plugin,omitempty"`
+	Command      string `json:"command,omitempty"`
+	CallPipeline string `json:"call_pipeline,omitempty"`
+}
+
+// renderCompiledRoutes walks the router's compiled-route manifest for each
+// configured pipeline and returns a JSON-friendly view. Operators can use
+// this to answer "what signal does this route match?", "does it require a
+// source plugin?", and "what predicate is evaluated?" without reading the
+// compiled DAG by hand.
+func renderCompiledRoutes(router PipelineRouter, pipelines []config.PipelineEntry) map[string][]configViewCompiledRoute {
+	if router == nil || len(pipelines) == 0 {
+		return nil
+	}
+	out := make(map[string][]configViewCompiledRoute)
+	for _, entry := range pipelines {
+		routes := router.GetCompiledRoutes(entry.Name)
+		if len(routes) == 0 {
+			continue
+		}
+		view := make([]configViewCompiledRoute, 0, len(routes))
+		for _, route := range routes {
+			view = append(view, configViewCompiledRoute{
+				ID: route.ID,
+				Source: configViewCompiledRouteSource{
+					Trigger:      route.Source.Trigger,
+					HookSignal:   route.Source.HookSignal,
+					SourcePlugin: route.Source.SourcePlugin,
+					Pipeline:     route.Source.Pipeline,
+					StepID:       route.Source.StepID,
+					EventType:    route.Source.EventType,
+					DepthLT:      route.Source.DepthLT,
+					If:           route.Source.If,
+				},
+				Destination: configViewCompiledRouteDestination{
+					Kind:         string(route.Destination.Kind),
+					StepID:       route.Destination.StepID,
+					Plugin:       route.Destination.Plugin,
+					Command:      route.Destination.Command,
+					CallPipeline: route.Destination.CallPipeline,
+				},
+			})
+		}
+		out[entry.Name] = view
+	}
+	return out
+}
+
 
 type configViewAPI struct {
 	Enabled bool                 `json:"enabled"`
@@ -156,13 +231,14 @@ func (s *Server) handleConfigView(w http.ResponseWriter, r *http.Request) {
 			Listen:  cfg.API.Listen,
 			Tokens:  apiTokens,
 		},
-		State:     cfg.State,
-		Workspace: cfg.Workspace,
-		Plugins:   plugins,
-		Pipelines: cfg.Pipelines,
-		Webhooks:  webhooks,
-		Tokens:    tokens,
-		Routes:    cfg.Routes,
+		State:          cfg.State,
+		Workspace:      cfg.Workspace,
+		Plugins:        plugins,
+		Pipelines:      cfg.Pipelines,
+		Webhooks:       webhooks,
+		Tokens:         tokens,
+		Routes:         cfg.Routes,
+		CompiledRoutes: renderCompiledRoutes(s.router, cfg.Pipelines),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

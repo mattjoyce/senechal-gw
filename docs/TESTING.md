@@ -288,6 +288,34 @@ Should verify:
 - the gated plugin receives the `with:`-remapped payload values on the true branch
 - route depth and max-depth control-plane state persist in `event_context`
 
+#### `from-plugin-scoping`
+Goal:
+- validate Sprint 17 `from_plugin:` selector against a real running service
+
+Should verify:
+- a hook pipeline with `from_plugin:` matches only when the upstream
+  plugin equals the selector
+- the same hook signal from a different upstream plugin does not fire
+  the scoped pipeline
+- a co-resident hook pipeline without `from_plugin:` continues to fire
+  for every matching lifecycle signal (regression for today's behaviour)
+- the compiled-route inspection (`GET /config/view`) surfaces
+  `source_plugin` on the scoped route
+
+#### `context-aware-trigger-if`
+Goal:
+- validate Sprint 17 pipeline-level `if:` evaluating against the upstream
+  job's accumulated durable context
+
+Should verify:
+- a baggage value claimed by an upstream pipeline step is visible to a
+  downstream pipeline's `if:` predicate as `context.*`
+- predicate true → dispatch fires
+- predicate false → dispatch is suppressed (no workspace, no `core.switch`)
+- a route fired without upstream context (e.g. from webhook ingress)
+  with a `context.*` predicate is suppressed (absent context evaluates
+  to false, no error)
+
 ### Deferred wave-2 concerns
 These are valuable, but should not be in the first Docker wave:
 - reload/restart nuance beyond initial recovery scenarios
