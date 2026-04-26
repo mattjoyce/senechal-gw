@@ -1,16 +1,11 @@
+log_level: info
 service:
-  strict_mode: true
-
+  strict_mode: false
 state:
-  path: /data/ductile.db
-
+  path: "./state/ductile.db"
 plugin_roots:
-  - /app/plugins
-  - /fixture/plugins
-
-webhooks:
-  listen: "0.0.0.0:8091"
-
+  - "../../../../../plugins"
+  - "../plugins"
 include:
   - api.yaml
   - plugins.yaml

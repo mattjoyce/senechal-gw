@@ -23,7 +23,7 @@ fixture_init
 CONFIG_DIR="$FIXTURE_DIR/config"
 STATE_DIR="$CONFIG_DIR/state"
 DB_PATH="$STATE_DIR/ductile.db"
-PORT="18516"
+PORT="18518"
 PID=""
 rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
@@ -68,12 +68,13 @@ count_plugin() {
 trigger_pipeline() {
   local pipeline="$1"
   local label="$2"
+  local body="${3:-{}}"
   local code
   code=$(curl -sS -o "$ARTIFACT_DIR/$label-response.json" -w '%{http_code}' -X POST \
     "http://127.0.0.1:$PORT/pipeline/$pipeline" \
     -H 'Authorization: Bearer test-admin-token' \
     -H 'Content-Type: application/json' \
-    --data '{}')
+    --data "$body")
   [[ "$code" == "202" ]] || fixture_fail "$label: pipeline trigger status $code (want 202)"
 }
 
@@ -92,7 +93,7 @@ done
 
 # ---------- case A — context available, predicate TRUE ----------
 fixture_log "case A: upstream emits role=admin, downstream with context.role eq admin"
-trigger_pipeline upstream_emits_admin_role caseA
+trigger_pipeline upstream_emits_admin_role caseA '{"payload":{"role":"admin"}}'
 wait_settled "case A"
 
 A_ADMIN=$(count_plugin downstream_admin)
@@ -102,13 +103,31 @@ printf '%s\n' "$A_GUEST" >"$ARTIFACT_DIR/caseA-downstream-guest.txt"
 [[ "$A_ADMIN" == "1" ]] || fixture_fail "case A: downstream_admin = $A_ADMIN, want 1 (context.role eq admin should fire)"
 [[ "$A_GUEST" == "0" ]] || fixture_fail "case A: downstream_guest = $A_GUEST, want 0 (context.role neq guest)"
 
-# ---------- case B — no context from root trigger ----------
-fixture_log "case B: root trigger with context.role exists predicate"
-trigger_pipeline root_with_context_predicate caseB
+trigger_plugin() {
+  # Root jobs (POST /plugin/<name>/handle) emit events with no upstream
+  # EventContextID, so SourceContext is nil at the routing boundary.
+  local plugin="$1"
+  local label="$2"
+  local code
+  code=$(curl -sS -o "$ARTIFACT_DIR/$label-response.json" -w '%{http_code}' -X POST \
+    "http://127.0.0.1:$PORT/plugin/$plugin/handle" \
+    -H 'Authorization: Bearer test-admin-token' \
+    -H 'Content-Type: application/json' \
+    --data '{}')
+  [[ "$code" == "202" ]] || fixture_fail "$label: plugin trigger status $code (want 202)"
+}
+
+# ---------- case B — absent context routes through Next() with nil context ----------
+# emit_no_context is triggered as a ROOT job (no EventContextID), emits
+# test.no_context_trigger, dispatcher routes the event via router.Next()
+# with SourceContext == nil. The predicate context.role exists must
+# evaluate to false → downstream_no_context stays at 0.
+fixture_log "case B: root job emits trigger, predicate against absent context.role"
+trigger_plugin emit_no_context caseB
 wait_settled "case B"
 
 B_NO_CONTEXT=$(count_plugin downstream_no_context)
 printf '%s\n' "$B_NO_CONTEXT" >"$ARTIFACT_DIR/caseB-downstream-no-context.txt"
-[[ "$B_NO_CONTEXT" == "0" ]] || fixture_fail "case B: downstream_no_context = $B_NO_CONTEXT, want 0 (root triggers have no context)"
+[[ "$B_NO_CONTEXT" == "0" ]] || fixture_fail "case B: downstream_no_context = $B_NO_CONTEXT, want 0 (absent context against context.role exists)"
 
 fixture_log "all cases passed"

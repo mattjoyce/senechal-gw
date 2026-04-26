@@ -1,18 +1,16 @@
 pipelines:
-  # Upstream pipeline that emits an event with role=admin in the payload
-  # and claims that value as baggage for downstream pipelines
+  # Upstream pipeline emits an event with role in payload and claims that
+  # value as durable baggage. Downstream pipelines triggered from the
+  # emitted event see the claimed value as context.role.
   - name: upstream_emits_admin_role
     on: test.upstream_trigger
     steps:
       - id: emit_admin
         uses: emit_event_with_role
-        with:
-          event_type: "test.downstream.check"
         baggage:
           role: payload.role
 
-  # Downstream pipeline that fires when context.role == admin
-  # This should fire because the upstream claimed role=admin
+  # Fires when context.role == admin — should fire (upstream claimed admin).
   - name: downstream_for_admin
     on: test.downstream.check
     if:
@@ -22,8 +20,7 @@ pipelines:
     steps:
       - uses: downstream_admin
 
-  # Downstream pipeline that fires when context.role == guest
-  # This should NOT fire because the upstream claimed role=admin
+  # Fires when context.role == guest — should NOT fire (upstream claimed admin).
   - name: downstream_for_guest
     on: test.downstream.check
     if:
@@ -33,8 +30,8 @@ pipelines:
     steps:
       - uses: downstream_guest
 
-  # Root trigger with context.role predicate
-  # This should NOT fire because root triggers have no upstream context
+  # Root trigger with context.role exists predicate. Should NOT fire —
+  # root triggers via the API have no upstream context to consult.
   - name: root_with_context_predicate
     on: test.no_context_trigger
     if:

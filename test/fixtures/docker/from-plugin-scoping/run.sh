@@ -23,7 +23,7 @@ fixture_init
 CONFIG_DIR="$FIXTURE_DIR/config"
 STATE_DIR="$CONFIG_DIR/state"
 DB_PATH="$STATE_DIR/ductile.db"
-PORT="18516"
+PORT="18517"
 PID=""
 rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
@@ -65,16 +65,19 @@ count_plugin() {
   sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM job_queue WHERE plugin='$1';"
 }
 
-trigger_pipeline() {
-  local pipeline="$1"
+trigger_plugin() {
+  # Hook lifecycle pipelines fire only for ROOT jobs (no EventContextID).
+  # Triggering directly via /plugin/<name>/handle keeps plugin_a/plugin_b as
+  # root jobs so maybeFireHooks does not short-circuit.
+  local plugin="$1"
   local label="$2"
   local code
   code=$(curl -sS -o "$ARTIFACT_DIR/$label-response.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$PORT/pipeline/$pipeline" \
+    "http://127.0.0.1:$PORT/plugin/$plugin/handle" \
     -H 'Authorization: Bearer test-admin-token' \
     -H 'Content-Type: application/json' \
     --data '{}')
-  [[ "$code" == "202" ]] || fixture_fail "$label: pipeline trigger status $code (want 202)"
+  [[ "$code" == "202" ]] || fixture_fail "$label: plugin trigger status $code (want 202)"
 }
 
 fixture_log "starting ductile process"
@@ -92,7 +95,7 @@ done
 
 # ---------- case A — plugin_a completion fires both scoped and unscoped hooks ----------
 fixture_log "case A: plugin_a triggers, hook_scoped_to_a and hook_always should fire"
-trigger_pipeline on_plugin_a caseA
+trigger_plugin plugin_a caseA
 wait_settled "case A"
 
 A_SCOPED=$(count_plugin hook_scoped_to_a)
@@ -107,7 +110,7 @@ printf '%s\n' "$A_B" >"$ARTIFACT_DIR/caseA-scoped-to-b.txt"
 
 # ---------- case B — plugin_b completion does NOT fire hook_scoped_to_a ----------
 fixture_log "case B: plugin_b triggers, hook_scoped_to_a should NOT fire"
-trigger_pipeline on_plugin_b caseB
+trigger_plugin plugin_b caseB
 wait_settled "case B"
 
 B_SCOPED_A=$(count_plugin hook_scoped_to_a)

@@ -1,10 +1,23 @@
 plugins:
-  upstream_producer:
-    uses: echo
+  # Fixture emitter — emits the configured event with role in payload.
+  emit_event_with_role:
     enabled: true
     config:
-      message: "upstream_producer"
+      event_type: "test.downstream.check"
+      role: "admin"
 
+  # Second alias for the absent-context case: triggered as a root job
+  # (no EventContextID, no baggage), emits test.no_context_trigger so the
+  # router routes via Next() with SourceContext == nil. The downstream
+  # predicate context.role exists must evaluate to false.
+  emit_no_context:
+    uses: emit_event_with_role
+    enabled: true
+    config:
+      event_type: "test.no_context_trigger"
+      role: "admin"
+
+  # Downstream consumers — counted post-settle to verify predicate scope.
   downstream_admin:
     uses: echo
     enabled: true

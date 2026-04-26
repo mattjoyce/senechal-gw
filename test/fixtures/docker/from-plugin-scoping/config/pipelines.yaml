@@ -1,31 +1,26 @@
 pipelines:
-  # Root triggers to invoke plugins
-  - name: on_plugin_a
-    on: test.trigger_a
-    steps:
-      - uses: plugin_a
+  # Hook pipelines under test.
+  #
+  # plugin_a and plugin_b are triggered directly via POST /plugin/<name>/handle
+  # so they run as ROOT jobs (no EventContextID). maybeFireHooks short-circuits
+  # for pipeline steps, so wrapping them in pipelines would suppress the very
+  # behaviour this fixture validates.
 
-  - name: on_plugin_b
-    on: test.trigger_b
-    steps:
-      - uses: plugin_b
-
-  # Hook pipelines
-  # This fires only when plugin_a completes (from_plugin scoping)
+  # Scoped to plugin_a — fires only when plugin_a completes.
   - name: hook_scoped_to_a
     on-hook: job.completed
     from_plugin: plugin_a
     steps:
       - uses: hook_scoped_to_a
 
-  # This fires only when plugin_b completes (from_plugin scoping)
+  # Scoped to plugin_b — fires only when plugin_b completes.
   - name: hook_scoped_to_b
     on-hook: job.completed
     from_plugin: plugin_b
     steps:
       - uses: hook_scoped_to_b
 
-  # This fires whenever any job completes (no from_plugin, regression test)
+  # Regression: no from_plugin selector — fires for every job.completed.
   - name: hook_always
     on-hook: job.completed
     steps:
