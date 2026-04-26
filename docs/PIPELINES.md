@@ -26,9 +26,76 @@ pipelines:
 |-------|------|-------------|
 | `name` | String | A unique name for the pipeline. Used for logging and API triggers. |
 | `on` | String | The event type that triggers this pipeline. Must match exactly. |
+| `on-hook` | String | Lifecycle signal that triggers this pipeline (`job.completed` / `job.failed` / `job.timed_out`). Mutually exclusive with `on`. |
+| `if` | Condition | **Optional pipeline-level trigger predicate.** Evaluated against the event's payload after the trigger/hook name match; a false result skips dispatch entirely. Same shape as step-level `if:` (see §3.5). Trigger-time scope is **payload-only** in v1. |
+| `max_depth` | Integer | **Optional author-set route depth cap.** Overrides the auto-computed cap. `0` means *unlimited*. Negative values are rejected at config load. |
 | `execution_mode`| Enum | `async` (fire-and-forget) or `synchronous` (API blocks for result). |
 | `timeout` | Duration| Max time to wait for a `synchronous` pipeline (e.g., `5s`, `2m`). |
 | `steps` | Array | The list of steps to execute in order. |
+
+### 2.1 Pipeline-level `if:` vs. step-level `if:`
+
+Both `if:` blocks share the same predicate engine — atomic
+`path/op/value` plus `all/any/not`. They differ in *where* they evaluate:
+
+| Surface | Evaluated when | Scope | Effect on false |
+|---|---|---|---|
+| Pipeline-level `if:` | Trigger/hook name has matched, before any dispatch | `payload` only | No dispatch at all — no workspace, no `core.switch`, no plugin spawn |
+| Step-level `if:` (§3.5) | At each step, after upstream steps run | `payload`, `context`, `config` | Step bypassed via internal `core.switch`; downstream steps still run |
+
+Use pipeline-level `if:` to **suppress dispatch** when an event isn't
+relevant to a pipeline at all. Use step-level `if:` to **gate a step**
+within a pipeline that is otherwise running.
+
+A pipeline may use **both** in the same definition.
+
+```yaml
+- name: repo-changelog
+  on: git_repo_sync.completed
+  if:                              # pipeline-level: skip dispatch when no work
+    path: payload.new_commits
+    op: eq
+    value: true
+  steps:
+    - id: changelog
+      uses: changelog_microblog
+    - id: commit
+      uses: git_commit_push
+      if:                          # step-level: only commit if the step before
+        path: payload.changed       #             actually produced changes
+        op: eq
+        value: true
+```
+
+`max_depth` is a separate concern: it caps how many internal `core.switch`
+hops a pipeline may chain before the runtime considers the route
+exhausted. Author-setting it is rare; the auto-computed value is
+correct in almost all cases. Set `max_depth: 0` only when you have a
+deliberate need for unbounded recursion through `call:`, and you have
+read §6.4 of this doc.
+
+#### Hook-trigger predicate (`on-hook:` + `if:`)
+
+Lifecycle hook pipelines (`on-hook: job.completed | job.failed | job.timed_out`)
+fire for **every** matching lifecycle event across the whole runtime.
+Without a predicate, this is fundamentally noisy. A pipeline-level `if:`
+is the correct surface for scoping a hook pipeline:
+
+```yaml
+- name: notify-on-real-failure
+  on-hook: job.failed
+  if:
+    not:
+      path: payload.plugin
+      op: in
+      value: [check_youtube, jina-reader]   # known-noisy plugins
+  steps:
+    - uses: discord_notify
+```
+
+Hook predicates evaluate against the lifecycle event's payload, which
+includes the plugin name, status, attempt count, and other lifecycle
+fields documented in §9.
 
 ---
 
