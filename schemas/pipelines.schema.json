@@ -31,7 +31,21 @@
         "on-hook": {
           "type": "string",
           "description": "Lifecycle signal that triggers this pipeline (mutually exclusive with on).",
-          "enum": ["job.completed"]
+          "enum": ["job.completed", "job.failed", "job.timed_out"]
+        },
+        "from_plugin": {
+          "type": "string",
+          "description": "Optional source-plugin selector. When set, the trigger or hook signal only matches when the upstream plugin is exactly this plugin. Empty means today's behaviour — match regardless of source plugin.",
+          "minLength": 1
+        },
+        "if": {
+          "$ref": "#/$defs/Condition",
+          "description": "Optional pipeline-level trigger predicate. Evaluated against payload + upstream durable context after trigger/hook name match; a false result skips dispatch entirely."
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Optional author-set route depth cap. Overrides the auto-computed cap. 0 means unlimited.",
+          "minimum": 0
         },
         "steps": {
           "type": "array",
@@ -50,7 +64,11 @@
           "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
         }
       },
-      "required": ["name", "on"],
+      "required": ["name"],
+      "oneOf": [
+        { "required": ["on"], "not": { "required": ["on-hook"] } },
+        { "required": ["on-hook"], "not": { "required": ["on"] } }
+      ],
       "additionalProperties": false
     },
     "Condition": {
