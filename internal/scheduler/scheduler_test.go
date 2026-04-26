@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mattjoyce/ductile/internal/config"
-	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/workspace"
 )
@@ -163,6 +162,9 @@ func (s *stubQueueService) Enqueue(_ context.Context, _ queue.EnqueueRequest) (s
 func (s *stubQueueService) CountOutstandingJobs(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
+func (s *stubQueueService) CountOutstandingJobsBySubmitter(_ context.Context, _, _, _ string) (int, error) {
+	return 0, nil
+}
 func (s *stubQueueService) CancelOutstandingJobs(_ context.Context, _, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -279,73 +281,54 @@ func TestCanScheduleRecordsHalfOpenTransition(t *testing.T) {
 	assert.Equal(t, lastJobID, *stub.transitions[0].JobID)
 }
 
-func TestPollViewConsumesLifecycleEvents(t *testing.T) {
-	logger, _ := NewTestSlogger()
-	cfg := config.Defaults()
-	sched := New(cfg, &stubQueueService{}, nil, logger)
-
-	sched.applyPollEvent(events.Event{
-		Type: "scheduler.scheduled",
-		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
-	})
-	if got := sched.pollViewCount("echo", "poll"); got != 1 {
-		t.Fatalf("poll view after scheduled = %d, want 1", got)
-	}
-
-	sched.applyPollEvent(events.Event{
-		Type: "poll.started",
-		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
-	})
-	if got := sched.pollViewCount("echo", "poll"); got != 1 {
-		t.Fatalf("poll view after started = %d, want 1", got)
-	}
-
-	sched.applyPollEvent(events.Event{
-		Type: "poll.completed",
-		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","status":"succeeded"}`),
-	})
-	if got := sched.pollViewCount("echo", "poll"); got != 0 {
-		t.Fatalf("poll view after completed = %d, want 0", got)
-	}
-}
-
-type pollViewQueueStub struct {
+// pollGuardQueueStub records calls to the scheduler's outstanding-poll query
+// path so tests can assert it is the sole source of truth after Sprint 15.
+type pollGuardQueueStub struct {
 	stubQueueService
-	countOutstandingCalls int
-	countOutstanding      int
+	bySubmitterCalls       int
+	bySubmitterOutstanding int
+	lastSubmittedBy        string
+	unfilteredCalls        int
 }
 
-func (s *pollViewQueueStub) CountOutstandingJobs(_ context.Context, _, _ string) (int, error) {
-	s.countOutstandingCalls++
-	return s.countOutstanding, nil
+func (s *pollGuardQueueStub) CountOutstandingJobsBySubmitter(_ context.Context, _, _, submittedBy string) (int, error) {
+	s.bySubmitterCalls++
+	s.lastSubmittedBy = submittedBy
+	return s.bySubmitterOutstanding, nil
 }
 
-func TestCanScheduleUsesPollViewBeforeQueueSafety(t *testing.T) {
+func (s *pollGuardQueueStub) CountOutstandingJobs(_ context.Context, _, _ string) (int, error) {
+	s.unfilteredCalls++
+	return 0, nil
+}
+
+// TestCanSchedulePollSkipUsesQueueAsSoleAuthority verifies the scheduler
+// refuses to enqueue a duplicate poll when the queue reports an outstanding
+// scheduler-submitted job. Sprint 15 removed the in-memory poll view, so the
+// queue is the only thing that can answer "is this plugin already polling?".
+func TestCanSchedulePollSkipUsesQueueAsSoleAuthority(t *testing.T) {
 	logger, _ := NewTestSlogger()
 	cfg := config.Defaults()
-	stub := &pollViewQueueStub{}
+	stub := &pollGuardQueueStub{bySubmitterOutstanding: 1}
 	sched := New(cfg, stub, nil, logger)
-	sched.applyPollEvent(events.Event{
-		Type: "scheduler.scheduled",
-		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
-	})
 
 	ok, reason, err := sched.canSchedule(context.Background(), "echo", "poll", config.PluginConf{}, config.ScheduleConfig{})
 	assert.NoError(t, err)
 	assert.False(t, ok)
 	assert.Equal(t, "already_running", reason)
-	assert.Equal(t, 0, stub.countOutstandingCalls)
+	assert.Equal(t, 1, stub.bySubmitterCalls)
+	assert.Equal(t, 0, stub.unfilteredCalls)
+	assert.Equal(t, cfg.Service.Name, stub.lastSubmittedBy)
 }
 
-func TestCanScheduleUsesQueueSafetyWhenPollViewBelowLimit(t *testing.T) {
+// TestCanSchedulePollQueueRespectsParallelismBudget verifies the queue policy
+// honors the per-plugin parallelism limit when the queue alone reports the
+// current outstanding count.
+func TestCanSchedulePollQueueRespectsParallelismBudget(t *testing.T) {
 	logger, _ := NewTestSlogger()
 	cfg := config.Defaults()
-	stub := &pollViewQueueStub{countOutstanding: 2}
+	stub := &pollGuardQueueStub{bySubmitterOutstanding: 2}
 	sched := New(cfg, stub, nil, logger)
-	sched.applyPollEvent(events.Event{
-		Type: "scheduler.scheduled",
-		Data: []byte(`{"job_id":"job-1","plugin":"echo","command":"poll","schedule_id":"primary","submitted_by":"ductile"}`),
-	})
 
 	ok, reason, err := sched.canSchedule(context.Background(), "echo", "poll", config.PluginConf{
 		MaxOutstandingPolls: 2,
@@ -353,7 +336,24 @@ func TestCanScheduleUsesQueueSafetyWhenPollViewBelowLimit(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, ok)
 	assert.Equal(t, "outstanding_limit", reason)
-	assert.Equal(t, 1, stub.countOutstandingCalls)
+	assert.Equal(t, 1, stub.bySubmitterCalls)
+	assert.Equal(t, 0, stub.unfilteredCalls)
+}
+
+// TestCanScheduleNonPollUsesUnfilteredCount verifies non-poll commands query
+// the queue without a submitter filter, since their dedupe semantics apply
+// across all submitters.
+func TestCanScheduleNonPollUsesUnfilteredCount(t *testing.T) {
+	logger, _ := NewTestSlogger()
+	cfg := config.Defaults()
+	stub := &pollGuardQueueStub{}
+	sched := New(cfg, stub, nil, logger)
+
+	ok, _, err := sched.canSchedule(context.Background(), "echo", "handle", config.PluginConf{}, config.ScheduleConfig{})
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, 0, stub.bySubmitterCalls)
+	assert.Equal(t, 1, stub.unfilteredCalls)
 }
 
 func TestReconcileCircuitBreakerRecordsCloseTransition(t *testing.T) {

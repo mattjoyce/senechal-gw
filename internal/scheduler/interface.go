@@ -14,6 +14,7 @@ import (
 type QueueService interface {
 	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
 	CountOutstandingJobs(ctx context.Context, plugin, command string) (int, error)
+	CountOutstandingJobsBySubmitter(ctx context.Context, plugin, command, submittedBy string) (int, error)
 	CancelOutstandingJobs(ctx context.Context, plugin, command, reason string) (int, error)
 	LatestCompletedCommandResult(ctx context.Context, plugin, command, submittedBy string) (*queue.CommandResult, error)
 	GetCircuitBreaker(ctx context.Context, plugin, command string) (*queue.CircuitBreaker, error)

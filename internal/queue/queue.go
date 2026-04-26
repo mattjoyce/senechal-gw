@@ -225,6 +225,33 @@ func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (in
 	return q.CountOutstandingJobs(ctx, plugin, "poll")
 }
 
+// CountOutstandingJobsBySubmitter returns queued+running jobs for a plugin
+// command, restricted to a specific submitter. The scheduler uses this so
+// externally-submitted jobs (CLI/webhook/router) do not consume the
+// scheduler's parallelism budget.
+func (q *Queue) CountOutstandingJobsBySubmitter(ctx context.Context, plugin, command, submittedBy string) (int, error) {
+	if plugin == "" {
+		return 0, fmt.Errorf("plugin is empty")
+	}
+	if command == "" {
+		return 0, fmt.Errorf("command is empty")
+	}
+	if submittedBy == "" {
+		return 0, fmt.Errorf("submitted_by is empty")
+	}
+
+	row := q.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM job_queue
+WHERE plugin = ? AND command = ? AND submitted_by = ? AND status IN (?, ?);
+`, plugin, command, submittedBy, StatusQueued, StatusRunning)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count outstanding jobs by submitter: %w", err)
+	}
+	return n, nil
+}
+
 // CancelOutstandingJobs marks queued+running jobs for a plugin command as dead.
 func (q *Queue) CancelOutstandingJobs(ctx context.Context, plugin, command, reason string) (int, error) {
 	if plugin == "" {

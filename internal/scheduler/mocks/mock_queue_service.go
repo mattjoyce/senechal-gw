@@ -51,6 +51,21 @@ func (mr *MockQueueServiceMockRecorder) CountOutstandingJobs(arg0, arg1, arg2 in
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOutstandingJobs", reflect.TypeOf((*MockQueueService)(nil).CountOutstandingJobs), arg0, arg1, arg2)
 }
 
+// CountOutstandingJobsBySubmitter mocks base method.
+func (m *MockQueueService) CountOutstandingJobsBySubmitter(arg0 context.Context, arg1, arg2, arg3 string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountOutstandingJobsBySubmitter", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountOutstandingJobsBySubmitter indicates an expected call of CountOutstandingJobsBySubmitter.
+func (mr *MockQueueServiceMockRecorder) CountOutstandingJobsBySubmitter(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountOutstandingJobsBySubmitter", reflect.TypeOf((*MockQueueService)(nil).CountOutstandingJobsBySubmitter), arg0, arg1, arg2, arg3)
+}
+
 // CancelOutstandingJobs mocks base method.
 func (m *MockQueueService) CancelOutstandingJobs(arg0 context.Context, arg1, arg2, arg3 string) (int, error) {
 	m.ctrl.T.Helper()

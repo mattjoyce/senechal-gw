@@ -39,8 +39,6 @@ type Scheduler struct {
 	janitorInterval  time.Duration
 	tickCount        uint64
 	recoveryHook     RecoveryHookFunc
-	pollsMu          sync.Mutex
-	polls            map[string]pollJob
 }
 
 const (
@@ -115,10 +113,6 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	if err := s.runStartupCatchUp(ctx); err != nil {
 		return fmt.Errorf("scheduler catch-up failed: %w", err)
 	}
-	if err := s.bootstrapPollView(ctx); err != nil {
-		return fmt.Errorf("scheduler poll view bootstrap failed: %w", err)
-	}
-	s.startPollEventConsumer(ctx)
 
 	s.wg.Add(1)
 	go s.tickLoop(ctx)
@@ -983,7 +977,7 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 	}
 	switch ifRunning {
 	case "skip":
-		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command, 1)
+		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command)
 		if err != nil {
 			return false, "", err
 		}
@@ -995,7 +989,7 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 		if maxOutstanding <= 0 {
 			maxOutstanding = 1
 		}
-		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command, maxOutstanding)
+		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command)
 		if err != nil {
 			return false, "", err
 		}
@@ -1003,7 +997,7 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 			return false, "outstanding_limit", nil
 		}
 	case "cancel":
-		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command, 1)
+		outstanding, err := s.outstandingForPolicy(ctx, pluginName, command)
 		if err != nil {
 			return false, "", err
 		}
@@ -1011,9 +1005,6 @@ func (s *Scheduler) canSchedule(ctx context.Context, pluginName, command string,
 			cancelled, cancelErr := s.queue.CancelOutstandingJobs(ctx, pluginName, command, "cancelled by scheduler (if_running=cancel)")
 			if cancelErr != nil {
 				return false, "", cancelErr
-			}
-			if command == pollCommand {
-				s.clearPollsFor(pluginName, command)
 			}
 			s.logger.Info("Cancelled outstanding scheduled jobs", "plugin", pluginName, "command", command, "cancelled", cancelled)
 		}
