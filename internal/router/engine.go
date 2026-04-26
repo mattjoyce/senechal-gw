@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
@@ -144,6 +145,18 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 		pipelineInstanceIDs := make(map[string]string, len(routes))
 		r.logger.Debug("matched root trigger pipelines", "event_type", eventType, "count", len(routes))
 		for _, route := range routes {
+			if route.Source.If != nil {
+				ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: req.Event.Payload})
+				if err != nil {
+					return nil, fmt.Errorf("pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
+				}
+				if !ok {
+					r.logger.Debug("trigger predicate skipped pipeline",
+						"pipeline", route.Pipeline,
+						"event_type", eventType)
+					continue
+				}
+			}
 			pipelineInstanceID := pipelineInstanceIDs[route.Pipeline]
 			if pipelineInstanceID == "" {
 				pipelineInstanceID = uuid.NewString()
@@ -192,6 +205,19 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 
 	var out []Dispatch
 	for _, route := range routes {
+		if route.Source.If != nil {
+			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload})
+			if err != nil {
+				return nil, fmt.Errorf("hook pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
+			}
+			if !ok {
+				r.logger.Debug("hook trigger predicate skipped pipeline",
+					"pipeline", route.Pipeline,
+					"signal", signal,
+					"source_plugin", plugin)
+				continue
+			}
+		}
 		r.logger.Info("triggering hook pipeline", "name", route.Pipeline, "signal", signal, "source_plugin", plugin)
 		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev}, true)
 		if err != nil {
