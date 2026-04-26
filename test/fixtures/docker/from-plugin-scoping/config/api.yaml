@@ -1,0 +1,6 @@
+api:
+  listen: "0.0.0.0:18516"
+  token_auth:
+    tokens:
+      - token: "test-admin-token"
+        scopes: ["*"]

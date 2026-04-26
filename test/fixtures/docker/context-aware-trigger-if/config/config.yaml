@@ -1,0 +1,17 @@
+service:
+  strict_mode: true
+
+state:
+  path: /data/ductile.db
+
+plugin_roots:
+  - /app/plugins
+  - /fixture/plugins
+
+webhooks:
+  listen: "0.0.0.0:8091"
+
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml

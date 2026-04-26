@@ -1,0 +1,32 @@
+pipelines:
+  # Root triggers to invoke plugins
+  - name: on_plugin_a
+    on: test.trigger_a
+    steps:
+      - uses: plugin_a
+
+  - name: on_plugin_b
+    on: test.trigger_b
+    steps:
+      - uses: plugin_b
+
+  # Hook pipelines
+  # This fires only when plugin_a completes (from_plugin scoping)
+  - name: hook_scoped_to_a
+    on-hook: job.completed
+    from_plugin: plugin_a
+    steps:
+      - uses: hook_scoped_to_a
+
+  # This fires only when plugin_b completes (from_plugin scoping)
+  - name: hook_scoped_to_b
+    on-hook: job.completed
+    from_plugin: plugin_b
+    steps:
+      - uses: hook_scoped_to_b
+
+  # This fires whenever any job completes (no from_plugin, regression test)
+  - name: hook_always
+    on-hook: job.completed
+    steps:
+      - uses: hook_always

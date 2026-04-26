@@ -1,0 +1,24 @@
+plugins:
+  upstream_producer:
+    uses: echo
+    enabled: true
+    config:
+      message: "upstream_producer"
+
+  downstream_admin:
+    uses: echo
+    enabled: true
+    config:
+      message: "downstream_admin fired"
+
+  downstream_guest:
+    uses: echo
+    enabled: true
+    config:
+      message: "downstream_guest fired"
+
+  downstream_no_context:
+    uses: echo
+    enabled: true
+    config:
+      message: "downstream_no_context fired"
