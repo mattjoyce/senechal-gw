@@ -48,6 +48,9 @@ go.work.sum
 # Beads local database
 .beads/
 
+# Agent scratch notes (specs, sprint plans, RCAs)
+.agent-notes/
+
 # Fixture state
 test/fixtures/docker/**/state/
 test/fixtures/docker/**/config/state/
