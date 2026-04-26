@@ -19,6 +19,7 @@ type PipelineSpec struct {
 	Name          string                `yaml:"name"`
 	On            string                `yaml:"on"`
 	OnHook        string                `yaml:"on-hook,omitempty"`
+	FromPlugin    string                `yaml:"from_plugin,omitempty"`
 	If            *conditions.Condition `yaml:"if,omitempty"`
 	MaxDepth      *int                  `yaml:"max_depth,omitempty"`
 	Steps         []StepSpec            `yaml:"steps"`
@@ -182,14 +183,19 @@ const (
 )
 
 // CompiledRouteSource is the match side of one compiled orchestration rule.
+//
+// SourcePlugin scopes entry routes (root triggers and on-hook lifecycle hooks)
+// to a specific upstream plugin. Empty means today's behavior — match regardless
+// of upstream plugin. Transition routes do not use SourcePlugin.
 type CompiledRouteSource struct {
-	Trigger    string
-	Pipeline   string
-	StepID     string
-	HookSignal string
-	EventType  string
-	DepthLT    int
-	If         *conditions.Condition
+	Trigger      string
+	Pipeline     string
+	StepID       string
+	HookSignal   string
+	SourcePlugin string
+	EventType    string
+	DepthLT      int
+	If           *conditions.Condition
 }
 
 // CompiledRouteDestination is the dispatch side of one compiled orchestration rule.
@@ -215,7 +221,8 @@ type CompiledRoute struct {
 type Pipeline struct {
 	Name            string
 	Trigger         string
-	IsHook          bool // true when triggered by on-hook: (lifecycle signal) rather than on: (plugin event)
+	IsHook          bool   // true when triggered by on-hook: (lifecycle signal) rather than on: (plugin event)
+	FromPlugin      string // optional source-plugin selector for entry routes (Sprint 17)
 	ExecutionMode   string
 	Timeout         time.Duration
 	If              *conditions.Condition // optional pipeline-level trigger predicate (entry routes only)

@@ -76,10 +76,13 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 		effectiveTrigger = hookSignal
 	}
 
+	fromPlugin := strings.TrimSpace(spec.FromPlugin)
+
 	pipeline := &Pipeline{
 		Name:          name,
 		Trigger:       effectiveTrigger,
 		IsHook:        isHook,
+		FromPlugin:    fromPlugin,
 		ExecutionMode: spec.ExecutionMode,
 		Timeout:       spec.Timeout,
 		Nodes:         make(map[string]Node),
@@ -393,6 +396,9 @@ func BuildCompiledRoutes(p *Pipeline) []CompiledRoute {
 			source.HookSignal = p.Trigger
 		} else {
 			source.Trigger = p.Trigger
+		}
+		if p.FromPlugin != "" {
+			source.SourcePlugin = p.FromPlugin
 		}
 		if p.If != nil {
 			clone := *p.If
@@ -747,6 +753,9 @@ func SortCompiledRoutes(routes []CompiledRoute) {
 		}
 		if routes[i].Source.HookSignal != routes[j].Source.HookSignal {
 			return routes[i].Source.HookSignal < routes[j].Source.HookSignal
+		}
+		if routes[i].Source.SourcePlugin != routes[j].Source.SourcePlugin {
+			return routes[i].Source.SourcePlugin < routes[j].Source.SourcePlugin
 		}
 		if routes[i].Source.Pipeline != routes[j].Source.Pipeline {
 			return routes[i].Source.Pipeline < routes[j].Source.Pipeline
