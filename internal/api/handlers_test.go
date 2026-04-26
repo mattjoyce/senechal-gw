@@ -106,6 +106,8 @@ func (m *mockRouter) GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute 
 	return nil
 }
 
+func (m *mockRouter) PipelineSummary() []router.PipelineInfo { return nil }
+
 // mockWaiter implements TreeWaiter for testing
 type mockWaiter struct {
 	waitForJobTreeFunc func(ctx context.Context, rootJobID string, timeout time.Duration) ([]*queue.JobResult, error)

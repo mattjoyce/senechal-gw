@@ -115,17 +115,26 @@ type configViewCompiledRouteDestination struct {
 }
 
 // renderCompiledRoutes walks the router's compiled-route manifest for each
-// configured pipeline and returns a JSON-friendly view. Operators can use
-// this to answer "what signal does this route match?", "does it require a
-// source plugin?", and "what predicate is evaluated?" without reading the
-// compiled DAG by hand.
-func renderCompiledRoutes(router PipelineRouter, pipelines []config.PipelineEntry) map[string][]configViewCompiledRoute {
-	if router == nil || len(pipelines) == 0 {
+// loaded pipeline and returns a JSON-friendly view. Operators can use this
+// to answer "what signal does this route match?", "does it require a source
+// plugin?", and "what predicate is evaluated?" without reading the compiled
+// DAG by hand.
+//
+// Pipeline names come from PipelineSummary so the inspection surface works
+// in both directory mode (cfg.Pipelines populated) and inline-include mode
+// (cfg.Pipelines is nil because pipelines come from a single included file
+// rather than a pipelines/ directory).
+func renderCompiledRoutes(router PipelineRouter) map[string][]configViewCompiledRoute {
+	if router == nil {
+		return nil
+	}
+	summary := router.PipelineSummary()
+	if len(summary) == 0 {
 		return nil
 	}
 	out := make(map[string][]configViewCompiledRoute)
-	for _, entry := range pipelines {
-		routes := router.GetCompiledRoutes(entry.Name)
+	for _, info := range summary {
+		routes := router.GetCompiledRoutes(info.Name)
 		if len(routes) == 0 {
 			continue
 		}
@@ -152,7 +161,7 @@ func renderCompiledRoutes(router PipelineRouter, pipelines []config.PipelineEntr
 				},
 			})
 		}
-		out[entry.Name] = view
+		out[info.Name] = view
 	}
 	return out
 }
@@ -238,7 +247,7 @@ func (s *Server) handleConfigView(w http.ResponseWriter, r *http.Request) {
 		Webhooks:       webhooks,
 		Tokens:         tokens,
 		Routes:         cfg.Routes,
-		CompiledRoutes: renderCompiledRoutes(s.router, cfg.Pipelines),
+		CompiledRoutes: renderCompiledRoutes(s.router),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

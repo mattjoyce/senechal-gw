@@ -77,4 +77,7 @@ type Engine interface {
 	GetNode(pipelineName string, stepID string) (dsl.Node, bool)
 	// GetCompiledRoutes returns the compiled route manifest for a named pipeline.
 	GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute
+	// PipelineSummary lists every loaded pipeline. Used by inspection surfaces
+	// that need to enumerate pipelines without re-reading config.
+	PipelineSummary() []PipelineInfo
 }

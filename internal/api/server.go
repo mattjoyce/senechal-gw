@@ -45,6 +45,7 @@ type PipelineRouter interface {
 	GetEntryDispatches(pipelineName string, event protocol.Event) ([]router.Dispatch, error)
 	GetNode(pipelineName string, stepID string) (dsl.Node, bool)
 	GetCompiledRoutes(pipelineName string) []dsl.CompiledRoute
+	PipelineSummary() []router.PipelineInfo
 }
 
 // EventContextStore defines the interface for creating event context lineage.

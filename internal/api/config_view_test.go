@@ -3,7 +3,6 @@ package api
 import (
 	"testing"
 
-	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
@@ -26,6 +25,13 @@ func (r *renderCompiledRoutesRouter) GetCompiledRoutes(name string) []dsl.Compil
 }
 func (r *renderCompiledRoutesRouter) GetNode(string, string) (dsl.Node, bool) {
 	return dsl.Node{}, false
+}
+func (r *renderCompiledRoutesRouter) PipelineSummary() []router.PipelineInfo {
+	out := make([]router.PipelineInfo, 0, len(r.routes))
+	for name := range r.routes {
+		out = append(out, router.PipelineInfo{Name: name})
+	}
+	return out
 }
 
 // TestRenderCompiledRoutesExposesSprint17Selectors asserts that the inspection
@@ -53,7 +59,7 @@ func TestRenderCompiledRoutesExposesSprint17Selectors(t *testing.T) {
 		},
 	}
 
-	rendered := renderCompiledRoutes(shim, []config.PipelineEntry{{Name: pipeline.Name}})
+	rendered := renderCompiledRoutes(shim)
 	got, ok := rendered[pipeline.Name]
 	if !ok {
 		t.Fatalf("rendered output missing pipeline %q", pipeline.Name)
@@ -82,7 +88,7 @@ func TestRenderCompiledRoutesExposesSprint17Selectors(t *testing.T) {
 
 // TestRenderCompiledRoutesEmptyForNoRouter exercises the nil-router path.
 func TestRenderCompiledRoutesEmptyForNoRouter(t *testing.T) {
-	out := renderCompiledRoutes(nil, []config.PipelineEntry{{Name: "p"}})
+	out := renderCompiledRoutes(nil)
 	if out != nil {
 		t.Fatalf("expected nil for nil router, got %+v", out)
 	}
@@ -92,7 +98,7 @@ func TestRenderCompiledRoutesEmptyForNoRouter(t *testing.T) {
 // do not appear in the output.
 func TestRenderCompiledRoutesSkipsPipelinesWithNoRoutes(t *testing.T) {
 	shim := &renderCompiledRoutesRouter{routes: map[string][]dsl.CompiledRoute{}}
-	out := renderCompiledRoutes(shim, []config.PipelineEntry{{Name: "missing"}})
+	out := renderCompiledRoutes(shim)
 	if len(out) != 0 {
 		t.Fatalf("expected empty output, got %+v", out)
 	}
