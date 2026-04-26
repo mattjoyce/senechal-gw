@@ -140,6 +140,12 @@ func (s *Scheduler) pollOutstanding(ctx context.Context, pluginName, command str
 		return 0, err
 	}
 	if queueCount > viewCount {
+		s.logger.Warn("poll-view safety net rescued: queue disagreed with event-derived view",
+			"plugin", pluginName,
+			"command", command,
+			"view_count", viewCount,
+			"queue_count", queueCount,
+			"threshold", threshold)
 		return queueCount, nil
 	}
 	return viewCount, nil
