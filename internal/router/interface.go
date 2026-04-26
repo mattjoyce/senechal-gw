@@ -23,6 +23,11 @@ type PipelineInfo struct {
 //
 // The router works only with metadata and event envelopes; artifact cloning and
 // workspace lifecycle remain in the workspace manager (data plane).
+//
+// SourceContext is the upstream job's accumulated durable context (Sprint 17).
+// Entry-route trigger predicates evaluate against payload + this context so
+// authors can gate fan-out on baggage already claimed upstream. Nil means
+// today's behavior — predicates see only the immediate event payload.
 type Request struct {
 	SourcePlugin             string
 	SourceJobID              string
@@ -33,6 +38,7 @@ type Request struct {
 	SourceDepth              int
 	SourceMaxDepth           int
 	SourceEventID            string
+	SourceContext            map[string]any
 	Event                    protocol.Event
 }
 
@@ -56,8 +62,11 @@ type Engine interface {
 	Next(ctx context.Context, req Request) ([]Dispatch, error)
 	// NextHook resolves hook pipeline dispatches for a lifecycle signal on a plugin.
 	// Hook pipelines declared with on-hook: are matched by signal name.
-	// plugin may be empty to match all hook pipelines for a signal.
-	NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error)
+	// plugin may be empty when no source plugin is known; routes that declare
+	// from_plugin: never match in that case.
+	// sourceContext is the upstream job's accumulated durable context, supplied
+	// to entry-route trigger predicates as Scope.Context.
+	NextHook(ctx context.Context, plugin, signal string, payload map[string]any, sourceContext map[string]any) ([]Dispatch, error)
 	// GetPipelineByTrigger returns the first pipeline matched by a trigger event.
 	GetPipelineByTrigger(trigger string) *PipelineInfo
 	// GetPipelineByName returns a pipeline by its unique name.

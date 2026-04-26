@@ -888,6 +888,7 @@ func (d *Dispatcher) routeEventsWithOptions(
 	rootContextIDs := make(map[string]string)
 	var sourcePipeline, sourceStepID, sourcePipelineInstanceID string
 	var sourceDepth, sourceMaxDepth int
+	var sourceContextScope map[string]any
 	if d.contexts != nil && job.EventContextID != nil {
 		currentCtx, err := d.contexts.Get(ctx, *job.EventContextID)
 		if err != nil {
@@ -898,6 +899,13 @@ func (d *Dispatcher) routeEventsWithOptions(
 		sourcePipelineInstanceID = state.PipelineInstanceIDFromAccumulated(currentCtx.AccumulatedJSON)
 		sourceDepth = state.RouteDepthFromAccumulated(currentCtx.AccumulatedJSON)
 		sourceMaxDepth = state.RouteMaxDepthFromAccumulated(currentCtx.AccumulatedJSON)
+		if len(currentCtx.AccumulatedJSON) > 0 {
+			scope := make(map[string]any)
+			if err := json.Unmarshal(currentCtx.AccumulatedJSON, &scope); err != nil {
+				return fmt.Errorf("decode source context accumulated json: %w", err)
+			}
+			sourceContextScope = scope
+		}
 	}
 
 	for i := range events {
@@ -922,6 +930,7 @@ func (d *Dispatcher) routeEventsWithOptions(
 			SourceDepth:              sourceDepth,
 			SourceMaxDepth:           sourceMaxDepth,
 			SourceEventID:            ev.EventID,
+			SourceContext:            sourceContextScope,
 			Event:                    ev,
 		}
 
@@ -1694,7 +1703,12 @@ func (d *Dispatcher) maybeFireHooks(ctx context.Context, job *queue.Job, signal 
 	if d.router == nil {
 		return
 	}
-	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload)
+	// maybeFireHooks short-circuits when job.EventContextID != nil, so by the
+	// time we're here the upstream job has no accumulated durable context.
+	// Hook entry-route predicates therefore see Scope.Context as nil today.
+	// The plumbing is in place for future architectures that expose context
+	// at hook time.
+	dispatches, err := d.router.NextHook(ctx, job.Plugin, signal, payload, nil)
 	if err != nil {
 		d.logger.Error("hook routing error", "plugin", job.Plugin, "signal", signal, "error", err)
 		return

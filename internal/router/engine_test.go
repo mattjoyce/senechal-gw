@@ -316,7 +316,7 @@ func TestRouterNextHookDispatch(t *testing.T) {
 	r := New(set, nil)
 
 	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload, nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestRouterNextHookUnknownSignalReturnsEmpty(t *testing.T) {
 	}
 
 	r := New(set, nil)
-	out, err := r.NextHook(context.Background(), "", "job.failed", nil)
+	out, err := r.NextHook(context.Background(), "", "job.failed", nil, nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestRouterNextHookMultiplePipelines(t *testing.T) {
 	}
 
 	r := New(set, nil)
-	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil)
+	out, err := r.NextHook(context.Background(), "any_plugin", "job.completed", nil, nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -444,7 +444,7 @@ func TestRouterNextHookExpandsCalledPipeline(t *testing.T) {
 	r := New(set, nil)
 
 	payload := map[string]any{"plugin": "claude_harvest", "status": "succeeded"}
-	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload)
+	out, err := r.NextHook(context.Background(), "claude_harvest", "job.completed", payload, nil)
 	if err != nil {
 		t.Fatalf("NextHook: %v", err)
 	}
@@ -648,7 +648,7 @@ func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
 	r := New(set, nil)
 
 	out, err := r.NextHook(context.Background(), "check_youtube", "job.failed",
-		map[string]any{"plugin": "check_youtube"})
+		map[string]any{"plugin": "check_youtube"}, nil)
 	if err != nil {
 		t.Fatalf("NextHook (false): %v", err)
 	}
@@ -657,7 +657,7 @@ func TestRouterNextHookSkipsWhenIfFalse(t *testing.T) {
 	}
 
 	out, err = r.NextHook(context.Background(), "fabric", "job.failed",
-		map[string]any{"plugin": "fabric"})
+		map[string]any{"plugin": "fabric"}, nil)
 	if err != nil {
 		t.Fatalf("NextHook (true): %v", err)
 	}

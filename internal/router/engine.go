@@ -145,8 +145,16 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 		pipelineInstanceIDs := make(map[string]string, len(routes))
 		r.logger.Debug("matched root trigger pipelines", "event_type", eventType, "count", len(routes))
 		for _, route := range routes {
+			if !sourcePluginMatches(route.Source.SourcePlugin, req.SourcePlugin) {
+				r.logger.Debug("trigger from_plugin skipped pipeline",
+					"pipeline", route.Pipeline,
+					"event_type", eventType,
+					"want_source_plugin", route.Source.SourcePlugin,
+					"got_source_plugin", req.SourcePlugin)
+				continue
+			}
 			if route.Source.If != nil {
-				ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: req.Event.Payload})
+				ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: req.Event.Payload, Context: req.SourceContext})
 				if err != nil {
 					return nil, fmt.Errorf("pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
 				}
@@ -182,7 +190,11 @@ func (r *Router) Next(ctx context.Context, req Request) ([]Dispatch, error) {
 
 // NextHook resolves hook pipeline dispatches for a lifecycle signal on a plugin.
 // Dispatches are root-level (no pipeline/step context) so hook jobs run independently.
-func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any) ([]Dispatch, error) {
+//
+// sourceContext is the upstream job's accumulated durable context, when available.
+// Entry-route predicates evaluate against payload + sourceContext so authors can
+// gate hook fan-out on baggage already claimed upstream.
+func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload map[string]any, sourceContext map[string]any) ([]Dispatch, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -205,8 +217,16 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 
 	var out []Dispatch
 	for _, route := range routes {
+		if !sourcePluginMatches(route.Source.SourcePlugin, plugin) {
+			r.logger.Debug("hook from_plugin skipped pipeline",
+				"pipeline", route.Pipeline,
+				"signal", signal,
+				"want_source_plugin", route.Source.SourcePlugin,
+				"got_source_plugin", plugin)
+			continue
+		}
 		if route.Source.If != nil {
-			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload})
+			ok, err := conditions.Eval(route.Source.If, conditions.Scope{Payload: payload, Context: sourceContext})
 			if err != nil {
 				return nil, fmt.Errorf("hook pipeline %q: evaluate trigger if: %w", route.Pipeline, err)
 			}
@@ -219,7 +239,7 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 			}
 		}
 		r.logger.Info("triggering hook pipeline", "name", route.Pipeline, "signal", signal, "source_plugin", plugin)
-		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev}, true)
+		dispatches, err := r.resolveCompiledRoute(route, Request{Event: ev, SourcePlugin: plugin, SourceContext: sourceContext}, true)
 		if err != nil {
 			return nil, err
 		}
@@ -231,6 +251,20 @@ func (r *Router) NextHook(ctx context.Context, plugin, signal string, payload ma
 	}
 
 	return dedupeDispatches(out), nil
+}
+
+// sourcePluginMatches returns true when the route either has no from_plugin
+// selector or the selector matches the request's source plugin.
+//
+// An empty have when the selector is set never matches — the route's selector
+// is a positive assertion. Trim spaces on both sides so YAML quoting noise does
+// not silently mismatch.
+func sourcePluginMatches(want, have string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return true
+	}
+	return want == strings.TrimSpace(have)
 }
 
 func (r *Router) resolveCompiledRoute(route dsl.CompiledRoute, req Request, rootHook bool) ([]Dispatch, error) {
