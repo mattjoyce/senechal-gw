@@ -105,9 +105,19 @@ regressions.
 
 ---
 
+## Who is this project for?
+
+Ductile's documentation and software surfaces are designed against eight
+reader profiles defined in [`docs/AUDIENCES.md`](docs/AUDIENCES.md). If
+you're contributing here you're most likely cell #1 (first-time contributor)
+or cell #2 (maintainer). When proposing or reviewing changes to docs or
+affordances, cite the cells you are serving — it makes scope explicit and
+review precise.
+
 ## Getting help
 
 - Architecture and design questions: `docs/ARCHITECTURE.md`.
 - "How do I write a plugin?": `docs/PLUGIN_DEVELOPMENT.md`.
 - "How do I run / operate Ductile?": `docs/OPERATOR_GUIDE.md`.
+- "Which doc is meant for me?": `docs/AUDIENCES.md`.
 - Anything else: open an issue with `bd`.

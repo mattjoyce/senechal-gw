@@ -308,6 +308,7 @@ At handoff, summarise:
 - `docs/PLUGIN_DEVELOPMENT.md` — plugin authoring guide.
 - `docs/OPERATOR_GUIDE.md` — day-to-day operations.
 - `docs/TESTING.md` — testing workflows in detail.
+- `docs/AUDIENCES.md` — the eight reader profiles this project serves; cite cells when proposing or reviewing doc and affordance changes.
 - `CONTRIBUTING.md` — build, test, and PR mechanics for new contributors.
 
 A Claude Code skill for operating Ductile lives in `skills/ductile/` and can
