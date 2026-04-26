@@ -18,7 +18,7 @@
 - Mixed max-core run (100 jobs) successful
 - Mini soak (5 min) successful: 450/450, zero retries/errors
 - Benchmark report: `docs/CONCURRENCY_BENCH_2026-03-04.md`
-- Raw artifacts: `stress-test/artifacts/`
+- Raw artifacts: `test/stress/artifacts/`
 
 ## Schemas merged to `main`
 - `schemas/config.schema.json`
