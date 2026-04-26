@@ -245,6 +245,20 @@ type JobSummary struct {
 	Attempt     int
 }
 
+// SchedulerActivePoll is a diagnostic projection of a scheduler-submitted
+// poll job currently in queued or running status. Surfaced by the
+// `ductile system scheduler` command so an operator can answer "what does
+// the scheduler think is running right now?" against the canonical store.
+type SchedulerActivePoll struct {
+	JobID     string
+	Plugin    string
+	DedupeKey *string
+	Status    Status
+	Attempt   int
+	CreatedAt time.Time
+	StartedAt *time.Time
+}
+
 // QueueMetrics provides high-frequency state metrics for the queue.
 type QueueMetrics struct {
 	QueueDepth   int          `json:"queue_depth"`

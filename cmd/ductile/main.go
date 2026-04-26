@@ -258,6 +258,7 @@ System Commands:
   system start      Start the integration gateway in foreground
   system status     Show global gateway health
   system plugin-facts Show recent append-only plugin facts
+  system scheduler  Show scheduler-submitted polls currently in flight
   system reset      Reset a plugin/connector circuit breaker
   system reload     Reload configuration in a running gateway
   system watch      Real-time diagnostic monitoring TUI
@@ -347,6 +348,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemBreaker(actionArgs)
+	case "scheduler":
+		if hasHelpFlag(actionArgs) {
+			printSystemSchedulerHelp()
+			return 0
+		}
+		return runSystemScheduler(actionArgs)
 	case "reload":
 		if hasHelpFlag(actionArgs) {
 			printSystemReloadHelp()
@@ -985,7 +992,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, reset, reload, watch, skills")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, scheduler, reset, reload, watch, skills")
 }
 
 func printConfigNounHelp(w *os.File) {
@@ -1025,6 +1032,13 @@ func printSystemResetHelp() {
 func printSystemBreakerHelp() {
 	fmt.Println("Usage: ductile system breaker <plugin> [--command COMMAND] [--config PATH] [--json] [--limit N]")
 	fmt.Println("Show current circuit breaker state and recent transition history.")
+}
+
+func printSystemSchedulerHelp() {
+	fmt.Println("Usage: ductile system scheduler [--config PATH] [--json]")
+	fmt.Println("Show scheduler-submitted poll jobs currently queued or running.")
+	fmt.Println("Reads job_queue, the canonical store the scheduler consults to")
+	fmt.Println("decide whether a plugin is already polling.")
 }
 
 func printSystemPluginFactsHelp() {
@@ -1281,6 +1295,130 @@ func renderSystemBreakerHuman(report systemBreakerReport) {
 		}
 		fmt.Printf("- %s %s -> %s reason=%s failure_count=%d%s\n",
 			transition.CreatedAt, from, transition.ToState, transition.Reason, transition.FailureCount, job)
+	}
+}
+
+type systemSchedulerActivePoll struct {
+	JobID     string  `json:"job_id"`
+	Plugin    string  `json:"plugin"`
+	DedupeKey *string `json:"dedupe_key,omitempty"`
+	Status    string  `json:"status"`
+	Attempt   int     `json:"attempt"`
+	CreatedAt string  `json:"created_at"`
+	StartedAt *string `json:"started_at,omitempty"`
+}
+
+type systemSchedulerReport struct {
+	ServiceName string                      `json:"service_name"`
+	Count       int                         `json:"count"`
+	ActivePolls []systemSchedulerActivePoll `json:"active_polls"`
+}
+
+func runSystemScheduler(actionArgs []string) int {
+	fs := flag.NewFlagSet("scheduler", flag.ContinueOnError)
+	configPath := fs.String("config", "", "Path to configuration file or directory")
+	jsonOut := fs.Bool("json", false, "Output scheduler report as JSON")
+	if err := fs.Parse(actionArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		return 1
+	}
+
+	if fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "Usage: ductile system scheduler [--config PATH] [--json]")
+		return 1
+	}
+
+	if *configPath == "" {
+		discovered, err := config.DiscoverConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to discover config: %v\n", err)
+			return 1
+		}
+		*configPath = discovered
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		return 1
+	}
+	submittedBy := strings.TrimSpace(cfg.Service.Name)
+	if submittedBy == "" {
+		fmt.Fprintln(os.Stderr, "service.name is empty; cannot identify scheduler-submitted jobs")
+		return 1
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), cfg.State.Path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	q := queue.New(db)
+	polls, err := q.ListSchedulerActivePolls(context.Background(), submittedBy)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to list scheduler active polls: %v\n", err)
+		return 1
+	}
+
+	report := buildSystemSchedulerReport(submittedBy, polls)
+	if *jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to render JSON scheduler report: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(data))
+		return 0
+	}
+	renderSystemSchedulerHuman(report)
+	return 0
+}
+
+func buildSystemSchedulerReport(submittedBy string, polls []*queue.SchedulerActivePoll) systemSchedulerReport {
+	report := systemSchedulerReport{
+		ServiceName: submittedBy,
+		Count:       len(polls),
+		ActivePolls: make([]systemSchedulerActivePoll, 0, len(polls)),
+	}
+	for _, poll := range polls {
+		row := systemSchedulerActivePoll{
+			JobID:     poll.JobID,
+			Plugin:    poll.Plugin,
+			DedupeKey: poll.DedupeKey,
+			Status:    string(poll.Status),
+			Attempt:   poll.Attempt,
+			CreatedAt: poll.CreatedAt.Format(time.RFC3339Nano),
+		}
+		if poll.StartedAt != nil {
+			startedAt := poll.StartedAt.Format(time.RFC3339Nano)
+			row.StartedAt = &startedAt
+		}
+		report.ActivePolls = append(report.ActivePolls, row)
+	}
+	return report
+}
+
+func renderSystemSchedulerHuman(report systemSchedulerReport) {
+	fmt.Printf("Scheduler: %s\n", report.ServiceName)
+	fmt.Printf("Active polls: %d\n", report.Count)
+	if report.Count == 0 {
+		fmt.Println("(none)")
+		return
+	}
+	fmt.Println("")
+	for _, poll := range report.ActivePolls {
+		started := "-"
+		if poll.StartedAt != nil {
+			started = *poll.StartedAt
+		}
+		dedupe := "-"
+		if poll.DedupeKey != nil {
+			dedupe = *poll.DedupeKey
+		}
+		fmt.Printf("- plugin=%s status=%s attempt=%d created=%s started=%s job=%s dedupe=%s\n",
+			poll.Plugin, poll.Status, poll.Attempt, poll.CreatedAt, started, poll.JobID, dedupe)
 	}
 }
 

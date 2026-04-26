@@ -225,6 +225,67 @@ func (q *Queue) CountOutstandingPollJobs(ctx context.Context, plugin string) (in
 	return q.CountOutstandingJobs(ctx, plugin, "poll")
 }
 
+// ListSchedulerActivePolls returns scheduler-submitted poll jobs currently
+// in queued or running status, ordered oldest-first. Used by the system
+// scheduler diagnostic to surface what the scheduler currently thinks is in
+// flight, against the canonical store.
+func (q *Queue) ListSchedulerActivePolls(ctx context.Context, submittedBy string) ([]*SchedulerActivePoll, error) {
+	if submittedBy == "" {
+		return nil, fmt.Errorf("submitted_by is empty")
+	}
+
+	rows, err := q.db.QueryContext(ctx, `
+SELECT id, plugin, dedupe_key, status, attempt, created_at, started_at
+FROM job_queue
+WHERE command = ? AND submitted_by = ? AND status IN (?, ?)
+ORDER BY created_at ASC, rowid ASC;
+`, "poll", submittedBy, StatusQueued, StatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list scheduler active polls: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			q.logger.Warn("close rows", "error", cerr)
+		}
+	}()
+
+	var out []*SchedulerActivePoll
+	for rows.Next() {
+		var (
+			poll       SchedulerActivePoll
+			dedupeKey  sql.NullString
+			statusS    string
+			createdAtS string
+			startedAtS sql.NullString
+		)
+		if err := rows.Scan(&poll.JobID, &poll.Plugin, &dedupeKey, &statusS, &poll.Attempt, &createdAtS, &startedAtS); err != nil {
+			return nil, fmt.Errorf("scan scheduler active poll: %w", err)
+		}
+		poll.Status = Status(statusS)
+		createdAt, err := time.Parse(time.RFC3339Nano, createdAtS)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		poll.CreatedAt = createdAt
+		if startedAtS.Valid {
+			t, err := time.Parse(time.RFC3339Nano, startedAtS.String)
+			if err != nil {
+				return nil, fmt.Errorf("parse started_at: %w", err)
+			}
+			poll.StartedAt = &t
+		}
+		if dedupeKey.Valid {
+			key := dedupeKey.String
+			poll.DedupeKey = &key
+		}
+		out = append(out, &poll)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate scheduler active polls: %w", err)
+	}
+	return out, nil
+}
+
 // CountOutstandingJobsBySubmitter returns queued+running jobs for a plugin
 // command, restricted to a specific submitter. The scheduler uses this so
 // externally-submitted jobs (CLI/webhook/router) do not consume the
