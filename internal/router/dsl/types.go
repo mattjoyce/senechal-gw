@@ -16,12 +16,14 @@ type FileSpec struct {
 
 // PipelineSpec defines a single pipeline entry in YAML.
 type PipelineSpec struct {
-	Name          string        `yaml:"name"`
-	On            string        `yaml:"on"`
-	OnHook        string        `yaml:"on-hook,omitempty"`
-	Steps         []StepSpec    `yaml:"steps"`
-	ExecutionMode string        `yaml:"execution_mode,omitempty"`
-	Timeout       time.Duration `yaml:"timeout,omitempty"`
+	Name          string                `yaml:"name"`
+	On            string                `yaml:"on"`
+	OnHook        string                `yaml:"on-hook,omitempty"`
+	If            *conditions.Condition `yaml:"if,omitempty"`
+	MaxDepth      *int                  `yaml:"max_depth,omitempty"`
+	Steps         []StepSpec            `yaml:"steps"`
+	ExecutionMode string                `yaml:"execution_mode,omitempty"`
+	Timeout       time.Duration         `yaml:"timeout,omitempty"`
 }
 
 // StepSpec is one DSL step. Exactly one execution field must be set:
@@ -187,6 +189,7 @@ type CompiledRouteSource struct {
 	HookSignal string
 	EventType  string
 	DepthLT    int
+	If         *conditions.Condition
 }
 
 // CompiledRouteDestination is the dispatch side of one compiled orchestration rule.
@@ -215,6 +218,8 @@ type Pipeline struct {
 	IsHook          bool // true when triggered by on-hook: (lifecycle signal) rather than on: (plugin event)
 	ExecutionMode   string
 	Timeout         time.Duration
+	If              *conditions.Condition // optional pipeline-level trigger predicate (entry routes only)
+	AuthorMaxDepth  *int                  // user-set max_depth: overrides MaxRouteDepth when non-nil; *0 means unlimited
 	Nodes           map[string]Node
 	Edges           []Edge
 	EntryNodeIDs    []string
