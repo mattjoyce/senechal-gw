@@ -28,7 +28,7 @@ var forbiddenPhrases = []string{
 // resolved relative to the repo root.
 var scanRoots = []string{
 	"docs",
-	"CLAUDE.md",
+	"AGENTS.md",
 	"skills/ductile",
 }
 

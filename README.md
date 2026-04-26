@@ -121,6 +121,11 @@ go build -o ductile ./cmd/ductile
 -   [**Database Reference**](docs/DATABASE.md) — Schemas and useful SQL queries.
 -   [**Plugin Development**](docs/PLUGIN_DEVELOPMENT.md) — Build your own connectors.
 
+## Contributing
+
+-   [**AGENTS.md**](AGENTS.md) — Contributor contract: design lenses, vocabulary, Go quality bar. Read first.
+-   [**CONTRIBUTING.md**](CONTRIBUTING.md) — Build, test, and PR mechanics.
+
 ---
 
 ## License
