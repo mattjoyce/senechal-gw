@@ -38,6 +38,11 @@ func CompileSpecs(specs []PipelineSpec) (*Set, error) {
 	if err := assignPipelineMaxRouteDepths(out.Pipelines); err != nil {
 		return nil, err
 	}
+	for _, pipeline := range out.Pipelines {
+		if pipeline.AuthorMaxDepth != nil {
+			pipeline.MaxRouteDepth = *pipeline.AuthorMaxDepth
+		}
+	}
 	for name, pipeline := range out.Pipelines {
 		pipeline.CompiledRoutes = BuildCompiledRoutes(pipeline)
 		fingerprint, err := fingerprintPipeline(pipeline)
@@ -78,6 +83,20 @@ func compilePipeline(spec PipelineSpec) (*Pipeline, error) {
 		ExecutionMode: spec.ExecutionMode,
 		Timeout:       spec.Timeout,
 		Nodes:         make(map[string]Node),
+	}
+	if spec.If != nil {
+		if err := conditions.Validate(spec.If); err != nil {
+			return nil, fmt.Errorf("if: %w", err)
+		}
+		clone := *spec.If
+		pipeline.If = &clone
+	}
+	if spec.MaxDepth != nil {
+		if *spec.MaxDepth < 0 {
+			return nil, fmt.Errorf("max_depth must be >= 0 (0 means unlimited)")
+		}
+		v := *spec.MaxDepth
+		pipeline.AuthorMaxDepth = &v
 	}
 	if pipeline.ExecutionMode == "" {
 		pipeline.ExecutionMode = "async"
@@ -374,6 +393,10 @@ func BuildCompiledRoutes(p *Pipeline) []CompiledRoute {
 			source.HookSignal = p.Trigger
 		} else {
 			source.Trigger = p.Trigger
+		}
+		if p.If != nil {
+			clone := *p.If
+			source.If = &clone
 		}
 		routes = append(routes, CompiledRoute{
 			ID:          "entry:" + entryID,
