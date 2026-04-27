@@ -132,9 +132,8 @@ func TestSysExecPlugin_LogIncludesUpstreamPipelinePlugin(t *testing.T) {
 			"ductile_pipeline": "notify-discord-on-transcript",
 			"ductile_plugin":   "sys_exec",
 		},
-		WorkspaceDir: t.TempDir(),
-		Event:        event,
-		DeadlineAt:   time.Now().Add(30 * time.Second).UTC(),
+		Event:      event,
+		DeadlineAt: time.Now().Add(30 * time.Second).UTC(),
 	}
 
 	var stdin bytes.Buffer
@@ -194,14 +193,13 @@ func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[st
 	event := &protocol.Event{Type: "test.event", Payload: payload}
 
 	req := &protocol.Request{
-		Protocol:     2,
-		JobID:        "sys-exec-test-job",
-		Command:      command,
-		Config:       cfg,
-		State:        map[string]any{},
-		WorkspaceDir: t.TempDir(),
-		Event:        event,
-		DeadlineAt:   time.Now().Add(30 * time.Second).UTC(),
+		Protocol:   2,
+		JobID:      "sys-exec-test-job",
+		Command:    command,
+		Config:     cfg,
+		State:      map[string]any{},
+		Event:      event,
+		DeadlineAt: time.Now().Add(30 * time.Second).UTC(),
 	}
 
 	var stdin bytes.Buffer

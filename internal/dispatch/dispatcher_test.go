@@ -1200,12 +1200,7 @@ func TestDispatcher_RoutesTwoHopChainWithContextAndWorkspace(t *testing.T) {
 	contextStore := state.NewContextStore(db)
 
 	scriptA := `#!/bin/bash
-payload="$(cat)"
-workspace_dir=$(echo "$payload" | sed -n 's/.*"workspace_dir":"\([^"]*\)".*/\1/p')
-if [ -n "$workspace_dir" ]; then
-  mkdir -p "$workspace_dir"
-  echo "artifact-from-a" > "$workspace_dir/artifact.txt"
-fi
+cat >/dev/null
 echo '{"status":"ok","result":"chain start","events":[{"type":"chain.start","dedupe_key":"chain:start:hello","payload":{"origin_channel_id":"chan-1","message":"hello"}}]}'
 `
 	scriptB := `#!/bin/bash
@@ -1333,15 +1328,6 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 	}
 	if accumulated["origin_channel_id"] != "chan-1" {
 		t.Fatalf("origin_channel_id = %#v, want %q", accumulated["origin_channel_id"], "chan-1")
-	}
-
-	childArtifact := filepath.Join(workspaceBaseDir, childJob.ID[:2], childJob.ID, "artifact.txt")
-	b, err := os.ReadFile(childArtifact)
-	if err != nil {
-		t.Fatalf("read child artifact: %v", err)
-	}
-	if string(b) != "artifact-from-a\n" {
-		t.Fatalf("child artifact content = %q, want %q", string(b), "artifact-from-a\n")
 	}
 
 	disp.executeJob(ctx, childJob)

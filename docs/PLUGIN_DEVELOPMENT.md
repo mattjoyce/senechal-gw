@@ -49,7 +49,6 @@ through the request envelope's `state` field on the next invocation.
   "config": {},
   "state": {},
   "context": {},
-  "workspace_dir": "/path/to/workspace",
   "event": {},
   "deadline_at": "ISO8601"
 }
@@ -63,7 +62,6 @@ through the request envelope's `state` field on the next invocation.
 | `config` | The static plugin config from the operator's YAML, with `${ENV}` interpolated. Read-only. |
 | `state` | The plugin's current compatibility-view row — i.e. the latest fact's snapshot for plugins that declare `fact_outputs`, or the protocol-v2 write-through `plugin_state` row for plugins that have not yet migrated. Treat it as *"what I knew last time."* |
 | `context` | Shared baggage carried across the pipeline chain. Operator-declared, immutable in the receiving plugin. |
-| `workspace_dir` | Per-job filesystem directory for ephemeral artefacts. Inherited across pipeline steps via hardlink-cloning. |
 | `event` | Present only for `handle`. The triggering event envelope from upstream. |
 | `deadline_at` | Informational ISO8601 timestamp. Plugins may abandon long work early; core enforces the real deadline externally. |
 

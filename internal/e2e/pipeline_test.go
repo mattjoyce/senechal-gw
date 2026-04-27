@@ -185,35 +185,21 @@ echo '{"status":"ok","result":"triggered","events":[{"type":"test.triggered","ev
 `
 	createPlugin(t, pluginsDir, "trigger", triggerScript)
 
-	// Hop 2: Processor (Reads baggage, writes an artifact)
+	// Hop 2: Processor (emits a downstream event)
 	processScript := `#!/bin/bash
-input=$(cat)
-ws_dir=$(echo "$input" | sed -n 's/.*"workspace_dir":"\([^"]*\)".*/\1/p')
-
-if [ -n "$ws_dir" ]; then
-  mkdir -p "$ws_dir"
-  echo "processed-content" > "$ws_dir/result.txt"
-fi
-
+cat >/dev/null
 echo '{"status":"ok","result":"processed","events":[{"type":"test.processed","payload":{"status":"complete"}}]}'
 `
 	createPlugin(t, pluginsDir, "processor", processScript)
 
-	// Hop 3: Notifier (Verifies original baggage AND the artifact)
+	// Hop 3: Notifier (verifies merged baggage)
 	notifyScript := `#!/usr/bin/env python3
-import sys, json, os
+import sys, json
 try:
     req = json.load(sys.stdin)
     payload = req.get("event", {}).get("payload", {})
-    context = req.get("context", {})
-    ws_dir = req.get("workspace_dir", "")
 
-    # 1. Check artifact
-    if not os.path.exists(os.path.join(ws_dir, "result.txt")):
-        print(json.dumps({"status":"error","error":"missing artifact"}))
-        sys.exit(0)
-
-    # 2. Check CORE MERGE (Baggage should be in payload)
+    # Check CORE MERGE (baggage should be in payload)
     if payload.get("origin_user") != "matt":
         print(json.dumps({"status":"error","error":f"baggage not merged into payload: {payload}"}))
         sys.exit(0)
