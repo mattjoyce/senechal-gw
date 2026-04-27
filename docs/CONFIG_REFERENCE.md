@@ -112,15 +112,14 @@ api:
 
 state:
   path: ./data/state.db
-
-workspace:
-  ttl: 168h          # How long to retain job workspace directories (default: 168h / 7 days)
-  janitor_interval: 1h  # How often the janitor sweeps for stale workspaces (default: 1h)
 ```
 
 Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.
 
-`workspace.ttl` controls how long per-job workspace directories are kept on disk after the job completes. The janitor runs on a background tick at the configured interval and removes directories older than the TTL. If the `workspace:` section is omitted, both values default as shown above.
+> **Note:** As of Sprint 18 the core no longer provisions per-job
+> filesystem workspaces; the `workspace:` config section has been
+> removed. Plugins that need a scratch path manage it themselves — see
+> `docs/PLUGIN_DEVELOPMENT.md` §9.
 
 `plugin_roots` is the multi-root setting.
 

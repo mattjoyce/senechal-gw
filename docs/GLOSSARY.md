@@ -115,9 +115,12 @@ An HMAC-verified HTTP endpoint that accepts external events and injects them int
 
 A machine-readable description of a capability (either an atomic plugin command or an orchestrated pipeline), exported via `/skills` or `/openapi.json`.
 
-## Workspace
+## Workspace (historical)
 
-A dedicated, ephemeral directory on the filesystem created for each job. Used for storing artifacts like downloads or generated reports.
+Formerly: a per-job, hard-link-cloned directory the core provisioned
+for each plugin invocation. Removed in Sprint 18; the core no longer
+touches the filesystem on a job's behalf. Plugins that need a scratch
+path manage it themselves.
 
 ## Execution Ledger
 

@@ -102,7 +102,6 @@ ductile job inspect <job-id>
 **What to look for in `job inspect`:**
 - **Hops** — which pipeline step triggered this job and what baggage it carried
 - **Baggage** — the payload passed down the chain; missing keys here often explain `missing field` errors
-- **Workspace** — path to artifacts written by this job (if any)
 
 ---
 

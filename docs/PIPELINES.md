@@ -41,7 +41,7 @@ Both `if:` blocks share the same predicate engine — atomic
 
 | Surface | Evaluated when | Scope | Effect on false |
 |---|---|---|---|
-| Pipeline-level `if:` | Trigger/hook name has matched, before any dispatch | `payload`, `context` (when available) | No dispatch at all — no workspace, no `core.switch`, no plugin spawn |
+| Pipeline-level `if:` | Trigger/hook name has matched, before any dispatch | `payload`, `context` (when available) | No dispatch at all — no `core.switch`, no plugin spawn |
 | Step-level `if:` (§3.5) | At each step, after upstream steps run | `payload`, `context`, `config` | Step bypassed via internal `core.switch`; downstream steps still run |
 
 Use pipeline-level `if:` to **suppress dispatch** when an event isn't
@@ -183,7 +183,7 @@ steps:
 ```
 
 ### 3.2 `call` (Invoke Pipeline)
-Calls another pipeline by name, inheriting the current baggage and workspace. This promotes logic reuse.
+Calls another pipeline by name, inheriting the current baggage. This promotes logic reuse.
 
 ```yaml
 steps:
@@ -201,7 +201,7 @@ steps:
 ```
 
 ### 3.4 `split` (Parallel Fan-out)
-Executes multiple steps or sub-pipelines in parallel. Ductile ensures each branch has its own isolated **Workspace** (via hard-links) while sharing the same **Baggage**.
+Executes multiple steps or sub-pipelines in parallel. Branches share the same **Baggage** but otherwise execute independently. Plugins that need per-branch filesystem isolation manage it themselves (e.g. via `mktemp -d`).
 
 ```yaml
 steps:
@@ -390,10 +390,12 @@ In this example, `status.current` is durable. `message` is just the request sent
 
 ## 4. How Data Flows
 
-### 4.1 The Data Plane (Workspaces)
-- Every job gets a unique folder on disk.
-- If Step A creates `video.mp4`, Step B can read it from its own workspace.
-- When a `split` occurs, both branches get a copy of the parent's files (zero-copy clone).
+### 4.1 Filesystem (Plugin-managed)
+- Ductile core does not provision a workspace directory for jobs.
+- If Step A needs to hand a file to Step B, the producing plugin
+  writes to a path it chooses (e.g. under `~/.cache/<plugin>/` or a
+  `mktemp -d`) and the path is propagated as baggage via `with:`.
+- See `docs/PLUGIN_DEVELOPMENT.md` §9 for plugin-side guidance.
 
 ### 4.2 The Control Plane (Baggage)
 - Metadata (JSON) is stored in the `event_context` database table.
@@ -435,31 +437,21 @@ Before spawning a plugin process, the dispatcher runs a **preflight phase** for 
 
 ### 6.1 Preflight Steps
 
-Preflight executes three operations in order:
+Preflight executes two operations in order:
 
 1. **Load request context** — Fetches accumulated baggage from the `event_context` table (all upstream metadata for this job's execution tree).
 
-2. **Ensure workspace** — Creates or inherits a workspace directory for the job. If a parent job exists, the workspace is cloned from it (zero-copy hard-link clone). If no parent exists, a fresh workspace is created. This runs *before* condition evaluation so that skipped steps still have a valid workspace for downstream inheritance.
-
-3. **Prepare for execution** — User-defined `uses` steps may apply `with` remaps after the governance payload/context merge. Internal `core.switch` jobs evaluate the compiled condition and emit `ductile.switch.true` or `ductile.switch.false`.
+2. **Prepare for execution** — User-defined `uses` steps may apply `with` remaps after the governance payload/context merge. Internal `core.switch` jobs evaluate the compiled condition and emit `ductile.switch.true` or `ductile.switch.false`.
 
 ### 6.2 Preflight Outcomes
 
 | Outcome | When | Effect |
 |---------|------|--------|
-| **run** | Context and workspace are ready | Plugin process or internal builtin executes normally |
+| **run** | Context loaded successfully | Plugin process or internal builtin executes normally |
 | **skip** | Reserved for explicit orchestration skip paths | Rare for authored Sprint 6 `if:` pipelines |
-| **fail** | Context load, workspace creation, remap, or builtin evaluation returns an error | Job marked `failed`; no downstream routing |
+| **fail** | Context load, remap, or builtin evaluation returns an error | Job marked `failed`; no downstream routing |
 
-### 6.3 Workspace Inheritance for Conditional Branches
-
-The internal `core.switch` hop gets its own workspace before evaluating the condition. This means:
-
-- A false branch can continue immediately from the switch workspace without spawning the gated plugin.
-- A true branch still gives the gated plugin its own cloned workspace.
-- No data-plane inconsistency: every executed hop in the tree has a workspace, including orchestration-only hops.
-
-### 6.4 Conditional Branch Routing
+### 6.3 Conditional Branch Routing
 
 When a compiled `if:` step is reached, the dispatcher runs the internal `core.switch` job. That job:
 
@@ -469,7 +461,7 @@ When a compiled `if:` step is reached, the dispatcher runs the internal `core.sw
 
 Successor routing still happens before the deciding job is marked terminal, preventing synchronous callers from seeing the tree as complete before all children are enqueued.
 
-### 6.5 Preflight Events
+### 6.4 Preflight Events
 
 The dispatcher emits a `job.preflight` event after preflight completes (or fails), with the following payload:
 
@@ -479,8 +471,7 @@ The dispatcher emits a `job.preflight` event after preflight completes (or fails
   "plugin": "plugin-name",
   "command": "command-name",
   "decision": "run | skip | fail",
-  "reason": "",
-  "workspace_dir": "/path/to/workspace"
+  "reason": ""
 }
 ```
 

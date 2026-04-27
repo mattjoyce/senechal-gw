@@ -142,9 +142,9 @@
       <div class="grid">
         <div class="card"><strong>Payload</strong><p>Small JSON values flow from plugin results into downstream events and step inputs.</p></div>
         <div class="card"><strong>Baggage</strong><p>Execution metadata lives in <code>event_context</code> and follows the whole pipeline. <code>origin_*</code> keys are immutable.</p></div>
-        <div class="card"><strong>Workspace</strong><p>Each job receives a filesystem workspace. Branches inherit files through zero-copy hard-link clones.</p></div>
+        <div class="card"><strong>Filesystem</strong><p>Plugin-managed. The core does not provision per-job workspaces; plugins create scratch (<code>mktemp -d</code>) or cache paths themselves.</p></div>
       </div>
-      <div class="lane"><p><strong>Preflight:</strong> load context, ensure workspace, evaluate <code>if</code>, apply <code>with</code>, then spawn the plugin only when the step should run.</p></div>
+      <div class="lane"><p><strong>Preflight:</strong> load context, evaluate <code>if</code>, apply <code>with</code>, then spawn the plugin only when the step should run.</p></div>
     </section>
 
     <section class="slide" aria-label="Plugin protocol">
@@ -157,7 +157,6 @@
   "config": {},
   "state": {},
   "context": {},
-  "workspace_dir": "/path/to/workspace",
   "event": {},
   "deadline_at": "ISO8601"
 }</code></pre>

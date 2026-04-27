@@ -81,12 +81,23 @@ This is a **personal integration server** processing roughly 50 jobs per day. De
 | Delivery | At-least-once | Plugins own idempotency; core never drops work |
 | Plugin lifecycle | Spawn-per-command | Eliminates daemon management, memory leaks, zombie processes |
 
-### 2.2 Governance Hybrid (The "Control vs. Data Plane")
+### 2.2 Governance Hybrid (The "Control Plane")
 
-Ductile employs a "Governance Hybrid" model to manage state and data across multi-hop plugin chains.
+Ductile employs a "Governance Hybrid" model to manage state across
+multi-hop plugin chains. Filesystem state is the plugin's concern; the
+core is dispatch, routing, and durable state.
 
-*   **Control Plane (Baggage):** Metadata about the execution (e.g., `origin_user_id`, `trace_id`). This data is stored in the `event_context` SQLite ledger. Values become durable only when a pipeline step claims them with `baggage`, and inherited baggage paths are immutable.
-*   **Data Plane (Workspaces):** Large physical artifacts (e.g., audio files, documents). Every job is assigned a unique `workspace_dir` on the filesystem. When a pipeline branches, Ductile performs a **Zero-Copy Clone** (using hardlinks) to isolate workspaces while saving disk space.
+*   **Control Plane (Baggage):** Metadata about the execution (e.g.,
+    `origin_user_id`, `trace_id`). This data is stored in the
+    `event_context` SQLite ledger. Values become durable only when a
+    pipeline step claims them with `baggage`, and inherited baggage
+    paths are immutable.
+*   **No core-managed data plane.** As of Sprint 18 the core does not
+    provision per-job filesystem workspaces. Plugins that need a
+    scratch path (`mktemp -d`) or a persistent cache
+    (`~/.cache/<plugin>/`) manage it themselves; pipelines that need
+    step-to-step file passing wire absolute paths via `with:` baggage.
+    See `docs/PLUGIN_DEVELOPMENT.md` §9 for guidance.
 
 ---
 
@@ -467,7 +478,6 @@ Single JSON object written to plugin's stdin:
   "config": {},
   "state": {},
   "context": {},
-  "workspace_dir": "/path/to/workspace",
   "event": {},
   "deadline_at": "ISO8601"
 }
@@ -476,7 +486,6 @@ Single JSON object written to plugin's stdin:
 - `event` — present only for `handle`.
 - `state` — the plugin's current compatibility-view row (the latest fact's snapshot, or write-through state for plugins not yet declaring `fact_outputs`).
 - `context` — shared metadata (Baggage) carried across the pipeline chain.
-- `workspace_dir` — local filesystem directory for ephemeral artifacts.
 - `deadline_at` — informational. Plugins MAY use it to abandon long-running work early. The core enforces the real deadline externally.
 
 ### 6.2 Response Envelope (plugin → core)
@@ -988,7 +997,7 @@ For the complete configuration specification, including file formats, merge logi
 - **Tiered Integrity:** High-security files (auth/webhooks) require a valid BLAKE3 hash in `.checksums` to start. Operational files (settings/routes) log warnings if hashes are missing or mismatched.
 - **Monolithic Grafting:** At runtime, all included files are merged into a single internal configuration object following strict precedence rules (later entries override earlier ones).
 - **Environment Interpolation:** Secrets are injected via `${VAR}` placeholders, which are interpolated after hash verification but before parsing.
-- **Default Permissions:** Config directories and workspaces are created with `0700`. Config files and lock files default to `0600`; operators may relax permissions explicitly for shared environments.
+- **Default Permissions:** Config directories are created with `0700`. Config files and lock files default to `0600`; operators may relax permissions explicitly for shared environments.
 - **Secret Redaction:** CLI config inspection outputs redact token keys and webhook secrets; secrets are only shown at creation time.
 
 ## 14. Deployment

@@ -53,7 +53,7 @@ ductile config webhook                    # Manage webhooks
 
 ### Job
 ```bash
-ductile job inspect <job_id> [--json]     # Lineage, baggage, workspace artifacts
+ductile job inspect <job_id> [--json]     # Lineage and baggage for a job
 ductile job logs [--json]                 # Query stored job logs
   # Filters: --plugin NAME, --command CMD, --status STATUS, --submitted-by NAME
   #          --from TIME, --to TIME (RFC3339), --query TEXT, --limit N, --include-result
@@ -142,7 +142,7 @@ curl http://localhost:8081/healthz
 
 ## Architecture Summary
 
-- **Governance Hybrid**: Control plane (SQLite `event_context` baggage) + Data plane (filesystem workspaces)
+- **Governance Hybrid**: Control plane (SQLite `event_context` baggage). Filesystem state is plugin-managed; the core does not provision per-job workspaces.
 - **Spawn-per-command**: Each plugin invocation is a fresh process (polyglot: bash, python, go, any executable)
 - **At-least-once**: Jobs survive crashes and are recovered on restart
 - **Immutable audit**: `origin_*` baggage keys can never be overwritten by plugins

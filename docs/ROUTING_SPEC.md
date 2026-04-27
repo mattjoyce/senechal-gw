@@ -2,17 +2,24 @@
 
 **Version:** 1.0 (Gemini Consensus)  
 **Date:** 2026-02-11  
-**Model:** Governance Hybrid (DB + Workspace)
+**Model:** Governance Hybrid (DB-only)
+
+> **Sprint 18 update:** the original spec described a Data Plane
+> consisting of core-managed workspace directories. As of Sprint 18
+> the core no longer provisions per-job workspaces; filesystem state
+> is the plugin's concern. Sections below referring to `workspace_dir`
+> are retained for historical context but no longer describe runtime
+> behaviour.
 
 ---
 
 ## 1. Overview
 
-Ductile uses a **Graph-based Pipeline** model to orchestrate event flow. It separates **Governance** (metadata/context) from **Execution** (artifacts/workspace).
+Ductile uses a **Graph-based Pipeline** model to orchestrate event flow. It separates **Governance** (metadata/context) from **Execution** (plugin-spawned subprocesses).
 
 ### 1.1 Core Components
 *   **Control Plane (DB):** A SQLite ledger (`event_context`) that accumulates metadata ("Baggage") across hops.
-*   **Data Plane (Filesystem):** A job-specific directory (`workspace_dir`) that holds large binary artifacts (audio, images, docs).
+*   **Filesystem (Plugin-managed):** Plugins that need a scratch path or persistent cache create and manage it themselves; the core does not provision a per-job directory.
 *   **Orchestrator (DSL):** A YAML-based Pipeline DSL that supports nesting, branching, and single-root triggers.
 
 ---
@@ -116,16 +123,24 @@ If a step declares no `baggage`, Core creates no new durable context for that ho
 
 ---
 
-## 4. The Data Plane (Workspace & Artifacts)
+## 4. Filesystem (Plugin-managed)
 
-Every job is assigned a unique `workspace_dir` on the filesystem.
+As of Sprint 18 the core does not provision per-job workspace
+directories. The previous "Data Plane" section described a
+hard-linked, janitor-pruned `<workspace_root>/ws/<job_id>` tree; that
+machinery has been removed.
 
-### 4.1 Lifecycle
-1.  **Creation:** The Root job gets a fresh directory: `<workspace_root>/ws/<job_id>`.
-2.  **Cloning (The Branch Mechanic):** When a pipeline `splits` or moves to the next step, the Core **clones** the workspace.
-    *   To save space/time, the Core uses **Hard Links** (`cp -al`).
-    *   This provides **Isolation**: Step B cannot accidentally delete a file needed by Step C in a parallel branch.
-3.  **Retention (The Janitor):** Workspace directories are pruned after 24 hours (configurable).
+Plugins that need filesystem state are responsible for it:
+
+*   **Ephemeral scratch:** `mktemp -d` (or language equivalent),
+    cleaned up on exit.
+*   **Persistent cache:** `~/.cache/ductile-<plugin>/` or a path
+    declared in plugin config and validated at startup.
+*   **Step-to-step file passing:** the producing plugin writes to a
+    path it chooses; the path is propagated as baggage via the
+    pipeline's `with:` remap so the consuming plugin can read it.
+
+See `docs/PLUGIN_DEVELOPMENT.md` §9 for details.
 
 ---
 
@@ -137,7 +152,6 @@ Plugins receive the following via `stdin`:
 {
   "protocol": 2,
   "job_id": "uuid-456",
-  "workspace_dir": "<workspace_root>/ws/job-456/",
   "context": {
     "origin_plugin": "discord",
     "channel_id": "123",
@@ -155,7 +169,7 @@ Plugins receive the following via `stdin`:
 
 ### 5.1 Plugin Responsibilities
 *   **Metadata:** Read durable facts and routing info from `context`.
-*   **Artifacts:** Read/Write files directly in `workspace_dir`.
+*   **Artifacts:** Read/write files at plugin-managed paths (see §4).
 *   **Communication:** Emit event payloads for downstream steps. Payload is per-hop; values become durable only when a pipeline author claims them with `baggage`.
 
 ---
@@ -163,9 +177,9 @@ Plugins receive the following via `stdin`:
 ## 6. Failure & Recovery
 
 ### 6.1 State Persistence
-Because the `event_context` is in SQLite and artifacts are in the `workspace_dir`, a crash is non-destructive.
+Because the `event_context` is in SQLite, a crash is non-destructive for the control plane.
 *   The **LLM Operator** can inspect the `event_context` to see exactly where a pipeline stalled.
-*   The Core can "Replay" a step by creating a new job using the existing `event_context_id` and a cloned `workspace_dir`.
+*   The Core can "Replay" a step by creating a new job using the existing `event_context_id`. Plugin-managed filesystem state is the plugin's concern to recover.
 
 ### 6.2 Cycle Detection
 The Core maintains a `hop_count` in the `event_context`. If a pipeline exceeds 20 hops (or calls itself recursively too deep), the Core kills the chain to prevent infinite loops.
@@ -177,14 +191,14 @@ The Core maintains a `hop_count` in the `event_context`. If a pipeline exceeds 2
 All orchestration-related CLI commands MUST support the following flags to ensure safety and observability:
 
 - **-v, --verbose:** Expose internal DAG resolution, baggage merging logic, and path calculations.
-- **--dry-run:** Preview the next steps of a pipeline without enqueuing jobs or cloning workspaces.
+- **--dry-run:** Preview the next steps of a pipeline without enqueuing jobs.
 
 ### 7.1 LLM Operator Affordances (RFC-004)
 
 The Routing system exposes specific "Admin Utilities" for the LLM:
 *   `job inspect <job_id>`: Returns the full Graph of what happened.
 *   `pipeline visualize <name>`: Returns a Mermaid.js diagram of the DSL.
-*   `pipeline dry-run <step_id>`: Clones the workspace to a `/sandbox/` directory and executes the plugin.
+*   `pipeline dry-run <step_id>`: Executes the plugin in a sandbox; any filesystem isolation is the plugin's responsibility.
 
 ## 8. Branching & Decisions
 

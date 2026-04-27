@@ -53,7 +53,7 @@ Use `?async=true` on the API call to force async behavior on synchronous pipelin
     on: discord.link
     steps:
       - uses: downloader
-      - call: standard-summarization   # Inherits baggage and workspace
+      - call: standard-summarization   # Inherits baggage
 ```
 
 ### Parallel Branching (`split`)
@@ -90,7 +90,6 @@ Plugins receive via stdin:
 {
   "protocol": 2,
   "job_id": "uuid",
-  "workspace_dir": "/tmp/ductile/ws/job-456/",
   "context": {
     "origin_user": "matt",
     "channel_id": "123"
@@ -104,7 +103,7 @@ Plugins receive via stdin:
 
 Plugin rules:
 - Read `context` for baggage (IDs, metadata)
-- Read/write files directly in `workspace_dir`
+- Manage your own filesystem state (see `docs/PLUGIN_DEVELOPMENT.md` §9); the core does not provision a workspace dir
 - Only return **filenames** in JSON payload, never file content
 - `origin_*` context keys are immutable (audit trail)
 
@@ -154,10 +153,11 @@ commands:
 - `origin_*` keys immutable once set
 - Accumulated context passed to every plugin in the chain
 
-**Data Plane** (Filesystem workspaces):
-- Each job gets `/tmp/ductile/ws/<job_id>/`
-- Pipeline branches get **zero-copy clone** (hardlinks) — isolated but space-efficient
-- Workspaces pruned after 24h (configurable)
+**Filesystem** (plugin-managed):
+- The core does not provision a per-job workspace.
+- Plugins create their own scratch (`mktemp -d`) or persistent cache
+  (`~/.cache/<plugin>/`) and propagate paths via `with:` baggage when
+  step-to-step file passing is needed.
 
 ## Safety Features
 
