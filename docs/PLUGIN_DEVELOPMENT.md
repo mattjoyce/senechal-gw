@@ -847,10 +847,31 @@ compatibility-view row.
 
 ---
 
-## 9. Security & Isolation
+## 9. Filesystem & Diagnostic Bundles
 
-- **Allowed paths.** Plugins should only read/write within their provided
-  `workspace_dir` or explicitly configured paths.
+Ductile does not provision a workspace directory for plugins. The core
+is dispatch, state, and routing; filesystem is the plugin's concern.
+
+- **If your plugin needs a scratch path,** create it yourself. For
+  ephemeral work prefer `mktemp -d` (or the language equivalent) and
+  clean up on exit. For persistent caches use `~/.cache/ductile-<plugin>/`
+  or a path declared in your plugin config and validated at startup.
+- **If your plugin needs an archive of its own stdout** (for offline
+  debugging or external log shipping), tee it from inside the run script
+  before writing the response envelope, e.g.
+  `tee -a "$HOME/.cache/myplugin/stdout.log"`. Core does not write
+  subprocess stdout to disk on your behalf; the operationally meaningful
+  fragments are already captured in the database (`job_log`,
+  `plugin_facts`, `event_context`).
+- **Cwd.** Plugin subprocesses inherit the dispatcher's working
+  directory. If your plugin cares where it runs, the run script should
+  `cd` to a path of its own choosing.
+
+## 10. Security & Isolation
+
+- **Allowed paths.** Plugins should only read/write paths they
+  themselves create (per the previous section) or paths explicitly
+  named in their config.
 - **Execution.** Plugins run as the same OS user as the gateway. Use
   filesystem permissions to limit blast radius.
 - **Trust.** Ductile refuses to load plugins with world-writable directories
@@ -858,11 +879,11 @@ compatibility-view row.
 - **No persistent state outside what is declared.** Plugins must not write
   to their own plugin directory at runtime. Anything durable goes through
   `state_updates` (subject to the manifest's `fact_outputs` rule); anything
-  ephemeral goes in `workspace_dir`.
+  ephemeral goes to a plugin-managed scratch path.
 
 ---
 
-## 10. Quick Quality Checklist
+## 11. Quick Quality Checklist
 
 When you finish a new plugin, walk this list before merging:
 

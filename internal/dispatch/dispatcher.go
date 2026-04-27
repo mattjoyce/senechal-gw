@@ -378,7 +378,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	// Spawn plugin and execute
-	resp, respCompat, rawResp, stdoutBytes, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
+	resp, respCompat, rawResp, _, stderr, exitCode, err := d.spawnPlugin(ctx, job.Plugin, plug.Entrypoint, req, timeout, jobLogger)
 
 	// Handle timeout (check if error is context.DeadlineExceeded)
 	if err != nil {
@@ -421,33 +421,12 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		return
 	}
 
-	// recordBlackBox writes terminal job data into the workspace .ductile/ bundle.
-	// Errors are non-fatal — log and continue.
-	recordBlackBox := func(status queue.Status, lastError *string) {
-		meta := BlackBoxMetadata{
-			JobID:       job.ID,
-			Plugin:      job.Plugin,
-			Command:     job.Command,
-			Status:      string(status),
-			Attempt:     job.Attempt,
-			CreatedAt:   job.CreatedAt,
-			StartedAt:   job.StartedAt,
-			CompletedAt: time.Now().UTC(),
-			LastError:   lastError,
-			Context:     requestContext,
-		}
-		if err := writeBlackBox("", stdoutBytes, stderr, meta); err != nil {
-			jobLogger.Warn("black box write failed (non-fatal)", "error", err)
-		}
-	}
-
 	// Apply state updates
 	if len(resp.StateUpdates) > 0 {
 		updatesJSON, err := json.Marshal(resp.StateUpdates)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to marshal state updates: %v", err)
 			jobLogger.Error(errMsg)
-			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
@@ -457,7 +436,6 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to build plugin fact: %v", err)
 			jobLogger.Error(errMsg)
-			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
@@ -465,7 +443,6 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			if _, _, err := d.state.RecordFact(ctx, declaredFact.Fact, declaredFact.CompatibilityView); err != nil {
 				errMsg := fmt.Sprintf("failed to record plugin fact: %v", err)
 				jobLogger.Error(errMsg)
-				recordBlackBox(queue.StatusFailed, &errMsg)
 				d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 				return
 			}
@@ -477,7 +454,6 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			if _, err := d.state.ShallowMerge(ctx, job.Plugin, updatesJSON); err != nil {
 				errMsg := fmt.Sprintf("failed to apply state updates: %v", err)
 				jobLogger.Error(errMsg)
-				recordBlackBox(queue.StatusFailed, &errMsg)
 				d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 				return
 			}
@@ -500,7 +476,6 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := d.routeEvents(ctx, job, resp.Events, jobLogger); err != nil {
 			errMsg := fmt.Sprintf("failed to route events: %v", err)
 			jobLogger.Error(errMsg)
-			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
@@ -515,14 +490,12 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		if err := d.routeEvents(ctx, job, synthetic, jobLogger); err != nil {
 			errMsg := fmt.Sprintf("failed to route step-succeeded event: %v", err)
 			jobLogger.Error(errMsg)
-			recordBlackBox(queue.StatusFailed, &errMsg)
 			d.completeJob(ctx, jobLogger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, rawResp, &errMsg, &stderr)
 			return
 		}
 	}
 
 	// Mark job as succeeded
-	recordBlackBox(queue.StatusSucceeded, nil)
 	d.maybeFireHooks(ctx, job, hookSignalForStatus(queue.StatusSucceeded), map[string]any{
 		"job_id":  job.ID,
 		"plugin":  job.Plugin,
