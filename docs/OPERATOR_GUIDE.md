@@ -1,3 +1,10 @@
+---
+audience: [4]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # Operator Guide
 
 This guide is intended for system administrators and LLM operators managing a Ductile instance. It covers day-to-day operations, monitoring, and administrative safety.

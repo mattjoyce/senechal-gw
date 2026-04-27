@@ -1,3 +1,10 @@
+---
+audience: [1, 6]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # Contributing to Ductile
 
 Welcome. This file covers the practical mechanics of building, testing, and

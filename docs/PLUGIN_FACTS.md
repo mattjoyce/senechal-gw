@@ -1,3 +1,12 @@
+---
+audience: [2]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/state/
+---
+
 # Plugin Facts
 
 This document is the canonical reference for durable plugin memory in Ductile.

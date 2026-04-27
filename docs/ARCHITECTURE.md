@@ -1,3 +1,10 @@
+---
+audience: [2]
+form: design
+density: expert
+verified: 2026-04-27
+---
+
 # Ductile — Specification
 
 **Version:** 1.0

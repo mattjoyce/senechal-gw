@@ -1,3 +1,10 @@
+---
+audience: [2, 6]
+form: meta
+density: expert
+verified: 2026-04-27
+---
+
 # Documentation vs Reality Audit
 
 **Date:** 2026-03-03

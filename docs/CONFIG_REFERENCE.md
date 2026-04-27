@@ -1,3 +1,12 @@
+---
+audience: [2, 4]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/config/
+---
+
 # Ductile: Configuration Specification
 
 **Version:** 1.1 (Tiered Directory Model)  

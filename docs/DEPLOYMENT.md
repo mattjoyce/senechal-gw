@@ -1,3 +1,10 @@
+---
+audience: [3, 4]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # Ductile Deployment Guide
 
 This document describes how to deploy a host-local Ductile instance as a

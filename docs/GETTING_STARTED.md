@@ -1,3 +1,10 @@
+---
+audience: [1, 3]
+form: tutorial
+density: learner
+verified: 2026-04-27
+---
+
 # Getting Started with Ductile
 
 Welcome to **Ductile**, a lightweight, reliable, and secure integration gateway designed for personal automation. This guide will help you get up and running in minutes.

@@ -1,3 +1,12 @@
+---
+audience: [2]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/router/
+---
+
 # Ductile — Routing & Orchestration Specification
 
 **Version:** 1.0 (Gemini Consensus)  

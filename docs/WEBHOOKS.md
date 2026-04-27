@@ -1,3 +1,12 @@
+---
+audience: [2, 4]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/webhook/
+---
+
 # Webhooks
 
 This document summarizes how webhooks work in Ductile and how to configure them safely.

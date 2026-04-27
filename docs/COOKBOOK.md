@@ -1,3 +1,10 @@
+---
+audience: [1, 4]
+form: tutorial
+density: learner
+verified: 2026-04-27
+---
+
 # Ductile Cookbook: Integration Patterns
 
 Practical recipes for wiring Ductile **Connectors** and **Orchestrations** to solve real-world problems.

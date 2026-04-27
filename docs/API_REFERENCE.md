@@ -1,3 +1,12 @@
+---
+audience: [2, 8]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/api/
+---
+
 # Ductile: API Reference
 
 This document provides a comprehensive reference for the Ductile REST API.

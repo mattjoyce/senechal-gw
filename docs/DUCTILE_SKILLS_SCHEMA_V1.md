@@ -1,3 +1,10 @@
+---
+audience: [8]
+form: agent-surface
+density: expert
+verified: 2026-04-27
+---
+
 # ductile.skills.schema.v1
 
 Status: Draft  

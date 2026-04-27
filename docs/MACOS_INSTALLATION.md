@@ -1,3 +1,10 @@
+---
+audience: [3]
+form: tutorial
+density: learner
+verified: 2026-04-27
+---
+
 # Ductile on macOS — Installation Guide
 
 This guide documents the first installation of Ductile on macOS (darwin/arm64, macOS 15 Sequoia). It covers the differences from the Linux/systemd deployment documented in [DEPLOYMENT.md](DEPLOYMENT.md).

@@ -1,3 +1,13 @@
+---
+audience: [2]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/dispatch/
+  - internal/router/
+---
+
 # Ductile: Pipelines & Orchestration (DSL Reference)
 
 Ductile uses a YAML-based Domain Specific Language (DSL) to define event-driven workflows. Pipelines transform atomic **Connectors** into complex, multi-hop **Orchestrations**.

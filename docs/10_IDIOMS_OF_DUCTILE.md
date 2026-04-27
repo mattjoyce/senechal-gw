@@ -1,3 +1,10 @@
+---
+audience: [1, 2]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # 10 Idioms of Ductile
 
 1. **If it can be queued, it should be queued.**

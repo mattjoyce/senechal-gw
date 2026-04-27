@@ -1,3 +1,13 @@
+---
+audience: [1, 2]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/protocol/
+  - internal/plugin/
+---
+
 # Plugin Development Guide
 
 Ductile is built on a **spawn-per-command** model. A plugin is any executable

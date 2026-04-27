@@ -1,3 +1,10 @@
+---
+audience: [2, 6]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # Testing Guide
 
 This document defines the target-state testing strategy for Ductile. The goal is to preserve developer velocity during normal branch work while adding stronger runtime/system confidence gates before merge and after changes land on `main`.

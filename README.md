@@ -1,3 +1,10 @@
+---
+audience: [1, 3]
+form: tutorial
+density: learner
+verified: 2026-04-27
+---
+
 # Ductile
 
 [![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)

@@ -1,3 +1,13 @@
+---
+audience: [2]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/scheduler/
+  - internal/scheduleexpr/
+---
+
 # Scheduler
 
 Detailed reference for Ductile's scheduler behavior and schedule configuration.

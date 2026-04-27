@@ -1,3 +1,10 @@
+---
+audience: [1, 3]
+form: tutorial
+density: learner
+verified: 2026-04-27
+---
+
 # YAML Tips for Ductile Configuration
 
 Practical techniques for keeping your `plugins.yaml` clean and maintainable.

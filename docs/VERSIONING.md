@@ -1,3 +1,13 @@
+---
+audience: [2, 4]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - scripts/version.sh
+  - Dockerfile
+---
+
 # Versioning and Build Metadata
 
 This document defines how `ductile` versions are assigned and how build metadata is injected into binaries.

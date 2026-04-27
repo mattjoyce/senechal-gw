@@ -1,3 +1,13 @@
+---
+audience: [2, 4]
+form: reference
+density: expert
+verified: 2026-04-27
+coupled_to:
+  - internal/storage/
+  - internal/queue/
+---
+
 # Ductile: Database Reference
 
 Ductile uses **SQLite 3** for all persistent state, job queuing, and execution history. This document provides the schema definitions and a collection of useful queries for operators.

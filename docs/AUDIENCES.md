@@ -1,3 +1,10 @@
+---
+audience: [2, 6]
+form: meta
+density: expert
+verified: 2026-04-27
+---
+
 # Audiences
 
 Three orthogonal axes define who reads Ductile's documentation and uses its

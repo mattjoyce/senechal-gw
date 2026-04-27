@@ -1,3 +1,10 @@
+---
+audience: [2, 6]
+form: meta
+density: expert
+verified: 2026-04-27
+---
+
 # Ductile — Contributor Contract
 
 This is the single document any contributor — human or agent — should read

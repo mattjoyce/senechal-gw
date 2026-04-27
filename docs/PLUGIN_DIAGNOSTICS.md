@@ -1,3 +1,10 @@
+---
+audience: [4]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # Plugin Diagnostics
 
 A structured process for diagnosing plugin health in a running Ductile instance. Covers triage, job history analysis, failure inspection, manual testing, and remediation.

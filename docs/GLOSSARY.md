@@ -1,3 +1,10 @@
+---
+audience: [1, 2, 3, 4]
+form: reference
+density: expert
+verified: 2026-04-27
+---
+
 # Ductile Glossary
 
 Key terms used throughout Ductile's documentation and configuration.

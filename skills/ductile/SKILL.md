@@ -1,4 +1,8 @@
 ---
+audience: [8]
+form: agent-surface
+density: expert
+verified: 2026-04-27
 name: ductile
 description: >
   Operate, configure, and troubleshoot the ductile integration gateway CLI.
