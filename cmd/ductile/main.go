@@ -2591,7 +2591,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		scheduler.WithWorkspaceJanitor(wsManager, cfg.Workspace.TTL, cfg.Workspace.JanitorInterval),
 	)
 	rt.scheduler = sched
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
 	rt.dispatcher = disp
 
 	// Wire recovery hooks: when the scheduler marks a dead orphan during crash

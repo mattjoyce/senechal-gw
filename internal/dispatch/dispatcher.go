@@ -27,7 +27,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
-	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 const (
@@ -42,15 +41,14 @@ const (
 
 // Dispatcher dequeues jobs and executes them by spawning plugin subprocesses.
 type Dispatcher struct {
-	queue     *queue.Queue
-	state     *state.Store
-	contexts  *state.ContextStore
-	workspace workspace.Manager
-	router    router.Engine
-	registry  *plugin.Registry
-	cfg       *config.Config
-	events    *events.Hub
-	logger    *slog.Logger
+	queue    *queue.Queue
+	state    *state.Store
+	contexts *state.ContextStore
+	router   router.Engine
+	registry *plugin.Registry
+	cfg      *config.Config
+	events   *events.Hub
+	logger   *slog.Logger
 
 	// completions tracks jobs being waited on for synchronous execution.
 	// Map key is root job ID. Value is a channel that is closed when the tree is complete.
@@ -68,11 +66,13 @@ type pollLifecycleJob struct {
 }
 
 // New creates a new Dispatcher.
+//
+// As of Sprint 18 the dispatcher does not provision filesystem workspaces for
+// jobs. Plugins that require an FS path manage it themselves.
 func New(
 	q *queue.Queue,
 	st *state.Store,
 	contexts *state.ContextStore,
-	ws workspace.Manager,
 	rt router.Engine,
 	reg *plugin.Registry,
 	hub *events.Hub,
@@ -82,7 +82,6 @@ func New(
 		queue:          q,
 		state:          st,
 		contexts:       contexts,
-		workspace:      ws,
 		router:         rt,
 		registry:       reg,
 		events:         hub,
@@ -240,12 +239,11 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 		return
 	}
 	d.events.Publish("job.preflight", map[string]any{
-		"job_id":        job.ID,
-		"plugin":        job.Plugin,
-		"command":       job.Command,
-		"decision":      string(preflight.decision),
-		"reason":        preflight.reason,
-		"workspace_dir": preflight.workspaceDir,
+		"job_id":   job.ID,
+		"plugin":   job.Plugin,
+		"command":  job.Command,
+		"decision": string(preflight.decision),
+		"reason":   preflight.reason,
 	})
 	if preflight.decision == preflightDecisionSkip {
 		d.skipJob(ctx, jobLogger, job, preflight.requestContext, preflight.reason)
@@ -253,10 +251,8 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 	}
 
 	requestContext := preflight.requestContext
-	workspaceDir := preflight.workspaceDir
 
 	if isCoreSwitchJob(job) {
-		_ = workspaceDir
 		d.executeCoreSwitch(ctx, job, requestContext, jobLogger)
 		return
 	}
@@ -440,7 +436,7 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 			LastError:   lastError,
 			Context:     requestContext,
 		}
-		if err := writeBlackBox(workspaceDir, stdoutBytes, stderr, meta); err != nil {
+		if err := writeBlackBox("", stdoutBytes, stderr, meta); err != nil {
 			jobLogger.Warn("black box write failed (non-fatal)", "error", err)
 		}
 	}
@@ -807,28 +803,6 @@ func calculateBackoffDelay(base time.Duration, attempt int, jitter time.Duration
 	return delay
 }
 
-func (d *Dispatcher) ensureWorkspaceForJob(ctx context.Context, job *queue.Job) (string, error) {
-	if d.workspace == nil {
-		return "", nil
-	}
-
-	if ws, err := d.workspace.Open(ctx, job.ID); err == nil {
-		return ws.Dir, nil
-	}
-
-	if job.ParentJobID != nil {
-		if ws, err := d.workspace.Clone(ctx, *job.ParentJobID, job.ID); err == nil {
-			return ws.Dir, nil
-		}
-	}
-
-	ws, err := d.workspace.Create(ctx, job.ID)
-	if err != nil {
-		return "", err
-	}
-	return ws.Dir, nil
-}
-
 func (d *Dispatcher) loadRequestContext(ctx context.Context, job *queue.Job) (map[string]any, error) {
 	out := make(map[string]any)
 	out["ductile_plugin"] = job.Plugin
@@ -1018,12 +992,6 @@ func (d *Dispatcher) routeEventsWithOptions(
 				"event_context_id": deref(contextID),
 			})
 
-			if d.workspace != nil {
-				if _, err := d.workspace.Clone(ctx, job.ID, childJobID); err != nil {
-					return fmt.Errorf("clone workspace %q -> %q: %w", job.ID, childJobID, err)
-				}
-			}
-
 			logger.Info(
 				"enqueued routed job",
 				"event_type", ev.Type,
@@ -1108,7 +1076,6 @@ type jobPreflight struct {
 	decision       preflightDecision
 	reason         string
 	requestContext map[string]any
-	workspaceDir   string
 }
 
 type conditionEvaluation struct {
@@ -1122,17 +1089,6 @@ func (d *Dispatcher) preflightJob(ctx context.Context, job *queue.Job) (jobPrefl
 		return jobPreflight{}, fmt.Errorf("load event context: %w", err)
 	}
 
-	// Prepare the workspace before evaluating first-class control-flow.
-	//
-	// A skipped step can still have downstream successors, and those children may
-	// inherit/clone the parent's workspace even though no plugin process ran for
-	// the skipped node. Treating workspace creation as pre-execution assurance
-	// keeps the data-plane semantics consistent for both run and skip outcomes.
-	workspaceDir, err := d.ensureWorkspaceForJob(ctx, job)
-	if err != nil {
-		return jobPreflight{}, fmt.Errorf("prepare workspace: %w", err)
-	}
-
 	if d.router != nil {
 		evaluation, err := d.evaluateStepCondition(ctx, job, requestContext)
 		if err != nil {
@@ -1143,7 +1099,6 @@ func (d *Dispatcher) preflightJob(ctx context.Context, job *queue.Job) (jobPrefl
 				decision:       preflightDecisionSkip,
 				reason:         evaluation.reason,
 				requestContext: requestContext,
-				workspaceDir:   workspaceDir,
 			}, nil
 		}
 	}
@@ -1151,7 +1106,6 @@ func (d *Dispatcher) preflightJob(ctx context.Context, job *queue.Job) (jobPrefl
 	return jobPreflight{
 		decision:       preflightDecisionRun,
 		requestContext: requestContext,
-		workspaceDir:   workspaceDir,
 	}, nil
 }
 

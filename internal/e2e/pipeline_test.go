@@ -18,7 +18,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 func TestEndToEndPipelineWithConditionalSkip(t *testing.T) {
@@ -26,12 +25,9 @@ func TestEndToEndPipelineWithConditionalSkip(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "ductile.db")
 	pluginsDir := filepath.Join(tmpDir, "plugins")
-	workspacesDir := filepath.Join(tmpDir, "workspaces")
 
-	for _, dir := range []string{pluginsDir, workspacesDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatalf("failed to create dir %s: %v", dir, err)
-		}
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("failed to create dir %s: %v", pluginsDir, err)
 	}
 
 	log.Setup("ERROR")
@@ -51,7 +47,6 @@ func TestEndToEndPipelineWithConditionalSkip(t *testing.T) {
 	q := queue.New(db)
 	st := state.NewStore(db)
 	contextStore := state.NewContextStore(db)
-	wsManager, _ := workspace.NewFSManager(workspacesDir)
 
 	triggerScript := `#!/bin/bash
 echo '{"status":"ok","result":"triggered","events":[{"type":"test.triggered","event_id":"stable-id","payload":{"origin_user":"matt","video_url":"https://yt.com/123","status":"ok"}}]}'
@@ -102,7 +97,7 @@ print(json.dumps({"status":"ok","result":"verified"}))
 	}
 
 	hub := events.NewHub(128)
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
 
 	rootID, _ := q.Enqueue(ctx, queue.EnqueueRequest{Plugin: "trigger", Command: "poll", SubmittedBy: "test"})
 	for range 5 {
@@ -151,12 +146,9 @@ func TestEndToEndPipeline(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "ductile.db")
 	pluginsDir := filepath.Join(tmpDir, "plugins")
-	workspacesDir := filepath.Join(tmpDir, "workspaces")
 
-	for _, dir := range []string{pluginsDir, workspacesDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatalf("failed to create dir %s: %v", dir, err)
-		}
+	if err := os.MkdirAll(pluginsDir, 0755); err != nil {
+		t.Fatalf("failed to create dir %s: %v", pluginsDir, err)
 	}
 
 	log.Setup("ERROR") // Keep logs clean
@@ -176,7 +168,6 @@ func TestEndToEndPipeline(t *testing.T) {
 	q := queue.New(db)
 	st := state.NewStore(db)
 	contextStore := state.NewContextStore(db)
-	wsManager, _ := workspace.NewFSManager(workspacesDir)
 
 	// 2. Create Real Bash Plugins
 	// Hop 1: Trigger (Emits event with origin metadata)
@@ -242,7 +233,7 @@ except Exception as e:
 	}
 
 	hub := events.NewHub(128)
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
 
 	// 5. Execution Loop
 	// Step A: Manually enqueue the root job

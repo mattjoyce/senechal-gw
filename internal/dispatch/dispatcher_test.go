@@ -22,7 +22,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"github.com/mattjoyce/ductile/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -58,7 +57,7 @@ func setupTestDispatcher(t *testing.T) (*Dispatcher, *sql.DB, string, func()) {
 	cfg := config.Defaults()
 	cfg.PluginRoots = []string{pluginsDir}
 
-	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	disp := New(q, st, contextStore, nil, registry, hub, cfg)
 
 	cleanup := func() {
 		if err := db.Close(); err != nil {
@@ -1236,12 +1235,6 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 	if err != nil {
 		t.Fatalf("LoadFromConfigFiles: %v", err)
 	}
-	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
-	wsManager, err := workspace.NewFSManager(workspaceBaseDir)
-	if err != nil {
-		t.Fatalf("NewFSManager: %v", err)
-	}
-
 	cfg := config.Defaults()
 	cfg.PluginRoots = []string{pluginsDir}
 	cfg.Plugins["plugin-a"] = config.PluginConf{
@@ -1258,7 +1251,7 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 	}
 
 	hub := events.NewHub(128)
-	disp := New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	disp := New(q, st, contextStore, routerEngine, registry, hub, cfg)
 	ctx := context.Background()
 
 	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
@@ -1575,7 +1568,7 @@ echo '{"status":"ok","result":"step b complete"}'
 		},
 	}
 
-	disp := New(q, st, contextStore, nil, routerEngine, registry, events.NewHub(32), cfg)
+	disp := New(q, st, contextStore, routerEngine, registry, events.NewHub(32), cfg)
 	ctx := context.Background()
 
 	instanceID := "pipeline-instance-123"
@@ -1729,7 +1722,7 @@ echo '{"status":"ok","result":"target step complete"}'
 		},
 	}
 
-	disp := New(q, st, contextStore, nil, routerEngine, registry, events.NewHub(32), cfg)
+	disp := New(q, st, contextStore, routerEngine, registry, events.NewHub(32), cfg)
 	ctx := context.Background()
 
 	sourceInstanceID := "source-instance-123"
@@ -1935,7 +1928,7 @@ echo '{"status":"ok","result":"should-also-not-run"}'
 	cfg.Plugins["skipper"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
 	cfg.Plugins["committer"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
 
-	disp := New(q, st, contextStore, nil, routerEngine, registry, hub, cfg)
+	disp := New(q, st, contextStore, routerEngine, registry, hub, cfg)
 	ctx := context.Background()
 
 	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{
@@ -2113,12 +2106,6 @@ func TestDispatcher_ExecuteJob_ConditionalSwitchBypassesFalseStepAndContinues(t 
 	contextStore := state.NewContextStore(db)
 	registry := plugin.NewRegistry()
 	hub := events.NewHub(128)
-	workspaceBaseDir := filepath.Join(tmpDir, "workspaces")
-	wsManager, err := workspace.NewFSManager(workspaceBaseDir)
-	if err != nil {
-		t.Fatalf("NewFSManager: %v", err)
-	}
-
 	scriptA := `#!/bin/bash
 read input
 echo '{"status":"ok","result":"start","events":[{"type":"chain.start","payload":{"status":"ok"}}]}'
@@ -2173,7 +2160,7 @@ echo '{"status":"ok","result":"ran-c"}'
 	cfg.Plugins["plugin-b"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
 	cfg.Plugins["plugin-c"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
 
-	disp := New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	disp := New(q, st, contextStore, routerEngine, registry, hub, cfg)
 	ctx := context.Background()
 
 	rootJobID, err := q.Enqueue(ctx, queue.EnqueueRequest{Plugin: "plugin-a", Command: "poll", SubmittedBy: "test"})
@@ -2228,13 +2215,6 @@ echo '{"status":"ok","result":"ran-c"}'
 	}
 	if stepCResult.Status != queue.StatusSucceeded {
 		t.Fatalf("step_c status = %q, want %q", stepCResult.Status, queue.StatusSucceeded)
-	}
-
-	if _, err := os.Stat(filepath.Join(workspaceBaseDir, switchJob.ID[:2], switchJob.ID)); err != nil {
-		t.Fatalf("stat switch workspace: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(workspaceBaseDir, stepCJob.ID[:2], stepCJob.ID)); err != nil {
-		t.Fatalf("stat successor workspace: %v", err)
 	}
 
 	_ = rootJobID
@@ -2304,7 +2284,7 @@ echo '{"status":"ok","result":"done"}'
 		Timeouts:    &config.TimeoutsConfig{Poll: 10 * time.Second},
 	}
 
-	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	disp := New(q, st, contextStore, nil, registry, hub, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Enqueue 3 jobs
@@ -2392,7 +2372,7 @@ echo '{"status":"ok","result":"done"}'
 		Timeouts:    &config.TimeoutsConfig{Poll: 10 * time.Second},
 	}
 
-	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	disp := New(q, st, contextStore, nil, registry, hub, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Enqueue 2 jobs
@@ -2476,7 +2456,7 @@ echo '{"status":"ok","result":"done"}'
 		Timeouts: &config.TimeoutsConfig{Poll: 10 * time.Second},
 	}
 
-	disp := New(q, st, contextStore, nil, nil, registry, hub, cfg)
+	disp := New(q, st, contextStore, nil, registry, hub, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Enqueue 2 jobs

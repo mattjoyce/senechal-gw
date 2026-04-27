@@ -24,7 +24,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
-	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 type queueBackedWaiter struct {
@@ -264,7 +263,6 @@ func TestSynchronousPipelineSkippedEntryResponseVsDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 	pluginsDir := filepath.Join(tmpDir, "plugins")
-	workspacesDir := filepath.Join(tmpDir, "workspaces")
 
 	db, err := storage.OpenSQLite(ctx, dbPath)
 	if err != nil {
@@ -275,10 +273,6 @@ func TestSynchronousPipelineSkippedEntryResponseVsDB(t *testing.T) {
 	q := queue.New(db)
 	st := state.NewStore(db)
 	contextStore := state.NewContextStore(db)
-	wsManager, err := workspace.NewFSManager(workspacesDir)
-	if err != nil {
-		t.Fatalf("NewFSManager: %v", err)
-	}
 
 	createAPIIntegrationPlugin(t, pluginsDir, "step-a", `#!/bin/bash
 read input
@@ -323,7 +317,7 @@ echo '{"status":"ok","result":"B"}'
 	cfg.Plugins["step-a"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
 	cfg.Plugins["step-b"] = config.PluginConf{Enabled: true, Timeouts: &config.TimeoutsConfig{Handle: 5 * time.Second}}
 	hub := events.NewHub(128)
-	disp := dispatch.New(q, st, contextStore, wsManager, routerEngine, registry, hub, cfg)
+	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
 
 	dispatchCtx, dispatchCancel := context.WithCancel(ctx)
 	defer dispatchCancel()
