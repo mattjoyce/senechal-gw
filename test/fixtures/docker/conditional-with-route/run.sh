@@ -262,11 +262,14 @@ if [[ "$TRUE_CONTEXT_CHAIN" != "$EXPECTED_TRUE_CONTEXT_CHAIN" ]]; then
   fixture_fail "unexpected true-branch context chain"
 fi
 
-PROCESSOR_WORKSPACE="$STATE_DIR/workspaces/${TRUE_PROCESSOR_JOB_ID:0:2}/$TRUE_PROCESSOR_JOB_ID"
-WITH_PROOF_FILE="$PROCESSOR_WORKSPACE/with-proof.json"
+# As of Sprint 18 the core no longer provisions a workspace; the
+# content_processor plugin runs in its configured working_dir
+# (plugins.yaml: content_processor.config.working_dir = ./state) and
+# writes with-proof.json there.
+WITH_PROOF_FILE="$STATE_DIR/with-proof.json"
 fixture_capture_file "$WITH_PROOF_FILE" true-with-proof.json
 if [[ ! -f "$WITH_PROOF_FILE" ]]; then
-  fixture_fail "with-proof.json not found in content_processor workspace"
+  fixture_fail "with-proof.json not found at $WITH_PROOF_FILE"
 fi
 
 WITH_CONTENT=$(jq -r '.content' "$WITH_PROOF_FILE")

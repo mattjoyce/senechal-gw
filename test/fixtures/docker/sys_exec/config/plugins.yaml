@@ -2,4 +2,5 @@ plugins:
   sys_exec:
     enabled: true
     config:
+      working_dir: "./state"
       command: ["sh", "-c", "echo $DUCTILE_PAYLOAD_MESSAGE > output.txt"]

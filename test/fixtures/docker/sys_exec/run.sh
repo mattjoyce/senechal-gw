@@ -78,14 +78,15 @@ if [[ "$STATUS_DB" != "succeeded" ]]; then
   fixture_fail "expected success, got $STATUS_DB"
 fi
 
-# Verify output.txt in workspace
-SHARD="${JOB_ID:0:2}"
-WS_PATH="$STATE_DIR/workspaces/$SHARD/$JOB_ID"
-OUT_FILE="$WS_PATH/output.txt"
+# Verify output.txt landed at the plugin's configured working_dir.
+# As of Sprint 18 the core no longer provisions a workspace; the plugin
+# config (plugins.yaml: sys_exec.config.working_dir) is the source of
+# truth for where the spawned subprocess runs.
+OUT_FILE="$STATE_DIR/output.txt"
 
 fixture_log "checking output file at $OUT_FILE"
 if [[ ! -f "$OUT_FILE" ]]; then
-  fixture_fail "output.txt not found in workspace"
+  fixture_fail "output.txt not found at $OUT_FILE"
 fi
 
 CONTENT=$(cat "$OUT_FILE")
@@ -93,9 +94,7 @@ if [[ "$CONTENT" != "hello from sys_exec" ]]; then
   fixture_fail "unexpected content in output.txt: '$CONTENT'"
 fi
 
-# Verify .ductile bundle
-if [[ ! -d "$WS_PATH/.ductile" ]]; then
-  fixture_fail ".ductile bundle not found in workspace"
-fi
-
 fixture_log "success"
+
+# Suppress unused-variable warning when JOB_ID is captured but not asserted.
+: "$JOB_ID"

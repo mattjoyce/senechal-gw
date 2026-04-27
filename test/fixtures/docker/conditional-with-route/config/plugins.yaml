@@ -3,6 +3,7 @@ plugins:
     uses: sys_exec
     enabled: true
     config:
+      working_dir: "./state"
       command:
         - python3
         - -c

@@ -56,7 +56,6 @@ Docker-backed tests are used for **complex or environment-sensitive behavior** w
 - authenticated API end-to-end flows
 - plugin runtime/process behavior
 - append-only fact persistence and compatibility-state derivation
-- filesystem/workspace behavior
 - realistic service startup/configuration behavior
 
 ### Docker tests are not for
@@ -311,7 +310,7 @@ Should verify:
 - a baggage value claimed by an upstream pipeline step is visible to a
   downstream pipeline's `if:` predicate as `context.*`
 - predicate true → dispatch fires
-- predicate false → dispatch is suppressed (no workspace, no `core.switch`)
+- predicate false → dispatch is suppressed (no `core.switch`)
 - a route fired without upstream context (e.g. from webhook ingress)
   with a `context.*` predicate is suppressed (absent context evaluates
   to false, no error)
@@ -319,7 +318,6 @@ Should verify:
 ### Deferred wave-2 concerns
 These are valuable, but should not be in the first Docker wave:
 - reload/restart nuance beyond initial recovery scenarios
-- filesystem/workspace-heavy scenarios
 - plugin runtime matrix testing
 - multi-hop expansion suites
 - load/stress validation
