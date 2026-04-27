@@ -719,8 +719,8 @@ tokens:
 ```json
 {
   "scopes": [
-    "read:jobs",
-    "read:events",
+    "jobs:ro",
+    "events:ro",
     "github-handler:rw",
     "withings:ro"
   ]

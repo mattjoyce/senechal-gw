@@ -92,7 +92,7 @@ You can interactively create scoped API tokens using the built-in wizard:
 ```bash
 ./ductile config token create --name "my-service" --tui
 ```
-This TUI reads the manifests of all enabled plugins to present you with a checkbox list of available scopes (e.g., `jobs:ro`, `plugin:echo:rw`).
+This TUI reads the manifests of all enabled plugins to present you with a checkbox list of available scopes. Examples: `jobs:ro` (a global resource scope) and `echo:rw` (a per-plugin scope, where the plugin name is the resource).
 
 ---
 

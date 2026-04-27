@@ -226,9 +226,16 @@ api:
 ### 5.2 Token Scopes
 Scopes are explicit:
 - `*`: Full admin access.
-- `plugin:ro`, `plugin:rw`: Plugin and pipeline trigger access.
+- `plugin:ro`, `plugin:rw`: Plugin and pipeline trigger access (global).
 - `jobs:ro`, `jobs:rw`: Job read/write access.
 - `events:ro`, `events:rw`: Event stream access.
+- `system:rw`: System administration, including `POST /system/reload`.
+- `<plugin>:ro`, `<plugin>:rw`, `<plugin>:allow:<command>`: Per-plugin
+  scopes whose resource is the plugin name (e.g. `echo:rw`,
+  `withings:allow:poll`). Validated by config and `doctor`. Note that
+  current API enforcement for plugin invocation is the global
+  `plugin:ro`/`plugin:rw` pair; per-plugin scopes are accepted in token
+  declarations and may be enforced more granularly in future.
 
 ---
 

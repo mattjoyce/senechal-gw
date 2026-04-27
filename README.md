@@ -7,7 +7,7 @@ verified: 2026-04-27
 
 # Ductile
 
-[![Go Version](https://img.shields.io/badge/go-1.25.4-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.25.0-blue.svg)](https://golang.org)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **The Glue for Your Homelab Automation.**

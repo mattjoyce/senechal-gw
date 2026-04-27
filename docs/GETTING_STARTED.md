@@ -13,7 +13,7 @@ Welcome to **Ductile**, a lightweight, reliable, and secure integration gateway 
 
 ## 1. Installation
 
-Ductile is written in Go and requires version **1.25.4** or newer.
+Ductile is written in Go and requires version **1.25.0** or newer (matching `go.mod`).
 
 1.  **Clone the repository:**
     ```bash

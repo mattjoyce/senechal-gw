@@ -243,7 +243,7 @@ Retrieve the current status and execution results of a job.
 
 ---
 
-### 5. Jobs List
+### 4. Jobs List
 
 List jobs with optional filtering. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
 
@@ -280,7 +280,7 @@ Results are sorted by `created_at` descending (most recent first).
 
 ---
 
-### 6. Job Logs
+### 5. Job Logs
 
 Query stored job log records for audit and troubleshooting. Requires `jobs:ro`, `jobs:rw`, or `*` scope.
 
@@ -324,7 +324,7 @@ Results are sorted by `completed_at` descending (most recent first).
 
 ---
 
-### 7. System Health
+### 6. System Health
 
 Unauthenticated endpoint for health checks. Typically used by monitoring tools or load balancers.
 
@@ -337,11 +337,15 @@ Unauthenticated endpoint for health checks. Typically used by monitoring tools o
   "uptime_seconds": 3600,
   "queue_depth": 0,
   "plugins_loaded": 5,
+  "plugins_circuit_open": 0,
   "config_path": "/etc/ductile",
   "binary_path": "/usr/local/bin/ductile",
   "version": "1.0.0-rc.1"
 }
 ```
+
+`plugins_circuit_open` reports the count of plugins whose circuit breaker
+is currently open.
 
 ---
 
@@ -601,6 +605,36 @@ Redaction rules:
 - Plugin config keys containing `secret`, `key`, `token`, `password`, etc., are replaced with `[REDACTED]`.
 - API token values are omitted (only scopes are shown).
 - High-security token keys are omitted.
+
+---
+
+### 13. Server-Sent Event Stream
+
+Live event firehose for agents and dashboards. Requires `events:ro` or `*` scope.
+
+**Endpoint**: `GET /events`
+
+**Response**: `text/event-stream`. Each event is emitted as an SSE record
+with a JSON payload describing the event (job lifecycle transitions,
+pipeline progress, plugin state changes). Clients stream the connection
+for as long as they want updates and reconnect on drop.
+
+Use this endpoint for live observability. For historical queries use
+`/jobs` and `/job-logs`.
+
+---
+
+### 14. Scheduler Jobs
+
+Inspect the scheduler's view of plugin schedule entries. Requires
+`jobs:ro`, `jobs:rw`, or `*` scope.
+
+**Endpoint**: `GET /scheduler/jobs`
+
+**Response (200 OK)**: a JSON document listing each scheduled plugin
+entry with its schedule expression, next-run time, and last-run time.
+Useful for verifying that a plugin's schedule was parsed and registered
+as expected.
 
 ---
 
