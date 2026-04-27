@@ -43,7 +43,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
 	"github.com/mattjoyce/ductile/internal/webhook"
-	"github.com/mattjoyce/ductile/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -2499,13 +2498,6 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		configDir = filepath.Dir(configPath)
 	}
 
-	wsBaseDir := filepath.Join(filepath.Dir(cfg.State.Path), "workspaces")
-	wsManager, err := workspace.NewFSManager(wsBaseDir)
-	if err != nil {
-		logger.Error("failed to initialize workspace manager", "base_dir", wsBaseDir, "error", err)
-		return nil, err
-	}
-
 	pipelineFiles := make([]string, 0, len(cfg.SourceFiles))
 	for f := range cfg.SourceFiles {
 		pipelineFiles = append(pipelineFiles, f)
@@ -2588,7 +2580,6 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			}
 			return plug.SupportsCommand(commandName)
 		}),
-		scheduler.WithWorkspaceJanitor(wsManager, cfg.Workspace.TTL, cfg.Workspace.JanitorInterval),
 	)
 	rt.scheduler = sched
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)

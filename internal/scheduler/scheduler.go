@@ -16,7 +16,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/events"
 	"github.com/mattjoyce/ductile/internal/queue"
 	"github.com/mattjoyce/ductile/internal/scheduleexpr"
-	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 // RecoveryHookFunc is called by the scheduler when a job reaches a terminal
@@ -27,18 +26,15 @@ type RecoveryHookFunc func(ctx context.Context, job *queue.Job, signal string, p
 
 // Scheduler manages the scheduling and recovery of plugin jobs.
 type Scheduler struct {
-	cfg              *config.Config
-	queue            QueueService // Use the interface here
-	events           *events.Hub
-	logger           *slog.Logger
-	stopCh           chan struct{}
-	wg               sync.WaitGroup
-	supportsCommand  func(pluginName, commandName string) bool
-	workspaceManager workspace.Manager
-	workspaceTTL     time.Duration
-	janitorInterval  time.Duration
-	tickCount        uint64
-	recoveryHook     RecoveryHookFunc
+	cfg             *config.Config
+	queue           QueueService // Use the interface here
+	events          *events.Hub
+	logger          *slog.Logger
+	stopCh          chan struct{}
+	wg              sync.WaitGroup
+	supportsCommand func(pluginName, commandName string) bool
+	tickCount       uint64
+	recoveryHook    RecoveryHookFunc
 }
 
 const (
@@ -57,17 +53,6 @@ type Option func(*Scheduler)
 func WithCommandSupportChecker(fn func(pluginName, commandName string) bool) Option {
 	return func(s *Scheduler) {
 		s.supportsCommand = fn
-	}
-}
-
-// WithWorkspaceJanitor enables automatic workspace cleanup on a sub-tick interval.
-// janitorInterval controls how often cleanup runs relative to the scheduler tick;
-// it is rounded down to the nearest whole number of ticks (minimum 1).
-func WithWorkspaceJanitor(wm workspace.Manager, ttl, janitorInterval time.Duration) Option {
-	return func(s *Scheduler) {
-		s.workspaceManager = wm
-		s.workspaceTTL = ttl
-		s.janitorInterval = janitorInterval
 	}
 }
 
@@ -153,7 +138,6 @@ func (s *Scheduler) tickLoop(ctx context.Context) {
 
 // tick performs a single scheduling pass.
 func (s *Scheduler) tick(ctx context.Context) {
-	current := s.tickCount
 	s.tickCount++
 	s.logger.Debug("Scheduler tick")
 	s.events.Publish("scheduler.tick", map[string]any{
@@ -190,25 +174,6 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 	}
 
-	// Janitor: clean up stale workspace directories at the configured interval.
-	if s.workspaceManager != nil && s.workspaceTTL > 0 {
-		period := uint64(1)
-		if s.janitorInterval > 0 && s.cfg.Service.TickInterval > 0 {
-			ticksPerCleanup := s.janitorInterval / s.cfg.Service.TickInterval
-			if ticksPerCleanup > 1 {
-				p := uint64(ticksPerCleanup)
-				period = p
-			}
-		}
-		if current%period == 0 {
-			report, err := s.workspaceManager.Cleanup(ctx, s.workspaceTTL)
-			if err != nil {
-				s.logger.Error("workspace cleanup failed", "error", err)
-			} else if report.DeletedDirs > 0 {
-				s.logger.Info("workspace cleanup complete", "deleted_dirs", report.DeletedDirs)
-			}
-		}
-	}
 }
 
 func (s *Scheduler) runStartupCatchUp(ctx context.Context) error {

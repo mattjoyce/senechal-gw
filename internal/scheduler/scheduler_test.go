@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/queue"
-	"github.com/mattjoyce/ductile/internal/workspace"
 )
 
 // TestLogBuffer is a bytes.Buffer that can be used to capture log output.
@@ -130,27 +128,6 @@ func TestScheduleConstraintsAllowAt(t *testing.T) {
 
 	_, _, err = scheduleConstraintsAllowAt(config.ScheduleConfig{Timezone: "Mars/Phobos"}, now)
 	assert.Error(t, err)
-}
-
-// stubWorkspaceManager is a minimal workspace.Manager that records Cleanup calls.
-type stubWorkspaceManager struct {
-	cleanupCalls atomic.Int32
-	cleanupTTL   atomic.Value // stores time.Duration
-}
-
-func (m *stubWorkspaceManager) Create(_ context.Context, _ string) (workspace.Workspace, error) {
-	return workspace.Workspace{}, nil
-}
-func (m *stubWorkspaceManager) Clone(_ context.Context, _, _ string) (workspace.Workspace, error) {
-	return workspace.Workspace{}, nil
-}
-func (m *stubWorkspaceManager) Open(_ context.Context, _ string) (workspace.Workspace, error) {
-	return workspace.Workspace{}, nil
-}
-func (m *stubWorkspaceManager) Cleanup(_ context.Context, olderThan time.Duration) (workspace.CleanupReport, error) {
-	m.cleanupCalls.Add(1)
-	m.cleanupTTL.Store(olderThan)
-	return workspace.CleanupReport{}, nil
 }
 
 // stubQueueService satisfies QueueService with minimal no-op implementations.
@@ -387,70 +364,6 @@ func TestReconcileCircuitBreakerRecordsCloseTransition(t *testing.T) {
 	assert.Equal(t, queue.CircuitOpen, *stub.transitions[0].FromState)
 	assert.Equal(t, queue.CircuitClosed, stub.transitions[0].ToState)
 	assert.Equal(t, "job-success", *stub.transitions[0].JobID)
-}
-
-func TestSchedulerJanitorCalledOnTick(t *testing.T) {
-	logger, _ := NewTestSlogger()
-	cfg := config.Defaults()
-	cfg.Plugins = map[string]config.PluginConf{} // no scheduled plugins
-
-	wm := &stubWorkspaceManager{}
-	ttl := 48 * time.Hour
-	// janitorInterval = 1 tick (equal to tick_interval) → runs every tick
-	janitorInterval := cfg.Service.TickInterval
-
-	sched := New(cfg, &stubQueueService{}, nil, logger,
-		WithWorkspaceJanitor(wm, ttl, janitorInterval),
-	)
-
-	ctx := context.Background()
-	sched.tick(ctx) // tick 0 → should run
-
-	if wm.cleanupCalls.Load() != 1 {
-		t.Fatalf("Cleanup() call count = %d, want 1", wm.cleanupCalls.Load())
-	}
-	got, _ := wm.cleanupTTL.Load().(time.Duration)
-	if got != ttl {
-		t.Errorf("Cleanup() TTL = %v, want %v", got, ttl)
-	}
-}
-
-func TestSchedulerJanitorRespectsInterval(t *testing.T) {
-	logger, _ := NewTestSlogger()
-	cfg := config.Defaults()
-	cfg.Service.TickInterval = time.Minute
-	cfg.Plugins = map[string]config.PluginConf{}
-
-	wm := &stubWorkspaceManager{}
-	ttl := 48 * time.Hour
-	// janitorInterval = 3 ticks → runs on tick 0, 3, 6, ...
-	janitorInterval := 3 * time.Minute
-
-	sched := New(cfg, &stubQueueService{}, nil, logger,
-		WithWorkspaceJanitor(wm, ttl, janitorInterval),
-	)
-
-	ctx := context.Background()
-	for i := 0; i < 7; i++ {
-		sched.tick(ctx)
-	}
-	// ticks 0, 3, 6 → 3 calls
-	if wm.cleanupCalls.Load() != 3 {
-		t.Fatalf("Cleanup() call count = %d, want 3", wm.cleanupCalls.Load())
-	}
-}
-
-func TestSchedulerJanitorNotCalledWhenNotConfigured(t *testing.T) {
-	logger, _ := NewTestSlogger()
-	cfg := config.Defaults()
-	cfg.Plugins = map[string]config.PluginConf{}
-
-	sched := New(cfg, &stubQueueService{}, nil, logger)
-	// No WithWorkspaceJanitor — workspaceManager is nil.
-
-	ctx := context.Background()
-	sched.tick(ctx)
-	// Just verify no panic; no Cleanup to assert.
 }
 
 // recoveryQueueStub records calls for recovery-path assertions.
