@@ -198,6 +198,81 @@ echo '{"status": "ok", "result": "ok", "state_updates": {"last_run": "2024-01-01
 	}
 }
 
+// TestDispatcher_ExecuteJob_RequestEnvelopeHasNoWorkspaceDir is the Sprint 18
+// regression. The dispatcher must not include a workspace_dir field in the
+// protocol-v2 request envelope it writes to the plugin's stdin, and the
+// plugin must still spawn and complete end-to-end without one.
+func TestDispatcher_ExecuteJob_RequestEnvelopeHasNoWorkspaceDir(t *testing.T) {
+	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	captureDir := t.TempDir()
+	capturePath := filepath.Join(captureDir, "stdin.json")
+
+	// Plugin tees stdin to a known path and returns success. We assert against
+	// the raw bytes written to the plugin's stdin, so this captures whatever
+	// the dispatcher actually sent over the wire.
+	script := fmt.Sprintf(`#!/bin/bash
+cat > %q
+echo '{"status":"ok","result":"captured"}'
+`, capturePath)
+
+	plug := createTestPlugin(t, pluginsDir, "capture", script)
+	if err := disp.registry.Add(plug); err != nil {
+		t.Fatalf("registry.Add(capture): %v", err)
+	}
+
+	disp.cfg.Plugins["capture"] = config.PluginConf{
+		Enabled:  true,
+		Timeouts: &config.TimeoutsConfig{Poll: 5 * time.Second},
+	}
+
+	ctx := context.Background()
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:      "capture",
+		Command:     "poll",
+		SubmittedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil || job == nil {
+		t.Fatalf("Dequeue: job=%v err=%v", job, err)
+	}
+	disp.executeJob(ctx, job)
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", jobID).Scan(&status); err != nil {
+		t.Fatalf("query status: %v", err)
+	}
+	if status != string(queue.StatusSucceeded) {
+		t.Fatalf("job status = %q, want succeeded", status)
+	}
+
+	rawStdin, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("read captured stdin: %v", err)
+	}
+	if len(rawStdin) == 0 {
+		t.Fatalf("plugin stdin was empty; nothing was written by dispatcher")
+	}
+
+	// Belt-and-braces: assert both at the JSON level (no workspace_dir key)
+	// and at the byte level (no workspace_dir substring), since either form
+	// of regression would re-introduce the field.
+	var envelope map[string]any
+	if err := json.Unmarshal(rawStdin, &envelope); err != nil {
+		t.Fatalf("unmarshal captured stdin: %v (raw=%q)", err, string(rawStdin))
+	}
+	if _, present := envelope["workspace_dir"]; present {
+		t.Fatalf("protocol envelope includes workspace_dir: %s", string(rawStdin))
+	}
+	if strings.Contains(string(rawStdin), "workspace_dir") {
+		t.Fatalf("workspace_dir substring leaked into request envelope: %s", string(rawStdin))
+	}
+}
+
 func TestDispatcher_ExecuteJob_SchedulerPollLifecycleEvents(t *testing.T) {
 	disp, db, pluginsDir, cleanup := setupTestDispatcher(t)
 	defer cleanup()
