@@ -381,13 +381,9 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 		},
 		"plugin_roots": append([]string(nil), cfg.PluginRoots...),
 		"plugins":      plugins,
-		"workspace": map[string]any{
-			"ttl":              durationString(cfg.Workspace.TTL),
-			"janitor_interval": durationString(cfg.Workspace.JanitorInterval),
-		},
-		"webhooks":  webhooks,
-		"tokens":    tokens,
-		"pipelines": renderPipelines(cfg.Pipelines),
+		"webhooks":     webhooks,
+		"tokens":       tokens,
+		"pipelines":    renderPipelines(cfg.Pipelines),
 	}, secretUses
 }
 

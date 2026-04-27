@@ -46,9 +46,6 @@
     },
     "webhooks": {
       "$ref": "#/$defs/WebhooksConfig"
-    },
-    "workspace": {
-      "$ref": "#/$defs/WorkspaceConfig"
     }
   },
   "required": ["service", "state", "plugin_roots"],
@@ -503,23 +500,6 @@
         }
       },
       "required": ["path", "plugin"],
-      "additionalProperties": false
-    },
-    "WorkspaceConfig": {
-      "type": "object",
-      "description": "Workspace lifecycle settings. Controls how long per-job workspace directories are retained and how often the janitor sweeps for stale directories. Both fields default if omitted (ttl: 168h, janitor_interval: 1h).",
-      "properties": {
-        "ttl": {
-          "type": "string",
-          "description": "How long to retain job workspace directories after the job completes (Go duration, e.g. '168h'). Default: 168h (7 days).",
-          "examples": ["168h", "72h", "24h"]
-        },
-        "janitor_interval": {
-          "type": "string",
-          "description": "How often the background janitor sweeps for stale workspace directories (Go duration, e.g. '1h'). Default: 1h.",
-          "examples": ["1h", "30m", "6h"]
-        }
-      },
       "additionalProperties": false
     }
   }

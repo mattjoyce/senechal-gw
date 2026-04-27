@@ -73,16 +73,15 @@ type configViewWebhook struct {
 }
 
 type configViewResponse struct {
-	Service        config.ServiceConfig                    `json:"service"`
-	API            configViewAPI                           `json:"api"`
-	State          config.StateConfig                      `json:"state"`
-	Workspace      config.WorkspaceConfig                  `json:"workspace"`
-	Plugins        map[string]configViewPlugin             `json:"plugins"`
-	Pipelines      []config.PipelineEntry                  `json:"pipelines"`
-	Webhooks       []configViewWebhook                     `json:"webhooks,omitempty"`
-	Tokens         []configViewToken                       `json:"tokens,omitempty"`
-	Routes         []config.RouteConfig                    `json:"routes,omitempty"`
-	CompiledRoutes map[string][]configViewCompiledRoute    `json:"compiled_routes,omitempty"`
+	Service        config.ServiceConfig                 `json:"service"`
+	API            configViewAPI                        `json:"api"`
+	State          config.StateConfig                   `json:"state"`
+	Plugins        map[string]configViewPlugin          `json:"plugins"`
+	Pipelines      []config.PipelineEntry               `json:"pipelines"`
+	Webhooks       []configViewWebhook                  `json:"webhooks,omitempty"`
+	Tokens         []configViewToken                    `json:"tokens,omitempty"`
+	Routes         []config.RouteConfig                 `json:"routes,omitempty"`
+	CompiledRoutes map[string][]configViewCompiledRoute `json:"compiled_routes,omitempty"`
 }
 
 // configViewCompiledRoute exposes one compiled route's match-and-dispatch
@@ -90,8 +89,8 @@ type configViewResponse struct {
 // and the entry-route predicate so the richer match shape is visible rather
 // than implicit.
 type configViewCompiledRoute struct {
-	ID          string                            `json:"id"`
-	Source      configViewCompiledRouteSource     `json:"source"`
+	ID          string                             `json:"id"`
+	Source      configViewCompiledRouteSource      `json:"source"`
 	Destination configViewCompiledRouteDestination `json:"destination"`
 }
 
@@ -165,7 +164,6 @@ func renderCompiledRoutes(router PipelineRouter) map[string][]configViewCompiled
 	}
 	return out
 }
-
 
 type configViewAPI struct {
 	Enabled bool                 `json:"enabled"`
@@ -241,7 +239,6 @@ func (s *Server) handleConfigView(w http.ResponseWriter, r *http.Request) {
 			Tokens:  apiTokens,
 		},
 		State:          cfg.State,
-		Workspace:      cfg.Workspace,
 		Plugins:        plugins,
 		Pipelines:      cfg.Pipelines,
 		Webhooks:       webhooks,
