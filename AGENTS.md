@@ -199,6 +199,10 @@ These are non-negotiable without explicit redesign:
 - Exported names need doc comments.
 - Avoid package stutter, vague names, and clever abstractions that hide
   behaviour.
+- Documentation follows `docs/DOCS_RUBRIC.md`. PRs that touch a path
+  declared in a doc's `coupled_to:` front-matter re-verify that doc and
+  bump its `verified:` date. Reader mode governs layout: reference is
+  coherent, runbooks are isolated, tutorials are narrative.
 
 ---
 
@@ -309,6 +313,8 @@ At handoff, summarise:
 - `docs/OPERATOR_GUIDE.md` — day-to-day operations.
 - `docs/TESTING.md` — testing workflows in detail.
 - `docs/AUDIENCES.md` — the eight reader profiles this project serves; cite cells when proposing or reviewing doc and affordance changes.
+- `docs/DOCS_RETHINK.md` — persona-driven blueprint for what the docs should become.
+- `docs/DOCS_RUBRIC.md` — the standard every canon document is held to (front-matter, density, linking, coupling, runbook shape).
 - `CONTRIBUTING.md` — build, test, and PR mechanics for new contributors.
 
 A Claude Code skill for operating Ductile lives in `skills/ductile/` and can
