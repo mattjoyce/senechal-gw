@@ -38,7 +38,7 @@ Ductile works by connecting **Connectors** (plugins) via **Pipelines** using an 
 -   **Parallel Dispatch** — Bounded worker pool with per-plugin concurrency caps and "concurrency-safe" manifest hints.
 -   **Plugin Aliasing** — Run multiple instances of the same connector (e.g., three different Discord notifications) without duplicating code.
 -   **Resilient Queue** — SQLite-backed, at-least-once delivery. Automatically recovers and retries orphaned jobs after a system crash.
--   **TUI "Overwatch"** — A beautiful terminal dashboard to monitor every job, retry, and event in real-time.
+-   **Optional TUI client** — Under redesign for v1.1 as the standalone `ductile-watch` binary; interim observability is the API and structured logs.
 -   **LLM-First Discovery** — Built-in `/skills` registry and auto-generated OpenAPI specs for seamless AI agent operation.
 -   **Local & Private** — Zero-ops, single-binary architecture. Your data, your keys, your hardware.
 
@@ -105,12 +105,7 @@ go build -o ductile ./cmd/ductile
 
 # 2. Start the gateway (uses ./config by default)
 ./ductile system start
-
-# 3. Launch the TUI (in another terminal) to watch the magic
-./ductile system watch
 ```
-
-![Ductile system watch TUI](docs/Ductile-system-watch-screenshot.png)
 
 ## Documentation
 

@@ -63,7 +63,9 @@ constraints (today: `AGENTS.md §3d`).
 Just heard about Ductile. Wants a five-minute path from install to seeing a
 real event flow, *before* reading documentation, so they can decide whether
 Ductile fits. Needs: a working minimal example, generated config (not
-copy-paste), one screenshot or asciinema of the watch TUI mid-flight.
+copy-paste), one screenshot or asciinema of a live event flow (the
+standalone `ductile-watch` TUI is under redesign; see
+`ductile-hickey-tui-rip-and-rewrite` working note).
 
 **4. H · O · E — veteran operator.**
 Running Ductile on Unraid or a homelab. Wants runbooks for failure modes —
@@ -134,8 +136,8 @@ for this cell, an agent-readable runbook for recovery flows.
 |---|---|---|
 | 1 H·C·L | partial | No signposted "first 30 minutes" path; idioms now live in `AGENTS.md` but the entry experience does not yet guide a learner there. |
 | 2 H·C·E | served | `AGENTS.md` (vocabulary, design grounding, constraints) plus `docs/ARCHITECTURE.md` cover the steady-state need. Per-package design notes would strengthen it. |
-| 3 H·O·L | partial / **deferred (Phase 3)** | Root `config.yaml` is the welcome-mat and is known-stale. Rethinking the exemplar is parked: `ductile init` + curated `examples/`. |
-| 4 H·O·E | partial / **gap** | Operator guide and deployment exist; symptom-driven runbooks do not. Net-new content. |
+| 3 H·O·L | partial / **deferred (Phase 3)** | Root `config.yaml` is the welcome-mat and is known-stale. Rethinking the exemplar is parked: `ductile init` + curated `examples/`. Watch TUI ripped pending `ductile-watch` rewrite (see `ductile-hickey-tui-rip-and-rewrite`). |
+| 4 H·O·E | partial / **gap** | Operator guide and deployment exist; symptom-driven runbooks do not. Net-new content. Interim observability is the API and structured logs; `ductile-watch` redesign tracked in `ductile-hickey-tui-rip-and-rewrite`. |
 | 5 A·C·L | partial | Schemas exist but are not advertised; no plugin is explicitly labelled as the canonical teaching example. |
 | 6 A·C·E | served | Unified `AGENTS.md` is the contract; doc-smoke lint covers it. |
 | 7 A·O·L | **gap / deferred (Phase 3)** | Same unblock as persona 3. |

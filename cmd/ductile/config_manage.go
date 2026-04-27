@@ -21,7 +21,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/plugin"
-	"github.com/mattjoyce/ductile/internal/tui/tokenmgr"
+	"github.com/mattjoyce/ductile/internal/tokenmgr"
 	"gopkg.in/yaml.v3"
 )
 

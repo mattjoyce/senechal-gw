@@ -9,6 +9,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
+	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.11.1
 	github.com/zeebo/blake3 v0.2.4
 	gopkg.in/yaml.v3 v3.0.1
@@ -40,7 +41,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rs/cors v1.11.1 // indirect
 	github.com/sahilm/fuzzy v0.1.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
