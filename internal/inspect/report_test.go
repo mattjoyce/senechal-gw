@@ -3,7 +3,6 @@ package inspect
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +14,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/storage"
 )
 
-func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
+func TestBuildReportRendersLineage(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -59,20 +58,6 @@ func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
 		t.Fatalf("Enqueue(child): %v", err)
 	}
 
-	workspaceBase := filepath.Join(tmpDir, "workspaces")
-	if err := os.MkdirAll(filepath.Join(workspaceBase, rootJobID), 0o755); err != nil {
-		t.Fatalf("MkdirAll(root workspace): %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspaceBase, rootJobID, "root.txt"), []byte("root"), 0o644); err != nil {
-		t.Fatalf("WriteFile(root artifact): %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(workspaceBase, childJobID, "nested"), 0o755); err != nil {
-		t.Fatalf("MkdirAll(child workspace): %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspaceBase, childJobID, "nested", "child.txt"), []byte("child"), 0o644); err != nil {
-		t.Fatalf("WriteFile(child artifact): %v", err)
-	}
-
 	out, err := BuildReport(ctx, db, dbPath, childJobID)
 	if err != nil {
 		t.Fatalf("BuildReport: %v", err)
@@ -84,13 +69,18 @@ func TestBuildReportRendersLineageAndArtifacts(t *testing.T) {
 		"chain :: step_b",
 		"origin_channel_id",
 		"chan-1",
-		"root.txt",
-		"nested/child.txt",
 		childJobID,
 	} {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("output missing %q:\n%s", needle, out)
 		}
+	}
+	// Sprint 18: report no longer renders workspace_path or artifacts.
+	if strings.Contains(out, "workspace  :") {
+		t.Fatalf("report still renders workspace line:\n%s", out)
+	}
+	if strings.Contains(out, "artifacts  :") {
+		t.Fatalf("report still renders artifacts line:\n%s", out)
 	}
 }
 

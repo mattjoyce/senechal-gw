@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -93,18 +91,16 @@ type ConfigSnapshotSummary struct {
 
 // Step is one entry in the execution lineage.
 type Step struct {
-	Hop           int             `json:"hop"`
-	Pipeline      string          `json:"pipeline"`
-	StepID        string          `json:"step_id"`
-	ContextID     string          `json:"context_id"`
-	ParentID      string          `json:"parent_id,omitempty"`
-	JobID         string          `json:"job_id,omitempty"`
-	Plugin        string          `json:"plugin,omitempty"`
-	Command       string          `json:"command,omitempty"`
-	Status        string          `json:"status,omitempty"`
-	WorkspacePath string          `json:"workspace_path,omitempty"`
-	Artifacts     []string        `json:"artifacts,omitempty"`
-	Baggage       json.RawMessage `json:"baggage"`
+	Hop       int             `json:"hop"`
+	Pipeline  string          `json:"pipeline"`
+	StepID    string          `json:"step_id"`
+	ContextID string          `json:"context_id"`
+	ParentID  string          `json:"parent_id,omitempty"`
+	JobID     string          `json:"job_id,omitempty"`
+	Plugin    string          `json:"plugin,omitempty"`
+	Command   string          `json:"command,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	Baggage   json.RawMessage `json:"baggage"`
 }
 
 // BuildReport renders a terminal-friendly lineage report for a job.
@@ -192,19 +188,8 @@ func BuildReport(ctx context.Context, db *sql.DB, statePath, jobID string) (stri
 
 		if step.JobID != "" {
 			fmt.Fprintf(&out, "    job        : %s (%s:%s, %s)\n", step.JobID, step.Plugin, step.Command, step.Status)
-			fmt.Fprintf(&out, "    workspace  : %s\n", step.WorkspacePath)
-			if len(step.Artifacts) == 0 {
-				fmt.Fprintf(&out, "    artifacts  : <none>\n")
-			} else {
-				fmt.Fprintf(&out, "    artifacts  :\n")
-				for _, artifact := range step.Artifacts {
-					fmt.Fprintf(&out, "      - %s\n", artifact)
-				}
-			}
 		} else {
 			fmt.Fprintf(&out, "    job        : <none>\n")
-			fmt.Fprintf(&out, "    workspace  : <unknown>\n")
-			fmt.Fprintf(&out, "    artifacts  : <unknown>\n")
 		}
 
 		fmt.Fprintf(&out, "    baggage    :\n")
@@ -276,7 +261,6 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 	report.Hops = len(contextLineage)
 	report.Steps = make([]Step, 0, len(contextLineage))
 
-	workspaceBaseDir := workspaceBaseDirFromStatePath(statePath)
 	for idx, node := range contextLineage {
 		stepJob, _ := lookupFirstJobByContext(ctx, db, node.ID)
 		step := Step{
@@ -295,9 +279,6 @@ func gatherReportData(ctx context.Context, db *sql.DB, statePath, jobID string) 
 			step.Plugin = stepJob.plugin
 			step.Command = stepJob.command
 			step.Status = stepJob.status
-			step.WorkspacePath = filepath.Join(workspaceBaseDir, stepJob.id)
-			artifacts, _ := listArtifacts(step.WorkspacePath)
-			step.Artifacts = artifacts
 		}
 
 		report.Steps = append(report.Steps, step)
@@ -522,40 +503,6 @@ func prettyJSON(raw json.RawMessage) string {
 		return string(raw)
 	}
 	return string(out)
-}
-
-func workspaceBaseDirFromStatePath(statePath string) string {
-	return filepath.Join(filepath.Dir(statePath), "workspaces")
-}
-
-func listArtifacts(workspaceDir string) ([]string, error) {
-	if _, err := os.Stat(workspaceDir); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	artifacts := make([]string, 0)
-	err := filepath.WalkDir(workspaceDir, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == workspaceDir || d.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(workspaceDir, path)
-		if err != nil {
-			return err
-		}
-		artifacts = append(artifacts, rel)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(artifacts)
-	return artifacts, nil
 }
 
 func renderUnset(v, fallback string) string {
