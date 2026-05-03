@@ -422,6 +422,9 @@ func deepMergeConfig(dst, src *Config) error {
 	if src.Service.JobLogRetention != 0 {
 		dst.Service.JobLogRetention = src.Service.JobLogRetention
 	}
+	if src.Service.JobQueueRetention != 0 {
+		dst.Service.JobQueueRetention = src.Service.JobQueueRetention
+	}
 
 	// Merge state config
 	if src.State.Path != "" {
@@ -573,6 +576,9 @@ func applyConfigDefaults(cfg *Config) *Config {
 	}
 	if cfg.Service.JobLogRetention == 0 {
 		cfg.Service.JobLogRetention = defaults.Service.JobLogRetention
+	}
+	if cfg.Service.JobQueueRetention == 0 {
+		cfg.Service.JobQueueRetention = defaults.Service.JobQueueRetention
 	}
 	if cfg.Service.MaxWorkers == 0 {
 		cfg.Service.MaxWorkers = defaults.Service.MaxWorkers

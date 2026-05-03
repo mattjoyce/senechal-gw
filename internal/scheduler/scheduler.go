@@ -174,6 +174,15 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 	}
 
+	// Prune terminal-state rows from the hot job_queue table. The canonical
+	// record lives in job_log; the queue retention is a short visibility
+	// window for "recently completed" rows.
+	if s.cfg.Service.JobQueueRetention > 0 {
+		if err := s.queue.PruneJobQueue(ctx, s.cfg.Service.JobQueueRetention); err != nil {
+			s.logger.Error("Failed to prune job queue", "error", err)
+		}
+	}
+
 }
 
 func (s *Scheduler) runStartupCatchUp(ctx context.Context) error {

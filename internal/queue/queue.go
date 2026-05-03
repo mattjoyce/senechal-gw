@@ -1548,6 +1548,32 @@ WHERE completed_at < ?;
 	return nil
 }
 
+// PruneJobQueue deletes terminal-state rows from job_queue older than the
+// retention duration. job_queue is the hot table for in-flight work; terminal
+// rows linger only for a short visibility window because their canonical
+// record lives in job_log (see PruneJobLogs for that retention).
+//
+// Without this prune the queue accumulates succeeded/failed/dead/skipped/
+// timed_out rows forever — the same defect surfaced by `system selfcheck`'s
+// queue_terminal_freshness invariant.
+func (q *Queue) PruneJobQueue(ctx context.Context, retention time.Duration) error {
+	if retention <= 0 {
+		return nil
+	}
+
+	cutoff := time.Now().UTC().Add(-retention)
+	_, err := q.db.ExecContext(ctx, `
+DELETE FROM job_queue
+WHERE status IN ('succeeded','skipped','failed','timed_out','dead')
+  AND completed_at IS NOT NULL
+  AND completed_at < ?;
+`, cutoff.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("prune job queue: %w", err)
+	}
+	return nil
+}
+
 // Complete marks a job complete and writes a log row. This signature is kept
 // stable since other sprint work may call it directly.
 func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {

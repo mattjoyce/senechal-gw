@@ -173,7 +173,8 @@ func (s *stubQueueService) UpdateJobForRecovery(_ context.Context, _ string, _ q
 func (s *stubQueueService) CompleteWithResult(_ context.Context, _ string, _ queue.Status, _ json.RawMessage, _, _ *string) error {
 	return nil
 }
-func (s *stubQueueService) PruneJobLogs(_ context.Context, _ time.Duration) error { return nil }
+func (s *stubQueueService) PruneJobLogs(_ context.Context, _ time.Duration) error  { return nil }
+func (s *stubQueueService) PruneJobQueue(_ context.Context, _ time.Duration) error { return nil }
 
 type circuitQueueStub struct {
 	stubQueueService

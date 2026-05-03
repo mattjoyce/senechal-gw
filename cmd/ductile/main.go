@@ -3442,9 +3442,11 @@ func checkQueueTerminalFreshness(ctx context.Context, db *sql.DB, statePath stri
 		Name: "queue_terminal_freshness",
 		Path: statePath,
 	}
+	// Predicate must match queue.PruneJobQueue's terminal-status set so the
+	// selfcheck invariant and the pruner agree on what "stale terminal" means.
 	const q = `
 SELECT COUNT(*) FROM job_queue
-WHERE status IN ('succeeded','failed','dead','timed_out')
+WHERE status IN ('succeeded','skipped','failed','timed_out','dead')
   AND completed_at IS NOT NULL
   AND completed_at < datetime('now','-2 days');
 `

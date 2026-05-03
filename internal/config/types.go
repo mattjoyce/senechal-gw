@@ -41,7 +41,8 @@ type ServiceConfig struct {
 	LogLevel        string        `yaml:"log_level"`
 	LogFormat       string        `yaml:"log_format"`
 	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
-	JobLogRetention time.Duration `yaml:"job_log_retention"`
+	JobLogRetention   time.Duration `yaml:"job_log_retention"`
+	JobQueueRetention time.Duration `yaml:"job_queue_retention"`
 	MaxWorkers      int           `yaml:"max_workers,omitempty"`
 	StrictMode      bool          `yaml:"strict_mode"`
 	AllowSymlinks   bool          `yaml:"allow_symlinks"`
@@ -483,7 +484,8 @@ func Defaults() *Config {
 			LogLevel:        "info",
 			LogFormat:       "json",
 			DedupeTTL:       24 * time.Hour,
-			JobLogRetention: 30 * 24 * time.Hour,
+			JobLogRetention:   30 * 24 * time.Hour,
+			JobQueueRetention: 24 * time.Hour,
 			MaxWorkers:      max(1, runtime.NumCPU()-1),
 			AllowSymlinks:   false,
 		},

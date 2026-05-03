@@ -170,6 +170,20 @@ func (mr *MockQueueServiceMockRecorder) PruneJobLogs(arg0, arg1 interface{}) *go
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PruneJobLogs", reflect.TypeOf((*MockQueueService)(nil).PruneJobLogs), arg0, arg1)
 }
 
+// PruneJobQueue mocks base method.
+func (m *MockQueueService) PruneJobQueue(arg0 context.Context, arg1 time.Duration) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PruneJobQueue", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PruneJobQueue indicates an expected call of PruneJobQueue.
+func (mr *MockQueueServiceMockRecorder) PruneJobQueue(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PruneJobQueue", reflect.TypeOf((*MockQueueService)(nil).PruneJobQueue), arg0, arg1)
+}
+
 // RecordCircuitBreakerTransition mocks base method.
 func (m *MockQueueService) RecordCircuitBreakerTransition(arg0 context.Context, arg1 queue.CircuitBreakerTransition) error {
 	m.ctrl.T.Helper()
