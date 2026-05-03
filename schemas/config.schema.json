@@ -39,6 +39,14 @@
         "$ref": "#/$defs/PluginConf"
       }
     },
+    "instances": {
+      "type": "array",
+      "description": "Outbound named relay instances.",
+      "items": { "$ref": "#/$defs/RelayInstanceConfig" }
+    },
+    "remote_ingress": {
+      "$ref": "#/$defs/RemoteIngressConfig"
+    },
     "routes": {
       "type": "array",
       "description": "Legacy event routing rules (prefer pipelines).",
@@ -452,6 +460,128 @@
         }
       },
       "required": ["from", "event_type", "to"],
+      "additionalProperties": false
+    },
+    "RelayInstanceConfig": {
+      "type": "object",
+      "description": "A named outbound remote event relay target.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "base_url": {
+          "type": "string",
+          "description": "Absolute http or https base URL for the remote Ductile instance."
+        },
+        "ingress_path": {
+          "type": "string",
+          "description": "Peer-specific relay ingress path on the receiver."
+        },
+        "secret_ref": {
+          "type": "string",
+          "description": "Token entry name containing the shared signing secret."
+        },
+        "key_id": {
+          "type": "string",
+          "description": "Optional key rotation identifier sent in X-Ductile-Key-Id."
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Per-request timeout (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "allow": {
+          "type": "array",
+          "description": "Optional outbound allowlist of relayable event types.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+          }
+        }
+      },
+      "required": ["name", "base_url", "ingress_path", "secret_ref"],
+      "additionalProperties": false
+    },
+    "RemoteIngressConfig": {
+      "type": "object",
+      "description": "Inbound trusted peer policy for remote event relay.",
+      "properties": {
+        "listen_path": {
+          "type": "string",
+          "description": "Root path for trusted relay ingress."
+        },
+        "max_body_size": {
+          "type": "string",
+          "description": "Maximum request body size (e.g. 1MB)."
+        },
+        "allowed_clock_skew": {
+          "type": "string",
+          "description": "Maximum accepted timestamp skew (Go duration).",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)+$"
+        },
+        "require_key_id": {
+          "type": "boolean",
+          "description": "Require X-Ductile-Key-Id on inbound relay requests.",
+          "default": false
+        },
+        "peers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RelayPeerConfig" }
+        }
+      },
+      "required": ["listen_path", "peers"],
+      "additionalProperties": false
+    },
+    "RelayPeerConfig": {
+      "type": "object",
+      "description": "One trusted inbound relay peer.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "secret_ref": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "accept": {
+          "type": "array",
+          "description": "Optional inbound allowlist of accepted event types.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+          }
+        },
+        "baggage": {
+          "$ref": "#/$defs/RelayBaggageRules"
+        }
+      },
+      "required": ["name", "secret_ref"],
+      "additionalProperties": false
+    },
+    "RelayBaggageRules": {
+      "type": "object",
+      "description": "Local policy for admitting remote baggage keys into root-entry context.",
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
       "additionalProperties": false
     },
     "WebhooksConfig": {

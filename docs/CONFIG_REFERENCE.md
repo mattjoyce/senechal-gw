@@ -18,6 +18,8 @@ Ductile uses a configuration directory, typically located at `~/.config/ductile/
 ├── config.yaml                  # [Operational] Service-level settings
 ├── webhooks.yaml                # [High Security] Webhook endpoints & secrets (include explicitly)
 ├── tokens.yaml                  # [High Security] API token registry (include explicitly)
+├── relay-instances.yaml         # [Operational] Outbound named relay targets (include explicitly)
+├── relay-ingress.yaml           # [Operational] Inbound trusted relay peers (include explicitly)
 ├── routes.yaml                  # [Operational] Global routing rules (include explicitly)
 └── scopes/                      # [High Security] Token scope definitions
     ├── admin-cli.json
@@ -33,7 +35,7 @@ Before starting, the system verifies all files against a monolithic `.checksums`
 | Tier | Files | Missing/Mismatch Behavior |
 | :--- | :--- | :--- |
 | **High Security** | `tokens.yaml`, `webhooks.yaml`, `scopes/*.json` | **Hard Fail**: System refuses to start (EX_CONFIG). |
-| **Operational** | `config.yaml`, `routes.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
+| **Operational** | `config.yaml`, `routes.yaml`, `relay-instances.yaml`, `relay-ingress.yaml` | **Warn & Continue**: Logs a warning but loads the file (Unless `strict_mode: true` is set, in which case it is a **Hard Fail**). |
 
 ### 2.1 The Seal (`.checksums`)
 The `.checksums` file is a YAML manifest containing BLAKE3 hashes indexed by the **absolute path** of every authorized file.
@@ -85,6 +87,39 @@ pipelines:
 `include:` entries may point at directories. Ductile loads `*.yaml` files
 from that directory (non-recursive) in alphabetical order and merges them
 as if they were listed explicitly.
+
+### 3.4 Naming convention for operator-facing instance identifiers
+
+When config introduces an operator-facing identifier for a Ductile
+instance, peer, or similarly named runtime endpoint, use lower-case
+hyphenated names:
+
+- `home-primary`
+- `lab`
+- `vps-backup`
+
+Do not use:
+
+- underscores: `home_primary`
+- spaces: `home primary`
+- mixed case: `HomePrimary`
+
+Recommended pattern:
+
+```text
+^[a-z0-9]+(?:-[a-z0-9]+)*$
+```
+
+Rationale:
+
+- reads cleanly in YAML and logs
+- maps directly to URL path segments
+- avoids competing conventions for operator-facing identities
+- keeps names distinct from Go identifiers and internal field names
+
+`service.name` is an operator-facing identity field and should follow
+this convention when it names a concrete Ductile instance rather than a
+generic service label.
 
 ---
 
@@ -192,6 +227,73 @@ routes:
     event_type: event.name
     to: target-plugin
 ```
+
+---
+
+## 4.6 relay-instances.yaml (Operational - Experimental)
+
+`relay-instances.yaml` defines named outbound Remote Event Relay targets.
+
+```yaml
+instances:
+  - name: lab
+    enabled: true
+    base_url: https://lab.example
+    ingress_path: /ingest/peer/home-primary
+    secret_ref: relay-lab-v1
+    key_id: v1
+    timeout: 10s
+    allow:
+      - backup.ready
+      - report.generated
+```
+
+Notes:
+- `name` is the stable operator-facing alias used by sender-side config.
+- `base_url` must be an absolute `http` or `https` URL.
+- `ingress_path` is the receiver path that accepts the trusted relay request.
+- `secret_ref` points at a `tokens.yaml` entry used as the shared HMAC secret.
+- `allow` is an optional sender-side event-type allowlist.
+
+---
+
+## 4.7 relay-ingress.yaml (Operational - Experimental)
+
+`relay-ingress.yaml` defines inbound trusted peers and the local acceptance policy for Remote Event Relay.
+
+```yaml
+remote_ingress:
+  listen_path: /ingest/peer
+  max_body_size: 1MB
+  allowed_clock_skew: 5m
+  require_key_id: true
+  peers:
+    - name: home-primary
+      enabled: true
+      secret_ref: relay-lab-v1
+      key_id: v1
+      accept:
+        - backup.ready
+      baggage:
+        allow:
+          - trace_id
+          - requested_by
+```
+
+Notes:
+- `listen_path` is the trusted relay ingress root mounted on Ductile's HTTP server.
+- Relay ingress listens on `api.listen`; it does not introduce a separate listener address in Phase 1.
+- `allowed_clock_skew` controls timestamp validation for replay-window hardening.
+- `require_key_id` requires `X-Ductile-Key-Id` on inbound requests.
+- `peers[].accept` is an optional receiver-side event-type allowlist.
+- `peers[].baggage.allow` is a local policy for which remote baggage keys may seed new local root context.
+
+Accepted relay requests are treated as fresh local root ingress events:
+- the receiver performs normal local enqueue
+- the receiver performs normal local exact-match routing
+- no cross-instance `event_context` lineage is created
+
+See [REMOTE_EVENT_RELAY.md](REMOTE_EVENT_RELAY.md) for a user-level guide and an end-to-end example.
 
 ---
 

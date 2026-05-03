@@ -35,6 +35,13 @@
         "$ref": "config.schema.json#/$defs/PluginConf"
       }
     },
+    "instances": {
+      "type": "array",
+      "items": { "$ref": "config.schema.json#/$defs/RelayInstanceConfig" }
+    },
+    "remote_ingress": {
+      "$ref": "config.schema.json#/$defs/RemoteIngressConfig"
+    },
     "routes": {
       "type": "array",
       "items": { "$ref": "config.schema.json#/$defs/RouteConfig" }
