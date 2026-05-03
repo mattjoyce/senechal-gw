@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS job_log (
 CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);
 CREATE INDEX IF NOT EXISTS job_log_enqueued_config_snapshot_idx ON job_log(enqueued_config_snapshot_id);
 CREATE INDEX IF NOT EXISTS job_log_started_config_snapshot_idx ON job_log(started_config_snapshot_id);
+CREATE INDEX IF NOT EXISTS job_log_completed_at_idx ON job_log(completed_at);
 
 -- Circuit Breakers: Fault tolerance state.
 CREATE TABLE IF NOT EXISTS circuit_breakers (
