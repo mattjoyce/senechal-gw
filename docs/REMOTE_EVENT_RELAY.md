@@ -179,6 +179,19 @@ Expected flow:
 4. `lab` enqueues local jobs for `process-offsite-backup`.
 5. `lab` runs `backup-verifier` and `cold-storage-sync` according to its own local config.
 
+CLI example:
+
+```bash
+ductile relay send lab \
+  --event backup.ready \
+  --payload '{"archive_path":"/srv/backups/latest.tar.zst","archive_id":"nightly-2026-05-03"}' \
+  --dedupe-key backup.ready:nightly-2026-05-03 \
+  --origin-plugin backup-runner \
+  --origin-job-id job-123 \
+  --origin-event-id evt-456 \
+  --baggage '{"trace_id":"tr-789"}'
+```
+
 Wire shape:
 
 ```json

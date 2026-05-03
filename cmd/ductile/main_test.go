@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,9 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/plugin"
+	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/relay"
+	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
 	"github.com/mattjoyce/ductile/internal/storage"
@@ -294,6 +299,18 @@ func TestRunJobNounActionHelp(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Usage: ductile job inspect") {
 		t.Fatalf("stdout missing inspect action help usage: %s", stdout)
+	}
+}
+
+func TestRunRelayNounActionHelp(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runRelayNoun([]string{"send", "--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runRelayNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: ductile relay send") {
+		t.Fatalf("stdout missing relay send action help usage: %s", stdout)
 	}
 }
 
@@ -845,6 +862,202 @@ plugins: {}
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func writeRelaySenderConfigFixture(t *testing.T, dir, baseURL string) {
+	t.Helper()
+
+	pluginsDir := filepath.Join(dir, "plugins")
+	scopesDir := filepath.Join(dir, "scopes")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(scopesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+include:
+  - tokens.yaml
+  - relay-instances.yaml
+service:
+  name: home-primary
+  tick_interval: 60s
+  log_level: info
+  allow_symlinks: true
+state:
+  path: ` + filepath.Join(dir, "state.db") + `
+plugin_roots:
+  - ` + pluginsDir + `
+plugins: {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scopesDir, "relay.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensYAML := `
+tokens:
+  - name: relay-lab-v1
+    key: shared-secret
+    scopes_file: scopes/relay.json
+    scopes_hash: blake3:dummy
+`
+	if err := os.WriteFile(filepath.Join(dir, "tokens.yaml"), []byte(tokensYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	relayInstancesYAML := `
+instances:
+  - name: lab
+    enabled: true
+    base_url: ` + baseURL + `
+    ingress_path: /ingest/peer/home-primary
+    secret_ref: relay-lab-v1
+    key_id: v1
+    timeout: 5s
+    allow:
+      - backup.ready
+`
+	if err := os.WriteFile(filepath.Join(dir, "relay-instances.yaml"), []byte(relayInstancesYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunRelaySendDeliversConfiguredEvent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	db, err := storage.OpenSQLite(context.Background(), filepath.Join(tmpDir, "relay.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := queue.New(db)
+	contexts := state.NewContextStore(db)
+
+	pipelinePath := filepath.Join(tmpDir, "pipelines.yaml")
+	pipelineYAML := `
+pipelines:
+  - name: process-offsite-backup
+    on: backup.ready
+    steps:
+      - id: verify-backup
+        uses: echo
+        baggage:
+          trace_id: context.trace_id
+`
+	if err := os.WriteFile(pipelinePath, []byte(pipelineYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	engine, err := router.LoadFromConfigFiles([]string{pipelinePath}, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("LoadFromConfigFiles: %v", err)
+	}
+
+	receiverCfg := &config.Config{
+		Service: config.ServiceConfig{Name: "lab"},
+		RemoteIngress: &config.RemoteIngressConfig{
+			ListenPath:       "/ingest/peer",
+			AllowedClockSkew: 5 * time.Minute,
+			RequireKeyID:     true,
+			TrustedPeers: []config.RelayPeerConfig{
+				{
+					Name:      "home-primary",
+					Enabled:   true,
+					SecretRef: "relay-lab-v1",
+					KeyID:     "v1",
+					Accept:    []string{"backup.ready"},
+					Baggage:   config.RelayBaggageRules{Allow: []string{"trace_id"}},
+				},
+			},
+		},
+		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+	}
+	receiver, err := relay.NewReceiver(receiverCfg, q, engine, contexts, slog.Default())
+	if err != nil {
+		t.Fatalf("NewReceiver: %v", err)
+	}
+
+	mux := chi.NewRouter()
+	mux.Post(receiver.RoutePattern(), receiver.HandleHTTP)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	writeRelaySenderConfigFixture(t, tmpDir, server.URL)
+	lockCode, _, lockStderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmpDir})
+	if lockCode != 0 {
+		t.Fatalf("runConfigHashUpdate() code = %d, stderr: %s", lockCode, lockStderr)
+	}
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runRelaySend([]string{
+			"--config-dir", tmpDir,
+			"--event", "backup.ready",
+			"--payload", `{"path":"/srv/backups/latest.tar.zst"}`,
+			"--baggage", `{"trace_id":"tr-789"}`,
+			"--dedupe-key", "backup.ready:2026-05-03",
+			"--origin-plugin", "backup-runner",
+			"--origin-job-id", "job-123",
+			"--origin-event-id", "evt-456",
+			"--json",
+			"lab",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("runRelaySend() code = %d, stderr: %s", code, stderr)
+	}
+
+	var accepted relay.AcceptanceResponse
+	if err := json.Unmarshal([]byte(stdout), &accepted); err != nil {
+		t.Fatalf("failed to parse relay send json: %v\noutput=%s", err, stdout)
+	}
+	if accepted.Status != "accepted" {
+		t.Fatalf("accepted.Status = %q, want accepted", accepted.Status)
+	}
+	if accepted.JobID == "" {
+		t.Fatal("expected accepted job id")
+	}
+
+	job, err := q.GetJobByID(context.Background(), accepted.JobID)
+	if err != nil {
+		t.Fatalf("GetJobByID: %v", err)
+	}
+	if job.Plugin != "echo" || job.Command != "handle" {
+		t.Fatalf("job = %+v, want echo handle", job)
+	}
+
+	var payload []byte
+	var eventContextID string
+	if err := db.QueryRow(`SELECT payload, event_context_id FROM job_queue WHERE id = ?`, accepted.JobID).Scan(&payload, &eventContextID); err != nil {
+		t.Fatalf("query job payload/context: %v", err)
+	}
+
+	var event protocol.Event
+	if err := json.Unmarshal(payload, &event); err != nil {
+		t.Fatalf("Unmarshal payload event: %v", err)
+	}
+	if event.Type != "backup.ready" {
+		t.Fatalf("event.Type = %q, want backup.ready", event.Type)
+	}
+	if event.Source != "relay:home-primary" {
+		t.Fatalf("event.Source = %q, want relay:home-primary", event.Source)
+	}
+
+	ctxRow, err := contexts.Get(context.Background(), eventContextID)
+	if err != nil {
+		t.Fatalf("contexts.Get: %v", err)
+	}
+	var scope map[string]any
+	if err := json.Unmarshal(ctxRow.AccumulatedJSON, &scope); err != nil {
+		t.Fatalf("Unmarshal accumulated_json: %v", err)
+	}
+	if scope["trace_id"] != "tr-789" {
+		t.Fatalf("trace_id = %v, want tr-789", scope["trace_id"])
 	}
 }
 
