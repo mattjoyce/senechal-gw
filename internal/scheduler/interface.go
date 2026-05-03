@@ -27,4 +27,5 @@ type QueueService interface {
 	UpdateJobForRecovery(ctx context.Context, jobID string, newStatus queue.Status, newAttempt int, nextRetryAt *time.Time, lastError string) error
 	CompleteWithResult(ctx context.Context, jobID string, status queue.Status, result json.RawMessage, lastError, stderr *string) error
 	PruneJobLogs(ctx context.Context, retention time.Duration) error
+	PruneJobQueue(ctx context.Context, retention time.Duration) error
 }

@@ -1587,3 +1587,118 @@ func TestDequeueEligibleCombinedFilters(t *testing.T) {
 		t.Fatalf("expected job %s (beta no-key), got %v", id3, j)
 	}
 }
+
+func TestPruneJobQueueRemovesStaleTerminalRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	// Seed mixed rows directly via SQL: stale terminals (each terminal status),
+	// one fresh terminal (within retention), and one in-flight (no completed_at).
+	now := time.Now().UTC()
+	staleAt := now.Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	freshAt := now.Add(-30 * time.Minute).Format(time.RFC3339Nano)
+
+	insert := func(id, status, completedAt string) {
+		t.Helper()
+		_, err := db.ExecContext(ctx, `
+INSERT INTO job_queue (id, plugin, command, status, attempt, max_attempts, submitted_by, created_at, completed_at)
+VALUES (?, 'echo', 'poll', ?, 1, 4, 'test', ?, ?);
+`, id, status, staleAt, completedAt)
+		if err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+
+	for _, status := range []string{"succeeded", "skipped", "failed", "timed_out", "dead"} {
+		insert("stale-"+status, status, staleAt)
+	}
+	insert("fresh-succeeded", "succeeded", freshAt)
+	// In-flight: no completed_at, status=queued.
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO job_queue (id, plugin, command, status, attempt, max_attempts, submitted_by, created_at)
+VALUES ('in-flight', 'echo', 'poll', 'queued', 1, 4, 'test', ?);
+`, staleAt); err != nil {
+		t.Fatalf("insert in-flight: %v", err)
+	}
+
+	// Sanity: 7 rows present.
+	if got := countQueueRows(t, db); got != 7 {
+		t.Fatalf("expected 7 rows pre-prune, got %d", got)
+	}
+
+	if err := q.PruneJobQueue(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("PruneJobQueue: %v", err)
+	}
+
+	// Expect 2 rows: fresh-succeeded + in-flight.
+	if got := countQueueRows(t, db); got != 2 {
+		t.Fatalf("expected 2 rows post-prune, got %d", got)
+	}
+
+	survivors := map[string]bool{}
+	rows, err := db.QueryContext(ctx, `SELECT id FROM job_queue ORDER BY id;`)
+	if err != nil {
+		t.Fatalf("select survivors: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		survivors[id] = true
+	}
+	if !survivors["fresh-succeeded"] {
+		t.Fatalf("fresh-succeeded should survive prune; survivors=%v", survivors)
+	}
+	if !survivors["in-flight"] {
+		t.Fatalf("in-flight should survive prune; survivors=%v", survivors)
+	}
+}
+
+func TestPruneJobQueueZeroRetentionIsNoop(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	staleAt := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO job_queue (id, plugin, command, status, attempt, max_attempts, submitted_by, created_at, completed_at)
+VALUES ('stale', 'echo', 'poll', 'succeeded', 1, 4, 'test', ?, ?);
+`, staleAt, staleAt); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if err := q.PruneJobQueue(ctx, 0); err != nil {
+		t.Fatalf("PruneJobQueue(0): %v", err)
+	}
+	if got := countQueueRows(t, db); got != 1 {
+		t.Fatalf("expected row preserved with retention=0, got %d", got)
+	}
+}
+
+func countQueueRows(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM job_queue;`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	return n
+}
