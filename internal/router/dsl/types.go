@@ -30,18 +30,48 @@ type PipelineSpec struct {
 // StepSpec is one DSL step. Exactly one execution field must be set:
 // - uses
 // - call
+// - relay
 // - steps
 // - split
 type StepSpec struct {
 	ID    string                `yaml:"id,omitempty"`
 	Uses  string                `yaml:"uses,omitempty"`
 	Call  string                `yaml:"call,omitempty"`
+	Relay *RelaySpec            `yaml:"relay,omitempty"`
 	If    *conditions.Condition `yaml:"if,omitempty"`
 	Steps []StepSpec            `yaml:"steps,omitempty"`
 	Split []StepSpec            `yaml:"split,omitempty"`
 	With  map[string]string     `yaml:"with,omitempty"`
 	// Baggage names durable values for downstream pipeline steps.
 	Baggage *BaggageSpec `yaml:"baggage,omitempty"`
+}
+
+// RelaySpec defines one first-class remote event relay step.
+type RelaySpec struct {
+	To        string            `yaml:"to"`
+	Event     string            `yaml:"event"`
+	DedupeKey string            `yaml:"dedupe_key,omitempty"`
+	With      map[string]string `yaml:"with,omitempty"`
+	Baggage   *BaggageSpec      `yaml:"baggage,omitempty"`
+}
+
+func (r *RelaySpec) clone() *RelaySpec {
+	if r == nil {
+		return nil
+	}
+	out := &RelaySpec{
+		To:        r.To,
+		Event:     r.Event,
+		DedupeKey: r.DedupeKey,
+		Baggage:   r.Baggage.clone(),
+	}
+	if len(r.With) > 0 {
+		out.With = make(map[string]string, len(r.With))
+		for key, value := range r.With {
+			out.With[key] = value
+		}
+	}
+	return out
 }
 
 // BaggageSpec defines the durable values a uses step claims.
@@ -146,6 +176,7 @@ type NodeKind string
 const (
 	NodeKindUses   NodeKind = "uses"
 	NodeKindCall   NodeKind = "call"
+	NodeKindRelay  NodeKind = "relay"
 	NodeKindSwitch NodeKind = "switch"
 )
 
@@ -155,6 +186,7 @@ type Node struct {
 	Kind      NodeKind
 	Uses      string
 	Call      string
+	Relay     *RelaySpec
 	Condition *conditions.Condition
 	With      map[string]string
 	Baggage   *BaggageSpec

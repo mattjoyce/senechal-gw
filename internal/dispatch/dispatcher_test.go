@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/relay"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
@@ -270,6 +273,136 @@ echo '{"status":"ok","result":"captured"}'
 	}
 	if strings.Contains(string(rawStdin), "workspace_dir") {
 		t.Fatalf("workspace_dir substring leaked into request envelope: %s", string(rawStdin))
+	}
+}
+
+func TestDispatcher_ExecuteCoreRelayStep(t *testing.T) {
+	disp, db, _, cleanup := setupTestDispatcher(t)
+	defer cleanup()
+
+	var got relay.Envelope
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("relay method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/ingest/peer/home-primary" {
+			t.Fatalf("relay path = %s", r.URL.Path)
+		}
+		if peer := r.Header.Get(relay.HeaderPeer); peer != "home-primary" {
+			t.Fatalf("relay peer header = %q, want home-primary", peer)
+		}
+		if keyID := r.Header.Get(relay.HeaderKeyID); keyID != "v1" {
+			t.Fatalf("relay key id = %q, want v1", keyID)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode relay envelope: %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"accepted","peer":"home-primary","event_type":"backup.ready","receiver_event_id":"evt-remote","job_id":"job-remote"}`))
+	}))
+	defer server.Close()
+
+	set, err := dsl.CompileSpecs([]dsl.PipelineSpec{{
+		Name: "ship-backup",
+		On:   "backup.archive.created",
+		Steps: []dsl.StepSpec{{
+			ID: "relay-to-lab",
+			Relay: &dsl.RelaySpec{
+				To:        "lab",
+				Event:     "backup.ready",
+				DedupeKey: "payload.archive_id",
+				With: map[string]string{
+					"archive_id":   "payload.archive_id",
+					"archive_path": "payload.archive_path",
+				},
+				Baggage: &dsl.BaggageSpec{
+					Mappings: map[string]string{"trace_id": "context.trace_id"},
+				},
+			},
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("CompileSpecs: %v", err)
+	}
+	disp.router = router.New(set, nil)
+	disp.cfg.Service.Name = "home-primary"
+	disp.cfg.Tokens = []config.TokenEntry{{Name: "relay_lab_v1", Key: "shared-secret"}}
+	disp.cfg.RelayInstances = []config.RelayInstanceConfig{{
+		Name:        "lab",
+		Enabled:     true,
+		BaseURL:     server.URL,
+		IngressPath: "/ingest/peer/home-primary",
+		SecretRef:   "relay_lab_v1",
+		KeyID:       "v1",
+		Allow:       []string{"backup.ready"},
+	}}
+
+	ctx := context.Background()
+	eventCtx, err := disp.contexts.Create(ctx, nil, "ship-backup", "relay-to-lab", json.RawMessage(`{"trace_id":"tr-1"}`))
+	if err != nil {
+		t.Fatalf("ContextStore.Create: %v", err)
+	}
+	payload, err := json.Marshal(protocol.Event{
+		Type:    "backup.archive.created",
+		EventID: "evt-local",
+		Payload: map[string]any{
+			"archive_id":   "archive-1",
+			"archive_path": "/srv/backups/latest.tar.zst",
+			"ignored":      "not relayed",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	jobID, err := disp.queue.Enqueue(ctx, queue.EnqueueRequest{
+		Plugin:         "core.relay",
+		Command:        "handle",
+		Payload:        payload,
+		SubmittedBy:    "route",
+		EventContextID: &eventCtx.ID,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue(core.relay): %v", err)
+	}
+	job, err := disp.queue.Dequeue(ctx)
+	if err != nil || job == nil {
+		t.Fatalf("Dequeue(core.relay): job=%v err=%v", job, err)
+	}
+
+	disp.executeJob(ctx, job)
+
+	result, err := disp.queue.GetJobByID(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJobByID(core.relay): %v", err)
+	}
+	if result.Status != queue.StatusSucceeded {
+		t.Fatalf("core.relay status = %q, want %q, error=%v", result.Status, queue.StatusSucceeded, result.LastError)
+	}
+	if got.Event.Type != "backup.ready" {
+		t.Fatalf("relayed event type = %q, want backup.ready", got.Event.Type)
+	}
+	if got.Event.DedupeKey != "archive-1" {
+		t.Fatalf("relayed dedupe key = %q, want archive-1", got.Event.DedupeKey)
+	}
+	if got.Event.Payload["archive_id"] != "archive-1" || got.Event.Payload["archive_path"] != "/srv/backups/latest.tar.zst" {
+		t.Fatalf("relayed payload = %+v", got.Event.Payload)
+	}
+	if _, exists := got.Event.Payload["ignored"]; exists {
+		t.Fatalf("relayed payload included non-projected field: %+v", got.Event.Payload)
+	}
+	if got.Baggage["trace_id"] != "tr-1" {
+		t.Fatalf("relayed baggage = %+v, want trace_id", got.Baggage)
+	}
+	if got.Origin.Instance != "home-primary" || got.Origin.JobID != job.ID || got.Origin.EventID != "evt-local" {
+		t.Fatalf("relayed origin = %+v", got.Origin)
+	}
+
+	var status string
+	if err := db.QueryRow("SELECT status FROM job_queue WHERE id = ?", jobID).Scan(&status); err != nil {
+		t.Fatalf("query relay job status: %v", err)
+	}
+	if status != string(queue.StatusSucceeded) {
+		t.Fatalf("db relay status = %s, want succeeded", status)
 	}
 }
 

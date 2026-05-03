@@ -620,6 +620,7 @@ func renderSteps(steps []config.StepEntry) []map[string]any {
 			"id":      step.ID,
 			"uses":    step.Uses,
 			"call":    step.Call,
+			"relay":   step.Relay,
 			"steps":   renderSteps(step.Steps),
 			"split":   renderSteps(step.Split),
 			"with":    step.With,

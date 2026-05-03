@@ -110,6 +110,10 @@
           "type": "string",
           "description": "Inline call expression (alternative to uses)."
         },
+        "relay": {
+          "$ref": "#/$defs/RelayStep",
+          "description": "First-class remote event relay step."
+        },
         "if": {
           "$ref": "#/$defs/Condition",
           "description": "Optional structured condition controlling whether the step runs."
@@ -143,6 +147,7 @@
           "not": {
             "anyOf": [
               { "required": ["call"] },
+              { "required": ["relay"] },
               { "required": ["steps"] },
               { "required": ["split"] }
             ]
@@ -153,6 +158,20 @@
           "not": {
             "anyOf": [
               { "required": ["uses"] },
+              { "required": ["relay"] },
+              { "required": ["steps"] },
+              { "required": ["split"] },
+              { "required": ["with"] },
+              { "required": ["baggage"] }
+            ]
+          }
+        },
+        {
+          "required": ["relay"],
+          "not": {
+            "anyOf": [
+              { "required": ["uses"] },
+              { "required": ["call"] },
               { "required": ["steps"] },
               { "required": ["split"] },
               { "required": ["with"] },
@@ -166,6 +185,7 @@
             "anyOf": [
               { "required": ["uses"] },
               { "required": ["call"] },
+              { "required": ["relay"] },
               { "required": ["split"] },
               { "required": ["with"] },
               { "required": ["baggage"] }
@@ -178,6 +198,7 @@
             "anyOf": [
               { "required": ["uses"] },
               { "required": ["call"] },
+              { "required": ["relay"] },
               { "required": ["steps"] },
               { "required": ["with"] },
               { "required": ["baggage"] }
@@ -185,6 +206,39 @@
           }
         }
       ]
+    },
+    "RelayStep": {
+      "type": "object",
+      "description": "Remote Event Relay step. Trust material and URLs remain in relay-instances.yaml.",
+      "properties": {
+        "to": {
+          "type": "string",
+          "description": "Named outbound relay instance.",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "event": {
+          "type": "string",
+          "description": "Remote event type to deliver.",
+          "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "dedupe_key": {
+          "type": "string",
+          "description": "Optional expression for the remote event dedupe_key."
+        },
+        "with": {
+          "type": "object",
+          "description": "Remote event payload projection. Values are expressions resolved from payload.* or context.*.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "baggage": {
+          "$ref": "#/$defs/BaggageSpec",
+          "description": "Optional explicit baggage projection into the relay envelope."
+        }
+      },
+      "required": ["to", "event"],
+      "additionalProperties": false
     },
     "BaggageSpec": {
       "type": "object",

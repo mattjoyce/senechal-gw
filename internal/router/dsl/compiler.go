@@ -174,6 +174,9 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 	if strings.TrimSpace(step.Call) != "" {
 		modeCount++
 	}
+	if step.Relay != nil {
+		modeCount++
+	}
 	if len(step.Steps) > 0 {
 		modeCount++
 	}
@@ -181,7 +184,7 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 		modeCount++
 	}
 	if modeCount != 1 {
-		return nil, nil, fmt.Errorf("step must define exactly one of uses, call, steps, or split")
+		return nil, nil, fmt.Errorf("step must define exactly one of uses, call, relay, steps, or split")
 	}
 	if len(step.With) > 0 && strings.TrimSpace(step.Uses) == "" {
 		return nil, nil, fmt.Errorf("with is only supported on uses steps")
@@ -245,6 +248,27 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 		}
 		return entry, terminal, nil
 
+	case step.Relay != nil:
+		if err := validateRelaySpec(step.Relay); err != nil {
+			return nil, nil, err
+		}
+		id, err := b.allocNodeID(step.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		node := Node{
+			ID:    id,
+			Kind:  NodeKindRelay,
+			Relay: step.Relay.clone(),
+		}
+		b.pipeline.Nodes[id] = node
+		entry = []string{id}
+		terminal = []compileExit{{NodeID: id}}
+		if cond != nil {
+			return b.wrapConditionalStep(id, cond, entry, terminal)
+		}
+		return entry, terminal, nil
+
 	case len(step.Steps) > 0:
 		return b.compileSteps(step.Steps)
 
@@ -263,6 +287,32 @@ func (b *compileBuilder) compileStep(step StepSpec) (entry []string, terminal []
 	}
 
 	return nil, nil, fmt.Errorf("unreachable step state")
+}
+
+func validateRelaySpec(spec *RelaySpec) error {
+	if spec == nil {
+		return fmt.Errorf("relay is required")
+	}
+	if strings.TrimSpace(spec.To) == "" {
+		return fmt.Errorf("relay.to is required")
+	}
+	if strings.TrimSpace(spec.Event) == "" {
+		return fmt.Errorf("relay.event is required")
+	}
+	if spec.Baggage != nil && !spec.Baggage.Empty() {
+		if err := validateBaggageSpec(spec.Baggage); err != nil {
+			return fmt.Errorf("relay.baggage: %w", err)
+		}
+	}
+	for key, expr := range spec.With {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("relay.with keys must be non-empty")
+		}
+		if strings.TrimSpace(expr) == "" {
+			return fmt.Errorf("relay.with.%s expression must be non-empty", key)
+		}
+	}
+	return nil
 }
 
 func (b *compileBuilder) wrapConditionalStep(stepID string, cond *conditions.Condition, entry []string, terminal []compileExit) ([]string, []compileExit, error) {
@@ -467,6 +517,13 @@ func routeDestinationForNode(node Node) CompiledRouteDestination {
 			Kind:    CompiledRouteDestinationUses,
 			StepID:  node.ID,
 			Plugin:  "core.switch",
+			Command: "handle",
+		}
+	case NodeKindRelay:
+		return CompiledRouteDestination{
+			Kind:    CompiledRouteDestinationUses,
+			StepID:  node.ID,
+			Plugin:  "core.relay",
 			Command: "handle",
 		}
 	default:

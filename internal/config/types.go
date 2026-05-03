@@ -373,10 +373,20 @@ type StepEntry struct {
 	ID      string            `yaml:"id,omitempty"`
 	Uses    string            `yaml:"uses,omitempty"`
 	Call    string            `yaml:"call,omitempty"`
+	Relay   *RelayStepEntry   `yaml:"relay,omitempty"`
 	Steps   []StepEntry       `yaml:"steps,omitempty"`
 	Split   []StepEntry       `yaml:"split,omitempty"`
 	With    map[string]string `yaml:"with,omitempty"`
 	Baggage map[string]string `yaml:"baggage,omitempty"`
+}
+
+// RelayStepEntry is a first-class remote relay step in pipeline config views.
+type RelayStepEntry struct {
+	To        string            `yaml:"to" json:"to"`
+	Event     string            `yaml:"event" json:"event"`
+	DedupeKey string            `yaml:"dedupe_key,omitempty" json:"dedupe_key,omitempty"`
+	With      map[string]string `yaml:"with,omitempty" json:"with,omitempty"`
+	Baggage   map[string]string `yaml:"baggage,omitempty" json:"baggage,omitempty"`
 }
 
 // PipelinesFileConfig wraps pipeline entries for standalone pipelines/*.yaml.

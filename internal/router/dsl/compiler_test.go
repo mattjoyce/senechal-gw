@@ -169,6 +169,47 @@ func TestCompileSpecsAcceptsStructuredIfCondition(t *testing.T) {
 	}
 }
 
+func TestCompileSpecsAcceptsRelayStep(t *testing.T) {
+	specs := []PipelineSpec{{
+		Name: "ship-backup",
+		On:   "backup.archive.created",
+		Steps: []StepSpec{{
+			ID: "relay-to-lab",
+			Relay: &RelaySpec{
+				To:        "lab",
+				Event:     "backup.ready",
+				DedupeKey: "payload.archive_id",
+				With: map[string]string{
+					"archive_id":   "payload.archive_id",
+					"archive_path": "payload.archive_path",
+				},
+				Baggage: &BaggageSpec{
+					Mappings: map[string]string{"trace_id": "context.trace_id"},
+				},
+			},
+		}},
+	}}
+
+	set, err := CompileSpecs(specs)
+	if err != nil {
+		t.Fatalf("CompileSpecs() error = %v", err)
+	}
+	node := set.Pipelines["ship-backup"].Nodes["relay-to-lab"]
+	if node.Kind != NodeKindRelay {
+		t.Fatalf("relay node kind = %q, want %q", node.Kind, NodeKindRelay)
+	}
+	if node.Relay == nil || node.Relay.To != "lab" || node.Relay.Event != "backup.ready" {
+		t.Fatalf("relay spec = %+v", node.Relay)
+	}
+	routes := set.Pipelines["ship-backup"].CompiledRoutes
+	if len(routes) == 0 {
+		t.Fatalf("expected compiled routes")
+	}
+	if routes[0].Destination.Plugin != "core.relay" || routes[0].Destination.Command != "handle" {
+		t.Fatalf("relay route destination = %+v, want core.relay handle", routes[0].Destination)
+	}
+}
+
 func TestCompileSpecsRejectsWithOnCallStep(t *testing.T) {
 	specs := []PipelineSpec{{
 		Name: "invalid-with",

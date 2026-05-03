@@ -28,7 +28,7 @@ pipelines:
 | `on` | String | The event type that triggers this pipeline. Must match exactly. |
 | `on-hook` | String | Lifecycle signal that triggers this pipeline (`job.completed` / `job.failed` / `job.timed_out`). Mutually exclusive with `on`. |
 | `from_plugin` | String | **Optional source-plugin selector.** When set, the trigger or hook signal only matches when the upstream source plugin is exactly this plugin. Empty (default) preserves today's behaviour — match regardless of source plugin. See §2.2. |
-| `if` | Condition | **Optional pipeline-level trigger predicate.** Evaluated against the event's payload (and the upstream job's accumulated durable context, when available) after the trigger/hook name match; a false result skips dispatch entirely. Same shape as step-level `if:` (see §3.5). |
+| `if` | Condition | **Optional pipeline-level trigger predicate.** Evaluated against the event's payload (and the upstream job's accumulated durable context, when available) after the trigger/hook name match; a false result skips dispatch entirely. Same shape as step-level `if:` (see §3.6). |
 | `max_depth` | Integer | **Optional author-set route depth cap.** Overrides the auto-computed cap. `0` means *unlimited*. Negative values are rejected at config load. |
 | `execution_mode`| Enum | `async` (fire-and-forget) or `synchronous` (API blocks for result). |
 | `timeout` | Duration| Max time to wait for a `synchronous` pipeline (e.g., `5s`, `2m`). |
@@ -42,7 +42,7 @@ Both `if:` blocks share the same predicate engine — atomic
 | Surface | Evaluated when | Scope | Effect on false |
 |---|---|---|---|
 | Pipeline-level `if:` | Trigger/hook name has matched, before any dispatch | `payload`, `context` (when available) | No dispatch at all — no `core.switch`, no plugin spawn |
-| Step-level `if:` (§3.5) | At each step, after upstream steps run | `payload`, `context`, `config` | Step bypassed via internal `core.switch`; downstream steps still run |
+| Step-level `if:` (§3.6) | At each step, after upstream steps run | `payload`, `context`, `config` | Step bypassed via internal `core.switch`; downstream steps still run |
 
 Use pipeline-level `if:` to **suppress dispatch** when an event isn't
 relevant to a pipeline at all. Use step-level `if:` to **gate a step**
@@ -211,7 +211,32 @@ steps:
       - uses: s3-archiver
 ```
 
-### 3.5 `if` (Conditional Step Execution)
+### 3.5 `relay` (Remote Event Relay)
+`relay` delivers a projected event to a named remote Ductile instance. The step is declarative: it refers to `relay-instances.yaml` by stable instance name and does not expose URLs or secrets in pipeline logic.
+
+```yaml
+steps:
+  - id: relay-to-lab
+    relay:
+      to: lab
+      event: backup.ready
+      dedupe_key: payload.archive_id
+      with:
+        archive_id: payload.archive_id
+        archive_path: payload.archive_path
+        checksum: payload.checksum
+      baggage:
+        trace_id: context.trace_id
+```
+
+Rules:
+- `to` is the outbound relay instance name.
+- `event` is the remote event type.
+- `dedupe_key` is optional and resolves from `payload.*` or `context.*`.
+- `with` is the remote event payload projection. If omitted, the current event payload is relayed.
+- `baggage` is an optional explicit projection into the relay envelope baggage.
+
+### 3.6 `if` (Conditional Step Execution)
 A step may include an optional structured `if` object. Sprint 6 compiles that authored condition into an internal `core.switch` hop. The switch evaluates the condition against the current scope and then either dispatches the gated step or bypasses it without spawning the gated plugin.
 
 `if` must be exactly one of:
@@ -275,7 +300,7 @@ Semantics:
 - branch decisions are observable as internal `ductile.switch.true` / `ductile.switch.false` events
 - a `false` result bypasses the step and continues from the nearest downstream route
 
-### 3.6 `with` (Payload Remap for `uses` Steps)
+### 3.7 `with` (Payload Remap for `uses` Steps)
 `with` lets a `uses` step add or override top-level payload keys immediately before the plugin is spawned.
 
 ```yaml
@@ -297,7 +322,7 @@ Rules:
 - `with` entries do not see each other's output. They all read from the same pre-remap snapshot.
 - Invalid paths or malformed templates fail the job. Ductile does not silently substitute `null` or `""`.
 
-### 3.7 `baggage` (Explicit Durable Context for `uses` Steps)
+### 3.8 `baggage` (Explicit Durable Context for `uses` Steps)
 `baggage` names the facts that should survive beyond the immediate plugin request. It is only valid on `uses` steps.
 
 Payload is per-hop. A plugin may emit useful fields, but those fields are not durable unless the pipeline author claims them with `baggage`.

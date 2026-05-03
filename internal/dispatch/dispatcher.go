@@ -23,6 +23,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/relay"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
@@ -254,6 +255,10 @@ func (d *Dispatcher) executeJob(ctx context.Context, job *queue.Job) {
 
 	if isCoreSwitchJob(job) {
 		d.executeCoreSwitch(ctx, job, requestContext, jobLogger)
+		return
+	}
+	if isCoreRelayJob(job) {
+		d.executeCoreRelay(ctx, job, requestContext, jobLogger)
 		return
 	}
 
@@ -1224,7 +1229,7 @@ func (d *Dispatcher) contextUpdatesForDispatch(ctx context.Context, next router.
 		err     error
 	)
 	if d.router != nil && strings.TrimSpace(next.PipelineName) != "" && strings.TrimSpace(next.StepID) != "" {
-		if node, found := d.router.GetNode(next.PipelineName, next.StepID); found && node.Baggage != nil && !node.Baggage.Empty() {
+		if node, found := d.router.GetNode(next.PipelineName, next.StepID); found && node.Kind == dsl.NodeKindUses && node.Baggage != nil && !node.Baggage.Empty() {
 			parentContext, err := d.contextMap(ctx, next.ParentContextID)
 			if err != nil {
 				return nil, err
@@ -1300,6 +1305,13 @@ func isCoreSwitchJob(job *queue.Job) bool {
 	return strings.TrimSpace(job.Plugin) == "core.switch" && strings.TrimSpace(job.Command) == "handle"
 }
 
+func isCoreRelayJob(job *queue.Job) bool {
+	if job == nil {
+		return false
+	}
+	return strings.TrimSpace(job.Plugin) == "core.relay" && strings.TrimSpace(job.Command) == "handle"
+}
+
 func (d *Dispatcher) executeCoreSwitch(ctx context.Context, job *queue.Job, requestContext map[string]any, logger *slog.Logger) {
 	if d.router == nil {
 		errMsg := "core.switch requires router"
@@ -1355,6 +1367,154 @@ func (d *Dispatcher) executeCoreSwitch(ctx context.Context, job *queue.Job, requ
 		return
 	}
 	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusSucceeded, result, nil, nil)
+}
+
+func (d *Dispatcher) executeCoreRelay(ctx context.Context, job *queue.Job, requestContext map[string]any, logger *slog.Logger) {
+	if d.router == nil {
+		errMsg := "core.relay requires router"
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	pipelineName, _ := requestContext["ductile_pipeline"].(string)
+	stepID, _ := requestContext["ductile_step_id"].(string)
+	node, ok := d.router.GetNode(pipelineName, stepID)
+	if !ok || node.Kind != dsl.NodeKindRelay || node.Relay == nil {
+		errMsg := fmt.Sprintf("core.relay node %s/%s missing relay spec", pipelineName, stepID)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	event, err := eventFromJobPayload(job.Payload)
+	if err != nil {
+		errMsg := fmt.Sprintf("core.relay parse event: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	if event.Payload == nil {
+		event.Payload = make(map[string]any)
+	}
+
+	envelope, err := d.relayEnvelopeFromNode(node.Relay, event, requestContext, job)
+	if err != nil {
+		errMsg := fmt.Sprintf("core.relay build envelope: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	sender, err := relay.NewSender(d.cfg)
+	if err != nil {
+		errMsg := fmt.Sprintf("core.relay configure sender: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	accepted, err := sender.Send(ctx, node.Relay.To, envelope)
+	if err != nil {
+		errMsg := fmt.Sprintf("core.relay send: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	synthetic := protocol.Event{
+		Type: "ductile.step.succeeded",
+		Payload: map[string]any{
+			"relay_to":                  strings.TrimSpace(node.Relay.To),
+			"relay_event_type":          envelope.Event.Type,
+			"relay_receiver_event_id":   accepted.ReceiverEventID,
+			"relay_receiver_peer":       accepted.Peer,
+			"relay_receiver_job_id":     accepted.JobID,
+			"relay_acceptance_status":   accepted.Status,
+			"relay_acceptance_event_id": accepted.ReceiverEventID,
+		},
+	}
+	if err := d.routeEvents(ctx, job, []protocol.Event{synthetic}, logger); err != nil {
+		errMsg := fmt.Sprintf("core.relay route successors: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+
+	result, err := json.Marshal(map[string]any{
+		"status":   "relayed",
+		"to":       strings.TrimSpace(node.Relay.To),
+		"event":    envelope.Event.Type,
+		"accepted": accepted,
+	})
+	if err != nil {
+		errMsg := fmt.Sprintf("core.relay marshal result: %v", err)
+		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)
+		return
+	}
+	d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusSucceeded, result, nil, nil)
+}
+
+func (d *Dispatcher) relayEnvelopeFromNode(spec *dsl.RelaySpec, event protocol.Event, requestContext map[string]any, job *queue.Job) (relay.Envelope, error) {
+	payload := event.Payload
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+	scope := conditions.Scope{Payload: payload, Context: requestContext}
+
+	relayPayload := clonePayloadMap(payload)
+	if len(spec.With) > 0 {
+		relayPayload = make(map[string]any, len(spec.With))
+		for _, key := range sortedWithKeys(spec.With) {
+			value, err := evalRelayExpression(spec.With[key], scope)
+			if err != nil {
+				return relay.Envelope{}, fmt.Errorf("relay.with.%s: %w", key, err)
+			}
+			relayPayload[key] = value
+		}
+	}
+
+	dedupeKey := strings.TrimSpace(event.DedupeKey)
+	if expr := strings.TrimSpace(spec.DedupeKey); expr != "" {
+		value, err := evalRelayExpression(expr, scope)
+		if err != nil {
+			return relay.Envelope{}, fmt.Errorf("relay.dedupe_key: %w", err)
+		}
+		if value != nil {
+			dedupeKey = fmt.Sprint(value)
+		} else {
+			dedupeKey = ""
+		}
+	}
+
+	baggageClaims, err := baggage.ApplyClaims(payload, spec.Baggage, requestContext)
+	if err != nil {
+		return relay.Envelope{}, fmt.Errorf("relay.baggage: %w", err)
+	}
+
+	return relay.Envelope{
+		Event: relay.EnvelopeEvent{
+			Type:      strings.TrimSpace(spec.Event),
+			Payload:   relayPayload,
+			DedupeKey: dedupeKey,
+		},
+		Origin: relay.EnvelopeOrigin{
+			Instance: strings.TrimSpace(d.cfg.Service.Name),
+			Plugin:   job.Plugin,
+			JobID:    job.ID,
+			EventID:  event.EventID,
+		},
+		Baggage: baggageClaims,
+	}, nil
+}
+
+func evalRelayExpression(expr string, scope conditions.Scope) (any, error) {
+	trimmed := strings.TrimSpace(expr)
+	if trimmed == "" {
+		return nil, fmt.Errorf("expression is empty")
+	}
+	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "}") {
+		return evalWithTemplate(trimmed, scope)
+	}
+	present, value, err := conditions.ResolvePath(scope, trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: %w", trimmed, err)
+	}
+	if !present {
+		return nil, fmt.Errorf("resolve %q: path not found", trimmed)
+	}
+	return value, nil
 }
 
 func (d *Dispatcher) contextMap(ctx context.Context, contextID string) (map[string]any, error) {
