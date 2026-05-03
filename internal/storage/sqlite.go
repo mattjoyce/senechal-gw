@@ -157,6 +157,7 @@ func ValidateSQLiteSchema(ctx context.Context, db *sql.DB) error {
 
 	requiredIndexes := []string{
 		"job_log_job_id_attempt_idx",
+		"job_log_completed_at_idx",
 		"job_queue_dedupe_status_completed_idx",
 		"plugin_facts_plugin_created_at_idx",
 		"plugin_facts_plugin_type_created_at_idx",
