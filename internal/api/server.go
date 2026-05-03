@@ -16,6 +16,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/relay"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
@@ -72,6 +73,7 @@ type Config struct {
 	Version           string
 	RuntimeConfig     *config.Config
 	ReloadFunc        func(context.Context) (ReloadResponse, error)
+	RelayReceiver     *relay.Receiver
 }
 
 // Server represents the HTTP API server
@@ -89,6 +91,7 @@ type Server struct {
 	syncSemaphore chan struct{}
 	reloadFunc    func(context.Context) (ReloadResponse, error)
 	serveDone     chan struct{}
+	relayReceiver *relay.Receiver
 }
 
 // New creates a new API server instance
@@ -109,6 +112,7 @@ func New(config Config, queue JobQueuer, registry PluginRegistry, router Pipelin
 		syncSemaphore: make(chan struct{}, config.MaxConcurrentSync),
 		reloadFunc:    config.ReloadFunc,
 		serveDone:     make(chan struct{}),
+		relayReceiver: config.RelayReceiver,
 	}
 }
 
@@ -189,6 +193,9 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Get("/openapi.json", s.handleOpenAPIAll)
 	r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
 	r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
+	if s.relayReceiver != nil {
+		r.Post(s.relayReceiver.RoutePattern(), s.relayReceiver.HandleHTTP)
+	}
 
 	// Protected API.
 	r.Group(func(r chi.Router) {

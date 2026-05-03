@@ -38,6 +38,7 @@ import (
 	"github.com/mattjoyce/ductile/internal/log"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/queue"
+	"github.com/mattjoyce/ductile/internal/relay"
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/scheduler"
 	"github.com/mattjoyce/ductile/internal/state"
@@ -2585,6 +2586,12 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
 	rt.dispatcher = disp
 
+	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, log.WithComponent("relay"))
+	if err != nil {
+		logger.Error("failed to configure relay receiver", "error", err)
+		return nil, err
+	}
+
 	// Wire recovery hooks: when the scheduler marks a dead orphan during crash
 	// recovery, delegate to the dispatcher's hook-firing machinery so on-hook
 	// pipelines (e.g. job-failure-notify → discord_notify) are triggered.
@@ -2602,7 +2609,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 		}
 	}()
 
-	if cfg.API.Enabled {
+	if cfg.API.Enabled || relayReceiver != nil {
 		tokens := make([]auth.TokenConfig, 0, len(cfg.API.Auth.Tokens))
 		for _, t := range cfg.API.Auth.Tokens {
 			tokens = append(tokens, auth.TokenConfig{
@@ -2625,6 +2632,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			Version:           version,
 			RuntimeConfig:     cfg,
 			ReloadFunc:        reloadFunc,
+			RelayReceiver:     relayReceiver,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer
@@ -2635,7 +2643,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 				rt.errCh <- fmt.Errorf("api: %w", err)
 			}
 		}()
-		logger.Info("API server enabled", "listen", cfg.API.Listen)
+		logger.Info("HTTP ingress server enabled", "listen", cfg.API.Listen, "api_enabled", cfg.API.Enabled, "relay_enabled", relayReceiver != nil)
 	}
 
 	if cfg.Webhooks != nil && len(cfg.Webhooks.Endpoints) > 0 {
