@@ -39,6 +39,12 @@ func DiscoverConfigFiles(configDir string) (*ConfigFiles, error) {
 	if path := filepath.Join(absDir, "routes.yaml"); fileExists(path) {
 		cf.Routes = path
 	}
+	if path := filepath.Join(absDir, "relay-instances.yaml"); fileExists(path) {
+		cf.RelayInstances = path
+	}
+	if path := filepath.Join(absDir, "relay-ingress.yaml"); fileExists(path) {
+		cf.RelayIngress = path
+	}
 
 	// Walk scopes/*.json
 	cf.Scopes, err = walkJSONDir(filepath.Join(absDir, "scopes"))

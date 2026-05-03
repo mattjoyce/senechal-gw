@@ -23,6 +23,11 @@ func (v *ConfigValidator) ValidateCrossReferences() error {
 		return err
 	}
 
+	// Validate relay config references valid tokens.
+	if err := v.validateRelay(); err != nil {
+		return err
+	}
+
 	// Validate plugin configs with _ref suffixes reference valid tokens
 	if err := v.validatePluginTokenRefs(); err != nil {
 		return err
@@ -81,6 +86,31 @@ func (v *ConfigValidator) validateWebhooks() error {
 		if endpoint.SignatureHeader == "" {
 			return fmt.Errorf("webhook[%d] (%s): signature_header is required",
 				i, endpoint.Path)
+		}
+	}
+
+	return nil
+}
+
+func (v *ConfigValidator) validateRelay() error {
+	for i, instance := range v.config.RelayInstances {
+		if strings.TrimSpace(instance.SecretRef) == "" {
+			return fmt.Errorf("instances[%d] (%s): secret_ref is required", i, instance.Name)
+		}
+		if _, exists := v.tokens[instance.SecretRef]; !exists {
+			return fmt.Errorf("instances[%d] (%s): secret_ref %q not found in tokens.yaml", i, instance.Name, instance.SecretRef)
+		}
+	}
+
+	if v.config.RemoteIngress == nil {
+		return nil
+	}
+	for i, peer := range v.config.RemoteIngress.TrustedPeers {
+		if strings.TrimSpace(peer.SecretRef) == "" {
+			return fmt.Errorf("remote_ingress.peers[%d] (%s): secret_ref is required", i, peer.Name)
+		}
+		if _, exists := v.tokens[peer.SecretRef]; !exists {
+			return fmt.Errorf("remote_ingress.peers[%d] (%s): secret_ref %q not found in tokens.yaml", i, peer.Name, peer.SecretRef)
 		}
 	}
 

@@ -19,6 +19,8 @@ type Config struct {
 	API             APIConfig             `yaml:"api,omitempty"`
 	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
 	Plugins         map[string]PluginConf `yaml:"plugins"`
+	RelayInstances  []RelayInstanceConfig `yaml:"instances,omitempty"`
+	RemoteIngress   *RemoteIngressConfig  `yaml:"remote_ingress,omitempty"`
 	Routes          []RouteConfig         `yaml:"routes,omitempty"`   // Not in MVP
 	Webhooks        *WebhooksConfig       `yaml:"webhooks,omitempty"` // Not in MVP
 	SourceFiles     map[string]*yaml.Node `yaml:"-"`                  // Physical files tracked for updates
@@ -184,6 +186,42 @@ type RouteConfig struct {
 	To        string `yaml:"to"`
 }
 
+// RelayInstanceConfig defines one named outbound relay target.
+type RelayInstanceConfig struct {
+	Name        string        `yaml:"name"`
+	Enabled     bool          `yaml:"enabled"`
+	BaseURL     string        `yaml:"base_url"`
+	IngressPath string        `yaml:"ingress_path"`
+	SecretRef   string        `yaml:"secret_ref"`
+	KeyID       string        `yaml:"key_id,omitempty"`
+	Timeout     time.Duration `yaml:"timeout,omitempty"`
+	Allow       []string      `yaml:"allow,omitempty"`
+}
+
+// RemoteIngressConfig defines trusted inbound relay peer policy.
+type RemoteIngressConfig struct {
+	ListenPath       string            `yaml:"listen_path"`
+	MaxBodySize      string            `yaml:"max_body_size,omitempty"`
+	AllowedClockSkew time.Duration     `yaml:"allowed_clock_skew,omitempty"`
+	RequireKeyID     bool              `yaml:"require_key_id,omitempty"`
+	TrustedPeers     []RelayPeerConfig `yaml:"peers"`
+}
+
+// RelayPeerConfig defines one trusted inbound relay peer.
+type RelayPeerConfig struct {
+	Name      string            `yaml:"name"`
+	Enabled   bool              `yaml:"enabled"`
+	SecretRef string            `yaml:"secret_ref"`
+	KeyID     string            `yaml:"key_id,omitempty"`
+	Accept    []string          `yaml:"accept,omitempty"`
+	Baggage   RelayBaggageRules `yaml:"baggage,omitempty"`
+}
+
+// RelayBaggageRules defines which remote baggage keys may seed local root context.
+type RelayBaggageRules struct {
+	Allow []string `yaml:"allow,omitempty"`
+}
+
 // WebhooksConfig defines webhook listener settings.
 type WebhooksConfig struct {
 	Listen    string            `yaml:"listen"`
@@ -241,6 +279,16 @@ type PluginsFileConfig struct {
 // RoutesFileConfig is the structure of routes.yaml.
 type RoutesFileConfig struct {
 	Routes []RouteConfig `yaml:"routes"`
+}
+
+// RelayInstancesFileConfig wraps outbound relay instances for standalone relay-instances.yaml.
+type RelayInstancesFileConfig struct {
+	Instances []RelayInstanceConfig `yaml:"instances"`
+}
+
+// RelayIngressFileConfig wraps inbound relay policy for standalone relay-ingress.yaml.
+type RelayIngressFileConfig struct {
+	RemoteIngress RemoteIngressConfig `yaml:"remote_ingress"`
 }
 
 // TokenEntry defines an API token with scoped permissions (directory mode tokens.yaml).
@@ -355,14 +403,16 @@ type IntegrityResult struct {
 
 // ConfigFiles represents the discovered file manifest for directory mode.
 type ConfigFiles struct {
-	Root      string   // Config directory root (absolute)
-	Config    string   // config.yaml path (absolute)
-	Plugins   []string // plugins/*.yaml paths (absolute, sorted)
-	Pipelines []string // pipelines/*.yaml paths (absolute, sorted)
-	Webhooks  string   // webhooks.yaml path (absolute, empty if missing)
-	Tokens    string   // tokens.yaml path (absolute, empty if missing)
-	Routes    string   // routes.yaml path (absolute, empty if missing)
-	Scopes    []string // scopes/*.json paths (absolute, sorted)
+	Root           string   // Config directory root (absolute)
+	Config         string   // config.yaml path (absolute)
+	Plugins        []string // plugins/*.yaml paths (absolute, sorted)
+	Pipelines      []string // pipelines/*.yaml paths (absolute, sorted)
+	Webhooks       string   // webhooks.yaml path (absolute, empty if missing)
+	Tokens         string   // tokens.yaml path (absolute, empty if missing)
+	Routes         string   // routes.yaml path (absolute, empty if missing)
+	RelayInstances string   // relay-instances.yaml path (absolute, empty if missing)
+	RelayIngress   string   // relay-ingress.yaml path (absolute, empty if missing)
+	Scopes         []string // scopes/*.json paths (absolute, sorted)
 }
 
 // FileTier returns the integrity tier for a given file path.
@@ -390,6 +440,12 @@ func (cf *ConfigFiles) AllFiles() []string {
 	}
 	if cf.Routes != "" {
 		files = append(files, cf.Routes)
+	}
+	if cf.RelayInstances != "" {
+		files = append(files, cf.RelayInstances)
+	}
+	if cf.RelayIngress != "" {
+		files = append(files, cf.RelayIngress)
 	}
 	files = append(files, cf.Scopes...)
 	return files

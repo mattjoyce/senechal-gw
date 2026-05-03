@@ -310,6 +310,14 @@ func TestConfigValidator_ValidateCrossReferences(t *testing.T) {
 					"p1": {Enabled: true, Config: map[string]any{"key_ref": "ref1"}},
 					"p2": {Enabled: true},
 				},
+				RelayInstances: []RelayInstanceConfig{
+					{Name: "lab", SecretRef: "ref1"},
+				},
+				RemoteIngress: &RemoteIngressConfig{
+					TrustedPeers: []RelayPeerConfig{
+						{Name: "home-primary", SecretRef: "ref1"},
+					},
+				},
 				Routes: []RouteConfig{
 					{From: "p1", To: "p2"},
 				},
@@ -338,6 +346,63 @@ func TestConfigValidator_ValidateCrossReferences(t *testing.T) {
 			err := v.ValidateCrossReferences()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateCrossReferences() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfigValidator_ValidateRelay(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *Config
+		tokens  map[string]string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid outbound and inbound refs",
+			config: &Config{
+				RelayInstances: []RelayInstanceConfig{{Name: "lab", SecretRef: "relay-lab-v1"}},
+				RemoteIngress: &RemoteIngressConfig{
+					TrustedPeers: []RelayPeerConfig{{Name: "home-primary", SecretRef: "relay-home-primary-v1"}},
+				},
+			},
+			tokens: map[string]string{
+				"relay-lab-v1":          "secret-a",
+				"relay-home-primary-v1": "secret-b",
+			},
+		},
+		{
+			name: "missing outbound token",
+			config: &Config{
+				RelayInstances: []RelayInstanceConfig{{Name: "lab", SecretRef: "relay-lab-v1"}},
+			},
+			tokens:  map[string]string{},
+			wantErr: true,
+			errMsg:  `instances[0] (lab): secret_ref "relay-lab-v1" not found in tokens.yaml`,
+		},
+		{
+			name: "missing inbound token",
+			config: &Config{
+				RemoteIngress: &RemoteIngressConfig{
+					TrustedPeers: []RelayPeerConfig{{Name: "home-primary", SecretRef: "relay-home-primary-v1"}},
+				},
+			},
+			tokens:  map[string]string{},
+			wantErr: true,
+			errMsg:  `remote_ingress.peers[0] (home-primary): secret_ref "relay-home-primary-v1" not found in tokens.yaml`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := &ConfigValidator{config: tt.config, tokens: tt.tokens}
+			err := v.validateRelay()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateRelay() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && err.Error() != tt.errMsg {
+				t.Fatalf("validateRelay() error = %q, want %q", err.Error(), tt.errMsg)
 			}
 		})
 	}

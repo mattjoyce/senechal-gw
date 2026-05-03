@@ -1635,6 +1635,168 @@ webhooks:
 	}
 }
 
+func TestLoadAcceptsRelayConfigIncludes(t *testing.T) {
+	tmpDir := t.TempDir()
+	configYAML := `
+include:
+  - tokens.yaml
+  - relay-instances.yaml
+  - relay-ingress.yaml
+
+service:
+  name: home-primary
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "relay.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensYAML := `
+tokens:
+  - name: relay-lab-v1
+    key: test-secret
+    scopes_file: scopes/relay.json
+    scopes_hash: blake3:dummy
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	instancesYAML := `
+instances:
+  - name: lab
+    enabled: true
+    base_url: https://lab.example
+    ingress_path: /ingest/peer/home-primary
+    secret_ref: relay-lab-v1
+    key_id: v1
+    timeout: 10s
+    allow:
+      - backup.ready
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "relay-instances.yaml"), []byte(instancesYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ingressYAML := `
+remote_ingress:
+  listen_path: /ingest/peer
+  max_body_size: 1MB
+  allowed_clock_skew: 5m
+  require_key_id: true
+  peers:
+    - name: home-primary
+      enabled: true
+      secret_ref: relay-lab-v1
+      key_id: v1
+      accept:
+        - backup.ready
+      baggage:
+        allow:
+          - trace_id
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "relay-ingress.yaml"), []byte(ingressYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpDir)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if len(cfg.RelayInstances) != 1 || cfg.RelayInstances[0].Name != "lab" {
+		t.Fatalf("cfg.RelayInstances = %+v, want lab", cfg.RelayInstances)
+	}
+	if cfg.RemoteIngress == nil || cfg.RemoteIngress.ListenPath != "/ingest/peer" {
+		t.Fatalf("cfg.RemoteIngress = %+v, want listen_path /ingest/peer", cfg.RemoteIngress)
+	}
+	if len(cfg.RemoteIngress.TrustedPeers) != 1 || cfg.RemoteIngress.TrustedPeers[0].Name != "home-primary" {
+		t.Fatalf("cfg.RemoteIngress.TrustedPeers = %+v, want home-primary", cfg.RemoteIngress.TrustedPeers)
+	}
+}
+
+func TestLoadRejectsDuplicateRelayInstanceNames(t *testing.T) {
+	tmpDir := t.TempDir()
+	configYAML := `
+include:
+  - tokens.yaml
+  - relay-instances.yaml
+
+service:
+  name: home-primary
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "relay.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tokensYAML := `
+tokens:
+  - name: relay-lab-v1
+    key: test-secret
+    scopes_file: scopes/relay.json
+    scopes_hash: blake3:dummy
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	instancesYAML := `
+instances:
+  - name: lab
+    enabled: true
+    base_url: https://lab-a.example
+    ingress_path: /ingest/peer/home-primary
+    secret_ref: relay-lab-v1
+  - name: lab
+    enabled: true
+    base_url: https://lab-b.example
+    ingress_path: /ingest/peer/home-primary
+    secret_ref: relay-lab-v1
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "relay-instances.yaml"), []byte(instancesYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(tmpDir)
+	if err == nil {
+		t.Fatal("Load() succeeded, want duplicate relay instance error")
+	}
+	if !contains(err.Error(), `duplicate relay instance name "lab"`) {
+		t.Fatalf("Load() error = %v, want duplicate relay instance message", err)
+	}
+}
+
 // TestDeepMerge tests deep merging of included configs.
 func TestDeepMerge(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -2,9 +2,6 @@ package webhook
 
 import (
 	"fmt"
-	"math"
-	"strconv"
-	"strings"
 
 	"github.com/mattjoyce/ductile/internal/config"
 )
@@ -54,45 +51,8 @@ func FromGlobalConfig(wc *config.WebhooksConfig, tokens map[string]string) (Conf
 // parseMaxBodySize parses size strings like "1MB", "2048576", "1048576" to bytes.
 // Returns DefaultMaxBodySize if empty.
 func parseMaxBodySize(size string) (int64, error) {
-	size = strings.TrimSpace(size)
 	if size == "" {
 		return DefaultMaxBodySize, nil
 	}
-
-	// Handle unit suffixes (KB, MB, GB)
-	upper := strings.ToUpper(size)
-	multiplier := int64(1)
-
-	if strings.HasSuffix(upper, "KB") {
-		multiplier = 1024
-		size = strings.TrimSuffix(upper, "KB")
-	} else if strings.HasSuffix(upper, "MB") {
-		multiplier = 1024 * 1024
-		size = strings.TrimSuffix(upper, "MB")
-	} else if strings.HasSuffix(upper, "GB") {
-		multiplier = 1024 * 1024 * 1024
-		size = strings.TrimSuffix(upper, "GB")
-	}
-
-	// Parse numeric value
-	value, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid size value: %w", err)
-	}
-
-	if value <= 0 {
-		return 0, fmt.Errorf("size must be positive")
-	}
-
-	// Check for overflow before multiplication
-	if multiplier > 1 && value > (math.MaxInt64/multiplier) {
-		return 0, fmt.Errorf("size too large")
-	}
-
-	result := value * multiplier
-	if result < 0 { // Secondary overflow check
-		return 0, fmt.Errorf("size too large")
-	}
-
-	return result, nil
+	return config.ParseByteSize(size)
 }

@@ -457,6 +457,33 @@ func deepMergeConfig(dst, src *Config) error {
 		dst.Routes = append(dst.Routes, src.Routes...)
 	}
 
+	// Merge relay instances (append)
+	if len(src.RelayInstances) > 0 {
+		dst.RelayInstances = append(dst.RelayInstances, src.RelayInstances...)
+	}
+
+	// Merge remote ingress
+	if src.RemoteIngress != nil {
+		if dst.RemoteIngress == nil {
+			dst.RemoteIngress = &RemoteIngressConfig{}
+		}
+		if src.RemoteIngress.ListenPath != "" {
+			dst.RemoteIngress.ListenPath = src.RemoteIngress.ListenPath
+		}
+		if src.RemoteIngress.MaxBodySize != "" {
+			dst.RemoteIngress.MaxBodySize = src.RemoteIngress.MaxBodySize
+		}
+		if src.RemoteIngress.AllowedClockSkew != 0 {
+			dst.RemoteIngress.AllowedClockSkew = src.RemoteIngress.AllowedClockSkew
+		}
+		if src.RemoteIngress.RequireKeyID {
+			dst.RemoteIngress.RequireKeyID = true
+		}
+		if len(src.RemoteIngress.TrustedPeers) > 0 {
+			dst.RemoteIngress.TrustedPeers = append(dst.RemoteIngress.TrustedPeers, src.RemoteIngress.TrustedPeers...)
+		}
+	}
+
 	// Merge webhooks
 	if src.Webhooks != nil {
 		if dst.Webhooks == nil {
@@ -697,6 +724,10 @@ func validate(cfg *Config) error {
 				return err
 			}
 		}
+	}
+
+	if err := validateRelayConfig(cfg); err != nil {
+		return err
 	}
 
 	return nil

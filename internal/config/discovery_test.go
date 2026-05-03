@@ -16,6 +16,8 @@ func TestDiscoverConfigFiles(t *testing.T) {
 	writeTestFile(t, filepath.Join(tmpDir, "tokens.yaml"), "tokens: []\n")
 	writeTestFile(t, filepath.Join(tmpDir, "webhooks.yaml"), "webhooks: []\n")
 	writeTestFile(t, filepath.Join(tmpDir, "routes.yaml"), "routes: []\n")
+	writeTestFile(t, filepath.Join(tmpDir, "relay-instances.yaml"), "instances: []\n")
+	writeTestFile(t, filepath.Join(tmpDir, "relay-ingress.yaml"), "remote_ingress:\n  listen_path: /ingest/peer\n  peers: []\n")
 
 	// Create scopes directory
 	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
@@ -39,6 +41,12 @@ func TestDiscoverConfigFiles(t *testing.T) {
 	}
 	if cf.Routes != filepath.Join(tmpDir, "routes.yaml") {
 		t.Errorf("Routes = %q", cf.Routes)
+	}
+	if cf.RelayInstances != filepath.Join(tmpDir, "relay-instances.yaml") {
+		t.Errorf("RelayInstances = %q", cf.RelayInstances)
+	}
+	if cf.RelayIngress != filepath.Join(tmpDir, "relay-ingress.yaml") {
+		t.Errorf("RelayIngress = %q", cf.RelayIngress)
 	}
 	if len(cf.Plugins) != 0 {
 		t.Fatalf("len(Plugins) = %d, want 0", len(cf.Plugins))
@@ -101,16 +109,18 @@ func TestConfigFilesFileTier(t *testing.T) {
 
 func TestConfigFilesAllFiles(t *testing.T) {
 	cf := &ConfigFiles{
-		Config:   "/etc/ductile/config.yaml",
-		Tokens:   "/etc/ductile/tokens.yaml",
-		Webhooks: "/etc/ductile/webhooks.yaml",
-		Routes:   "/etc/ductile/routes.yaml",
-		Scopes:   []string{"/etc/ductile/scopes/admin.json"},
+		Config:         "/etc/ductile/config.yaml",
+		Tokens:         "/etc/ductile/tokens.yaml",
+		Webhooks:       "/etc/ductile/webhooks.yaml",
+		Routes:         "/etc/ductile/routes.yaml",
+		RelayInstances: "/etc/ductile/relay-instances.yaml",
+		RelayIngress:   "/etc/ductile/relay-ingress.yaml",
+		Scopes:         []string{"/etc/ductile/scopes/admin.json"},
 	}
 
 	all := cf.AllFiles()
-	if len(all) != 5 {
-		t.Errorf("AllFiles() returned %d files, want 5", len(all))
+	if len(all) != 7 {
+		t.Errorf("AllFiles() returned %d files, want 7", len(all))
 	}
 }
 
