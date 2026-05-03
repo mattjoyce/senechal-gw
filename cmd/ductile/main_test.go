@@ -340,6 +340,155 @@ func TestRunSystemNounResetActionHelp(t *testing.T) {
 	}
 }
 
+func TestRunSystemNounSelfcheckActionHelp(t *testing.T) {
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemNoun([]string{"selfcheck", "--help"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemNoun() code = %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Usage: ductile system selfcheck") {
+		t.Fatalf("stdout missing selfcheck action help usage: %s", stdout)
+	}
+	if !strings.Contains(stdout, "PRAGMA integrity_check") {
+		t.Fatalf("selfcheck help should mention integrity_check: %s", stdout)
+	}
+}
+
+func TestRunSystemNounHelpListsSelfcheck(t *testing.T) {
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemNoun([]string{"help"})
+	})
+	if code != 0 {
+		t.Fatalf("runSystemNoun(help) code = %d, stderr: %s", code, stderr)
+	}
+	// help prints to stdout; capture both via the helper above.
+	_, stdout, _ := captureOutputWithExitCode(t, func() int {
+		printSystemNounHelp(os.Stdout)
+		return 0
+	})
+	if !strings.Contains(stdout, "selfcheck") {
+		t.Fatalf("system noun help should list selfcheck: %s", stdout)
+	}
+}
+
+func TestRunSystemSelfcheckOnFreshDatabase(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configYAML := `
+state:
+  path: ` + dbPath + `
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	_ = db.Close()
+
+	code, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return runSystemSelfcheck([]string{"--config", configPath, "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("selfcheck on fresh DB code = %d, stderr=%s, stdout=%s", code, stderr, stdout)
+	}
+
+	var report systemStatusReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("unmarshal report: %v\nstdout: %s", err, stdout)
+	}
+	if !report.Healthy {
+		t.Fatalf("expected healthy=true on fresh DB, got report: %+v", report)
+	}
+	want := []string{"config_discovery", "config_load", "pid_lock", "db_integrity", "db_schema", "queue_terminal_freshness"}
+	have := make(map[string]bool, len(report.Checks))
+	for _, c := range report.Checks {
+		have[c.Name] = c.OK
+	}
+	for _, name := range want {
+		ok, present := have[name]
+		if !present {
+			t.Fatalf("expected check %q in report, got %+v", name, report.Checks)
+		}
+		if !ok {
+			t.Fatalf("expected check %q OK on fresh DB, got fail: %+v", name, report.Checks)
+		}
+	}
+}
+
+func TestCheckQueueTerminalFreshnessThresholds(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "state.db")
+
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	ctx := context.Background()
+
+	// Empty queue → OK + clean.
+	got := checkQueueTerminalFreshness(ctx, db, dbPath)
+	if !got.OK {
+		t.Fatalf("empty queue should be OK, got %+v", got)
+	}
+	if !strings.Contains(got.Detail, "no stale") {
+		t.Fatalf("empty queue detail mismatch: %q", got.Detail)
+	}
+
+	// Insert 100 stale terminal rows → still OK (within tolerance).
+	insertStale := func(n int, status string) {
+		t.Helper()
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatalf("begin: %v", err)
+		}
+		stmt, err := tx.Prepare(`INSERT INTO job_queue (id, plugin, command, status, attempt, max_attempts, submitted_by, created_at, completed_at) VALUES (?, 'echo', 'run', ?, 1, 4, 'test', datetime('now','-3 days'), datetime('now','-2 days','-1 hour'))`)
+		if err != nil {
+			t.Fatalf("prepare: %v", err)
+		}
+		defer func() { _ = stmt.Close() }()
+		for i := range n {
+			id := status + "-" + strconv.Itoa(i)
+			if _, err := stmt.Exec(id, status); err != nil {
+				t.Fatalf("exec: %v", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+	}
+
+	insertStale(100, "succeeded")
+	got = checkQueueTerminalFreshness(ctx, db, dbPath)
+	if !got.OK {
+		t.Fatalf("100 stale rows should be within tolerance, got %+v", got)
+	}
+	if !strings.Contains(got.Detail, "within Wave-1 tolerance") {
+		t.Fatalf("100 stale detail should note tolerance: %q", got.Detail)
+	}
+
+	// Push past threshold (already 100; insert 5001 more) → FAIL.
+	insertStale(5001, "failed")
+	got = checkQueueTerminalFreshness(ctx, db, dbPath)
+	if got.OK {
+		t.Fatalf("over-threshold stale rows should fail, got OK: %+v", got)
+	}
+	if !strings.Contains(got.Detail, "exceeds threshold") {
+		t.Fatalf("over-threshold detail mismatch: %q", got.Detail)
+	}
+}
+
 func TestPrintUsageUsesActionTerminology(t *testing.T) {
 	_, stdout, _ := captureOutputWithExitCode(t, func() int {
 		printUsage()
