@@ -2145,16 +2145,28 @@ func runRelaySend(args []string) int {
 	configPath := fs.String("config", "", "Path to configuration file")
 	configDir := fs.String("config-dir", "", "Path to configuration directory")
 	jsonOut := fs.Bool("json", false, "Output acceptance JSON")
+	// Support both <instance>-first (per usage string) and flags-first orderings
+	// by lifting a leading positional out before flag.Parse, since the standard
+	// flag package stops at the first non-flag token.
+	var leadingInstance string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		leadingInstance = args[0]
+		args = args[1:]
+	}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
 	}
-	if fs.NArg() != 1 {
+	var instanceName string
+	switch {
+	case leadingInstance != "" && fs.NArg() == 0:
+		instanceName = strings.TrimSpace(leadingInstance)
+	case leadingInstance == "" && fs.NArg() == 1:
+		instanceName = strings.TrimSpace(fs.Arg(0))
+	default:
 		printRelaySendHelp()
 		return 1
 	}
-
-	instanceName := strings.TrimSpace(fs.Arg(0))
 	if instanceName == "" {
 		fmt.Fprintln(os.Stderr, "Error: relay instance name is required")
 		return 1

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -921,6 +923,7 @@ instances:
     timeout: 5s
     allow:
       - backup.ready
+      - withings.measurement_recorded
 `
 	if err := os.WriteFile(filepath.Join(dir, "relay-instances.yaml"), []byte(relayInstancesYAML), 0o644); err != nil {
 		t.Fatal(err)
@@ -1058,6 +1061,47 @@ pipelines:
 	}
 	if scope["trace_id"] != "tr-789" {
 		t.Fatalf("trace_id = %v, want tr-789", scope["trace_id"])
+	}
+}
+
+func TestRunRelaySendAcceptsInstanceFirstOrdering(t *testing.T) {
+	var observedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		observedBody = body
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"accepted","peer":"home-primary","event_type":"withings.measurement_recorded","receiver_event_id":"evt-9"}`))
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	writeRelaySenderConfigFixture(t, tmpDir, server.URL)
+	lockCode, _, lockStderr := captureRunConfigHashUpdate(t, []string{"--config-dir", tmpDir})
+	if lockCode != 0 {
+		t.Fatalf("runConfigHashUpdate() code = %d, stderr: %s", lockCode, lockStderr)
+	}
+
+	code, _, stderr := captureOutputWithExitCode(t, func() int {
+		return runRelaySend([]string{
+			"lab",
+			"--config-dir", tmpDir,
+			"--event", "withings.measurement_recorded",
+			"--payload", `{"withings_id":"abc"}`,
+			"--json",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("runRelaySend() code = %d, stderr: %s", code, stderr)
+	}
+	if len(observedBody) == 0 {
+		t.Fatal("relay receiver did not receive a request")
+	}
+	if !bytes.Contains(observedBody, []byte(`"withings.measurement_recorded"`)) {
+		t.Fatalf("relay body did not carry underscored event type: %s", string(observedBody))
 	}
 }
 

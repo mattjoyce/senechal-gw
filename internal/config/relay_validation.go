@@ -10,7 +10,7 @@ import (
 
 var (
 	relayInstanceNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-	relayEventTypePattern    = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
+	relayEventTypePattern    = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 )
 
 func validateRelayConfig(cfg *Config) error {

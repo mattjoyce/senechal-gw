@@ -351,6 +351,27 @@ func TestConfigValidator_ValidateCrossReferences(t *testing.T) {
 	}
 }
 
+func TestRelayEventTypePatternAcceptsUnderscoredSegments(t *testing.T) {
+	cases := []string{
+		"withings.measurement_recorded",
+		"agent_handshake.registered",
+		"gmail.new_message",
+		"birdnet.firstday_species",
+		"backup.ready",
+		"withings.measurement-recorded",
+	}
+	for _, eventType := range cases {
+		if !relayEventTypePattern.MatchString(eventType) {
+			t.Errorf("relayEventTypePattern rejected %q; expected match", eventType)
+		}
+	}
+	for _, bad := range []string{"", "Foo.bar", "foo.BAR", "foo..bar", "_foo", "foo bar"} {
+		if relayEventTypePattern.MatchString(bad) {
+			t.Errorf("relayEventTypePattern accepted %q; expected reject", bad)
+		}
+	}
+}
+
 func TestConfigValidator_ValidateRelay(t *testing.T) {
 	tests := []struct {
 		name    string

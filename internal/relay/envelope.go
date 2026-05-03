@@ -16,7 +16,7 @@ const (
 )
 
 var (
-	eventTypePattern = regexp.MustCompile(`^[a-z0-9]+(?:[.-][a-z0-9]+)*$`)
+	eventTypePattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 )
 
 func validateEnvelope(raw []byte) (*Envelope, error) {
