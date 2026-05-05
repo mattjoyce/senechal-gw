@@ -42,11 +42,14 @@ type ServiceConfig struct {
 	LogLevel        string        `yaml:"log_level"`
 	LogFormat       string        `yaml:"log_format"`
 	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
-	JobLogRetention   time.Duration `yaml:"job_log_retention"`
-	JobQueueRetention time.Duration `yaml:"job_queue_retention"`
-	MaxWorkers      int           `yaml:"max_workers,omitempty"`
-	StrictMode      bool          `yaml:"strict_mode"`
-	AllowSymlinks   bool          `yaml:"allow_symlinks"`
+	JobLogRetention             time.Duration `yaml:"job_log_retention"`
+	JobQueueRetention           time.Duration `yaml:"job_queue_retention"`
+	JobTransitionsRetention     time.Duration `yaml:"job_transitions_retention"`
+	JobAttemptsRetention        time.Duration `yaml:"job_attempts_retention"`
+	BreakerTransitionsRetention time.Duration `yaml:"breaker_transitions_retention"`
+	MaxWorkers                  int           `yaml:"max_workers,omitempty"`
+	StrictMode                  bool          `yaml:"strict_mode"`
+	AllowSymlinks               bool          `yaml:"allow_symlinks"`
 }
 
 // StateConfig defines state storage settings.
@@ -485,10 +488,13 @@ func Defaults() *Config {
 			LogLevel:        "info",
 			LogFormat:       "json",
 			DedupeTTL:       24 * time.Hour,
-			JobLogRetention:   30 * 24 * time.Hour,
-			JobQueueRetention: 24 * time.Hour,
-			MaxWorkers:      max(1, runtime.NumCPU()-1),
-			AllowSymlinks:   false,
+			JobLogRetention:             30 * 24 * time.Hour,
+			JobQueueRetention:           24 * time.Hour,
+			JobTransitionsRetention:     30 * 24 * time.Hour,
+			JobAttemptsRetention:        30 * 24 * time.Hour,
+			BreakerTransitionsRetention: 90 * 24 * time.Hour,
+			MaxWorkers:                  max(1, runtime.NumCPU()-1),
+			AllowSymlinks:               false,
 		},
 		State: StateConfig{
 			Path: "./data/state.db",

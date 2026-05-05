@@ -183,6 +183,25 @@ func (s *Scheduler) tick(ctx context.Context) {
 		}
 	}
 
+	// Prune append-only fact logs over job_queue's mutable status. Retention
+	// is independent of job_queue retention now that the cross-table FK is
+	// gone — fact logs typically outlive the cache they log over.
+	if s.cfg.Service.JobTransitionsRetention > 0 {
+		if err := s.queue.PruneJobTransitions(ctx, s.cfg.Service.JobTransitionsRetention); err != nil {
+			s.logger.Error("Failed to prune job transitions", "error", err)
+		}
+	}
+	if s.cfg.Service.JobAttemptsRetention > 0 {
+		if err := s.queue.PruneJobAttempts(ctx, s.cfg.Service.JobAttemptsRetention); err != nil {
+			s.logger.Error("Failed to prune job attempts", "error", err)
+		}
+	}
+	if s.cfg.Service.BreakerTransitionsRetention > 0 {
+		if err := s.queue.PruneBreakerTransitions(ctx, s.cfg.Service.BreakerTransitionsRetention); err != nil {
+			s.logger.Error("Failed to prune breaker transitions", "error", err)
+		}
+	}
+
 }
 
 func (s *Scheduler) runStartupCatchUp(ctx context.Context) error {

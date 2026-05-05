@@ -184,6 +184,48 @@ func (mr *MockQueueServiceMockRecorder) PruneJobQueue(arg0, arg1 interface{}) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PruneJobQueue", reflect.TypeOf((*MockQueueService)(nil).PruneJobQueue), arg0, arg1)
 }
 
+// PruneJobTransitions mocks base method.
+func (m *MockQueueService) PruneJobTransitions(arg0 context.Context, arg1 time.Duration) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PruneJobTransitions", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PruneJobTransitions indicates an expected call of PruneJobTransitions.
+func (mr *MockQueueServiceMockRecorder) PruneJobTransitions(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PruneJobTransitions", reflect.TypeOf((*MockQueueService)(nil).PruneJobTransitions), arg0, arg1)
+}
+
+// PruneJobAttempts mocks base method.
+func (m *MockQueueService) PruneJobAttempts(arg0 context.Context, arg1 time.Duration) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PruneJobAttempts", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PruneJobAttempts indicates an expected call of PruneJobAttempts.
+func (mr *MockQueueServiceMockRecorder) PruneJobAttempts(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PruneJobAttempts", reflect.TypeOf((*MockQueueService)(nil).PruneJobAttempts), arg0, arg1)
+}
+
+// PruneBreakerTransitions mocks base method.
+func (m *MockQueueService) PruneBreakerTransitions(arg0 context.Context, arg1 time.Duration) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PruneBreakerTransitions", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PruneBreakerTransitions indicates an expected call of PruneBreakerTransitions.
+func (mr *MockQueueServiceMockRecorder) PruneBreakerTransitions(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PruneBreakerTransitions", reflect.TypeOf((*MockQueueService)(nil).PruneBreakerTransitions), arg0, arg1)
+}
+
 // RecordCircuitBreakerTransition mocks base method.
 func (m *MockQueueService) RecordCircuitBreakerTransition(arg0 context.Context, arg1 queue.CircuitBreakerTransition) error {
 	m.ctrl.T.Helper()

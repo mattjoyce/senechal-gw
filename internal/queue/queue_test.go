@@ -1702,3 +1702,131 @@ func countQueueRows(t *testing.T, db *sql.DB) int {
 	}
 	return n
 }
+
+func TestPruneJobTransitionsRemovesStaleRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	staleAt := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	freshAt := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339Nano)
+
+	insert := func(jobID, createdAt string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, `
+INSERT INTO job_transitions (job_id, from_status, to_status, reason, created_at)
+VALUES (?, 'queued', 'running', NULL, ?);
+`, jobID, createdAt); err != nil {
+			t.Fatalf("insert %s: %v", jobID, err)
+		}
+	}
+	insert("stale-1", staleAt)
+	insert("stale-2", staleAt)
+	insert("fresh-1", freshAt)
+
+	if err := q.PruneJobTransitions(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("PruneJobTransitions: %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_transitions;`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 row post-prune, got %d", n)
+	}
+
+	if err := q.PruneJobTransitions(ctx, 0); err != nil {
+		t.Fatalf("PruneJobTransitions(0): %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_transitions;`).Scan(&n); err != nil {
+		t.Fatalf("count after 0-retention: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected row preserved with retention=0, got %d", n)
+	}
+}
+
+func TestPruneJobAttemptsRemovesStaleRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	staleAt := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	freshAt := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339Nano)
+
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO job_attempts (job_id, attempt, created_at) VALUES
+  ('stale-job', 1, ?),
+  ('stale-job', 2, ?),
+  ('fresh-job', 1, ?);
+`, staleAt, staleAt, freshAt); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if err := q.PruneJobAttempts(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("PruneJobAttempts: %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM job_attempts;`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 row post-prune, got %d", n)
+	}
+}
+
+func TestPruneBreakerTransitionsRemovesStaleRowsOnly(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	staleAt := time.Now().UTC().Add(-200 * 24 * time.Hour).Format(time.RFC3339Nano)
+	freshAt := time.Now().UTC().Add(-30 * 24 * time.Hour).Format(time.RFC3339Nano)
+
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO circuit_breaker_transitions (id, plugin, command, from_state, to_state, failure_count, reason, created_at) VALUES
+  ('t-stale-1', 'p', 'c', 'closed', 'open', 5, 'too many fails', ?),
+  ('t-stale-2', 'p', 'c', 'open', 'half_open', 0, 'cooldown elapsed', ?),
+  ('t-fresh-1', 'p', 'c', 'half_open', 'closed', 0, 'recovered', ?);
+`, staleAt, staleAt, freshAt); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if err := q.PruneBreakerTransitions(ctx, 90*24*time.Hour); err != nil {
+		t.Fatalf("PruneBreakerTransitions: %v", err)
+	}
+
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM circuit_breaker_transitions;`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 row post-prune, got %d", n)
+	}
+}
