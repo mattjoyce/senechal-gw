@@ -166,7 +166,6 @@ func ValidateSQLiteSchema(ctx context.Context, db *sql.DB) error {
 		"plugin_facts_plugin_type_created_at_idx",
 		"plugin_facts_plugin_seq_idx",
 		"plugin_facts_plugin_type_seq_idx",
-		"plugin_facts_job_id_idx",
 	}
 	for _, index := range requiredIndexes {
 		exists, err := sqliteObjectExists(ctx, db, "index", index)

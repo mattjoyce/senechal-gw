@@ -27,9 +27,9 @@ CREATE TABLE IF NOT EXISTS job_queue (
 CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, created_at);
 CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);
 CREATE INDEX IF NOT EXISTS job_queue_dedupe_status_completed_idx ON job_queue(dedupe_key, status, completed_at);
+-- UNIQUE for integrity, not just speed: prevents duplicate child enqueue per
+-- (parent, source-event). Removing this drops the data-integrity guarantee.
 CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS job_queue_enqueued_config_snapshot_idx ON job_queue(enqueued_config_snapshot_id);
-CREATE INDEX IF NOT EXISTS job_queue_started_config_snapshot_idx ON job_queue(started_config_snapshot_id);
 
 -- Hickey Sprint 1 branch hickey-sprint-1-job-lineage:
 -- append-only job lineage facts. job_queue.status and job_queue.attempt
@@ -85,8 +85,6 @@ CREATE TABLE IF NOT EXISTS config_snapshots (
   secret_fingerprints JSON
 );
 
-CREATE INDEX IF NOT EXISTS config_snapshots_loaded_at_idx ON config_snapshots(loaded_at);
-
 -- Plugin State: Persistent key-value store for plugins.
 CREATE TABLE IF NOT EXISTS plugin_state (
   plugin_name TEXT PRIMARY KEY,
@@ -125,9 +123,6 @@ ON plugin_facts(plugin_name, seq);
 CREATE INDEX IF NOT EXISTS plugin_facts_plugin_type_seq_idx
 ON plugin_facts(plugin_name, fact_type, seq);
 
-CREATE INDEX IF NOT EXISTS plugin_facts_job_id_idx
-ON plugin_facts(job_id);
-
 -- Event Context: Pipeline execution history and data accumulation.
 CREATE TABLE IF NOT EXISTS event_context (
   id               TEXT PRIMARY KEY,
@@ -137,8 +132,6 @@ CREATE TABLE IF NOT EXISTS event_context (
   accumulated_json JSON NOT NULL,
   created_at       TEXT NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS event_context_parent_id_idx ON event_context(parent_id);
 
 -- Job Log: Historical record of completed jobs.
 CREATE TABLE IF NOT EXISTS job_log (
@@ -162,8 +155,6 @@ CREATE TABLE IF NOT EXISTS job_log (
 );
 
 CREATE INDEX IF NOT EXISTS job_log_job_id_attempt_idx ON job_log(job_id, attempt);
-CREATE INDEX IF NOT EXISTS job_log_enqueued_config_snapshot_idx ON job_log(enqueued_config_snapshot_id);
-CREATE INDEX IF NOT EXISTS job_log_started_config_snapshot_idx ON job_log(started_config_snapshot_id);
 CREATE INDEX IF NOT EXISTS job_log_completed_at_idx ON job_log(completed_at);
 
 -- Circuit Breakers: Fault tolerance state.
@@ -197,10 +188,6 @@ CREATE TABLE IF NOT EXISTS circuit_breaker_transitions (
 CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_plugin_command_created_idx
 ON circuit_breaker_transitions(plugin, command, created_at);
 
-CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_job_idx
-ON circuit_breaker_transitions(job_id)
-WHERE job_id IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_created_at_idx
 ON circuit_breaker_transitions(created_at);
 
@@ -219,4 +206,3 @@ CREATE TABLE IF NOT EXISTS schedule_entries (
   PRIMARY KEY(plugin, schedule_id)
 );
 
-CREATE INDEX IF NOT EXISTS schedule_entries_status_idx ON schedule_entries(status);
