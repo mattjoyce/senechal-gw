@@ -321,24 +321,32 @@ launchctl stop com.mattjoyce.ductile-local
 launchctl start com.mattjoyce.ductile-local
 ```
 
-### 9.1. macOS TCC pre-warm (do this immediately after every redeploy)
+### 9.1. macOS TCC pre-warm (do this on every redeploy)
 
 Ductile is ad-hoc signed (`go build` produces a per-build cdhash). macOS TCC indexes Files-and-Folders grants by cdhash, so **every rebuild invalidates every existing TCC grant**. Plugins that touch protected paths (`~/Documents`, `/Volumes/...`, `~/Desktop`, `~/Downloads`, Full Disk) will hit a fresh permission popup the first time they access each one.
 
 If you redeploy and walk away, an inbound job (e.g. an email arriving at 3am that triggers a plugin reading `~/Documents`) will hang on the unanswered popup until its plugin timeout fires (default 300s), then hard-fail. Logs show the plugin's whole output emitting in one burst when the timeout triggers — no flush during the block.
 
-**Mitigation: pre-warm TCC while you're at the keyboard, immediately after every restart.**
+#### Recommended: configure `tcc_paths` in `config.yaml`
 
-Trigger one access of each protected service that downstream plugins use, so the OS prompts you synchronously and you click Allow. The popup grants the new cdhash for that service and subsequent unattended access works.
+Ductile cold-start runs an explicit `os.Stat` against each path declared in `tcc_paths` before accepting work. Each `Stat` triggers any pending TCC popup for the Files-and-Folders service that gates the path. This happens synchronously while the operator is at the keyboard for the deploy, not at an arbitrary later moment when an unattended job hits the path.
 
-For the typical setup (email_handler reading Obsidian + NAS):
+```yaml
+# config.yaml
+tcc_paths:
+  - /Users/me/Documents/Obsidian          # triggers Documents grant
+  - /Volumes/Projects                      # triggers NetworkVolumes grant
+```
+
+See `docs/CONFIG_REFERENCE.md` for the full schema and notes (configure local-volume paths only — an unreachable network mount blocks `os.Stat` for the filesystem-level timeout and delays gateway readiness).
+
+After the restart, popups appear sequentially (one per path); click **Allow** on each. Each Allow grants the new cdhash for that service. Skipped on SIGHUP reload (binary cdhash unchanged → existing grants still valid).
+
+#### Fallback: manually trigger an access
+
+If you haven't configured `tcc_paths` yet, or you want to re-warm a specific service without editing config + restarting, invoke any plugin that reads the protected path:
 
 ```bash
-# Adapt paths to whatever your plugins actually read.
-# Each command below should trigger ductile-as-parent → child → protected path.
-# The exact command shape depends on the plugin you're driving; the goal is
-# any read that crosses ductile's process tree into a TCC-protected directory.
-
 # Example: invoke a plugin that reads ~/Documents
 curl -s -X POST -H "Authorization: Bearer $DUCTILE_TOKEN" \
   http://127.0.0.1:8082/plugin/<your-docs-touching-plugin>/<command> \
@@ -350,7 +358,7 @@ curl -s -X POST -H "Authorization: Bearer $DUCTILE_TOKEN" \
   -d '{"path": "/Volumes/<some-mount>/known-file.txt"}'
 ```
 
-Click **Allow** on each TCC popup that appears. Each Allow grants the new cdhash for that service.
+Click **Allow** on each popup. Same outcome as the `tcc_paths` cold-start — just driven by the request path instead of declared config.
 
 ### 9.2. Verify TCC state
 
