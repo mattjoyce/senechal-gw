@@ -2940,6 +2940,7 @@ func runStart(args []string) int {
 
 	logger := runtime.logger
 	logger.Info("acquired PID lock", "path", pidLockPath)
+	runTCCPrewarm(cfg.TCCPaths, logger)
 	logger.Info("ductile running (press Ctrl+C to stop)")
 
 	sigCh := make(chan os.Signal, 1)

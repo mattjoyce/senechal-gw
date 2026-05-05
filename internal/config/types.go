@@ -18,6 +18,7 @@ type Config struct {
 	Database        StateConfig           `yaml:"database,omitempty"` // Alias for user intuition
 	API             APIConfig             `yaml:"api,omitempty"`
 	PluginRoots     []string              `yaml:"plugin_roots,omitempty"`
+	TCCPaths        []string              `yaml:"tcc_paths,omitempty"` // macOS-only: paths stat()-ed on cold start to surface TCC popups synchronously
 	Plugins         map[string]PluginConf `yaml:"plugins"`
 	RelayInstances  []RelayInstanceConfig `yaml:"instances,omitempty"`
 	RemoteIngress   *RemoteIngressConfig  `yaml:"remote_ingress,omitempty"`

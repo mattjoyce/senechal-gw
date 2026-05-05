@@ -147,6 +147,20 @@ api:
 
 state:
   path: ./data/state.db
+
+# macOS-only. Each path is stat()-ed once on cold start (after PID lock,
+# before "ductile running" log). Triggers any pending TCC popup for the
+# Files-and-Folders service that gates the path. Runs synchronously while
+# the operator is at the keyboard for the deploy. No-op on non-darwin and
+# when the list is empty. Skipped on SIGHUP reload (binary cdhash
+# unchanged → existing grants still valid).
+#
+# Configure local-volume paths only. An unreachable network mount blocks
+# os.Stat for the filesystem-level timeout (seconds to minutes) and
+# delays gateway readiness during the cold-start prewarm.
+tcc_paths:
+  - /Users/me/Documents/Obsidian          # triggers Documents grant
+  - /Volumes/Projects                      # triggers NetworkVolumes grant
 ```
 
 Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.

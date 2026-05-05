@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-05-05
+- Add `tcc_paths` top-level config field (macOS-only): paths stat()-ed once on cold-start to surface Files-and-Folders TCC popups synchronously after a binary redeploy. Adhoc-signed binary cdhash changes per build invalidate existing TCC grants; pre-warming under operator presence avoids unattended popup deadlocks where launchd-spawned plugin children block on first protected-path access. No-op on non-darwin and when paths empty. Fail-soft: missing paths log Warn and continue.
+
 ## 2026-04-21
 - Expose the core boundary used to decide when to retry operations.
 
