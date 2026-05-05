@@ -34,14 +34,20 @@ CREATE INDEX IF NOT EXISTS job_queue_started_config_snapshot_idx ON job_queue(st
 -- Hickey Sprint 1 branch hickey-sprint-1-job-lineage:
 -- append-only job lineage facts. job_queue.status and job_queue.attempt
 -- remain the compatibility/cache fields.
+-- job_transitions and job_attempts originally declared FOREIGN KEY(job_id)
+-- REFERENCES job_queue(id). The direction was structurally backwards: these
+-- are append-only fact logs over job_queue mutable status, and the queue
+-- row is a cache of the log, not the other way around. The FK blocked the
+-- queue retention prune (PruneJobQueue) under foreign_keys=ON because every
+-- queue row has children. Dropped 2026-05-05. Existing instances need
+-- scripts/migrate-drop-job-fact-fks.py to rebuild without the constraint.
 CREATE TABLE IF NOT EXISTS job_transitions (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id      TEXT NOT NULL,
   from_status TEXT,
   to_status   TEXT NOT NULL,
   reason      TEXT,
-  created_at  TEXT NOT NULL,
-  FOREIGN KEY(job_id) REFERENCES job_queue(id)
+  created_at  TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS job_transitions_job_created_at_idx ON job_transitions(job_id, created_at);
@@ -51,7 +57,6 @@ CREATE TABLE IF NOT EXISTS job_attempts (
   job_id     TEXT NOT NULL,
   attempt    INTEGER NOT NULL,
   created_at TEXT NOT NULL,
-  FOREIGN KEY(job_id) REFERENCES job_queue(id),
   UNIQUE(job_id, attempt)
 );
 
