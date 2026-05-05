@@ -368,6 +368,12 @@ func runSystemNoun(args []string) int {
 			return 0
 		}
 		return runSystemSelfcheck(actionArgs)
+	case "backup":
+		if hasHelpFlag(actionArgs) {
+			printSystemBackupHelp()
+			return 0
+		}
+		return runSystemBackup(actionArgs)
 	case "skills":
 		return runSystemSkills(actionArgs)
 	case "help":
@@ -1025,7 +1031,7 @@ func hasHelpFlag(args []string) bool {
 
 func printSystemNounHelp(w *os.File) {
 	_, _ = fmt.Fprintln(w, "Usage: ductile system <action>")
-	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, scheduler, reset, reload, selfcheck, skills")
+	_, _ = fmt.Fprintln(w, "Actions: start, status, plugin-facts, breaker, scheduler, reset, reload, selfcheck, backup, skills")
 }
 
 func printConfigNounHelp(w *os.File) {
