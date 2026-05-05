@@ -19,6 +19,48 @@ You can reload the configuration without restarting the service by sending a `SI
 ./ductile system reload
 ```
 
+### Backups
+`ductile system backup` writes a point-in-time snapshot to a single `tar.gz`
+archive. The DB snapshot uses SQLite `VACUUM INTO`, so the gateway can stay
+running.
+
+```bash
+ductile system backup --to /backups/ductile-$(date -u +%Y%m%dT%H%M%SZ).tar.gz \
+  --scope config
+```
+
+Scope is a nested ladder; each level adds to the previous:
+- `db` — DB snapshot only
+- `config` (default) — `db` + ductile config dir
+- `plugins` — `config` + every directory under `plugin_roots`
+- `all` — `plugins` + every file under `environment_vars.include`
+
+Each archive embeds a `BACKUP_MANIFEST.txt` recording ductile version, commit,
+hostname, source paths, source DB sha256, included items, excluded items with
+reasons, plugin-root mappings, and any boundary warnings (e.g. `api.yaml`
+appearing at scope `config`, env files appearing at scope `all`). Inspect with
+`tar -xzOf <archive> BACKUP_MANIFEST.txt` without re-extracting the rest.
+
+The command refuses to overwrite an existing destination — operator owns the
+naming pattern and retention. For a scheduled-backup setup (systemd timer or
+launchd), see `docs/DEPLOYMENT.md` §10.
+
+### Self-check
+`ductile system selfcheck` runs four read-only invariants against the local
+state DB:
+- PID lock check (refuses to run while the gateway holds the lock — WAL safety)
+- `PRAGMA integrity_check` on the SQLite file
+- Schema validation (`ValidateSQLiteSchema`) against the embedded baseline
+- `queue_terminal_freshness` — terminal-state job_queue rows older than the
+  retention window (24h default) should not exist
+
+```bash
+ductile system selfcheck --json
+```
+
+Exit code 0 = healthy, 1 = at least one check failed. Use as a deploy gate
+between binary swap and re-enabling the service.
+
 ---
 
 ## 2. Monitoring & Observability

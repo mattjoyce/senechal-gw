@@ -269,3 +269,78 @@ For non-empty existing databases, Ductile validates schema on startup instead
 of silently adding missing upgrade-era tables or indexes. If the DB is behind,
 startup should fail with a migration hint rather than mutating the schema
 implicitly.
+
+## 10. Backups
+
+`ductile system backup` writes an atomic, point-in-time snapshot of the SQLite
+state DB plus selected runtime artefacts into a single `tar.gz` archive. The
+DB snapshot is taken via `VACUUM INTO`, which is safe under concurrent writers
+— no service stop required.
+
+```bash
+ductile system backup --to <file.tar.gz> [--scope SCOPE] [--config PATH]
+```
+
+The four scopes are a nested ladder; each level adds to the previous:
+
+| Scope | Contents |
+|---|---|
+| `db` | `VACUUM INTO` snapshot of the state DB only |
+| `config` (default) | `db` + ductile config dir (`config.yaml`, `api.yaml`, `plugins.yaml`, `pipelines.yaml`, `webhooks.yaml`, `.checksums`) |
+| `plugins` | `config` + every directory under `plugin_roots` (excludes `.git`, `node_modules`, `.venv`, `venv`, `__pycache__`, `.DS_Store`, `*.pyc`, `*.pyo`) |
+| `all` | `plugins` + every file referenced under `environment_vars.include` |
+
+Each invocation prints its INCLUDED / EXCLUDED list to stdout before doing the
+work and embeds a `BACKUP_MANIFEST.txt` inside the archive recording the same
+information plus ductile version, commit, hostname, source paths, source DB
+sha256, and any boundary warnings (e.g. `api.yaml` at `config` scope, env files
+at `all` scope).
+
+Refuses to overwrite an existing destination — operator owns naming and
+retention via shell glue.
+
+### Scheduled backups
+
+systemd-timer (Thinkpad pattern) — `~/.config/systemd/user/ductile-backup.service`:
+
+```ini
+[Unit]
+Description=Ductile backup snapshot
+
+[Service]
+Type=oneshot
+Environment=BACKUP_DIR=%h/admin/ductile-backups/thinkpad/auto
+ExecStart=/bin/sh -c 'mkdir -p "$BACKUP_DIR" && \
+  STAMP=$(date -u +%%Y%%m%%dT%%H%%M%%SZ) && \
+  %h/.local/bin/ductile system backup \
+    --to "$BACKUP_DIR/ductile-$STAMP.tar.gz" --scope config && \
+  find "$BACKUP_DIR" -name "ductile-*.tar.gz" -mtime +7 -delete'
+```
+
+Paired timer `~/.config/systemd/user/ductile-backup.timer`:
+
+```ini
+[Unit]
+Description=Nightly ductile backup at 03:00 local
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now ductile-backup.timer
+```
+
+launchd (Mac pattern) — equivalent `LaunchAgent` plist with `StartCalendarInterval`
+runs the same command sequence; see existing `com.mattjoyce.ductile-local.plist`
+as a template for the `ProgramArguments` shape.
+
+Pre-migration backups before any breaking schema change are a separate manual
+invocation under `~/admin/ductile-backups/<instance>/pre-<slug>-<timestamp>/`
+— they sit outside the auto-rotation directory.

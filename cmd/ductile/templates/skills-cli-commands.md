@@ -13,6 +13,8 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json> [flags="<...>"] 
 - system.reload tier=WRITE mut=1 out=human|json flags="[--json] [--api-url <url>] [--api-key <key>]" d="Hot-reload configuration without restart."
 - system.reset tier=WRITE mut=1 out=human flags="<plugin>" d="Reset a tripped circuit breaker for a plugin."
 - system.skills tier=READ mut=0 out=markdown flags="[--config <dir>]" d="Export live capability manifest for LLM consumption."
+- system.selfcheck tier=READ mut=0 out=human|json flags="[--json] [--config <path>]" d="Run integrity checks: PID lock, PRAGMA integrity_check, schema validation, queue terminal-state freshness."
+- system.backup tier=READ mut=0 out=human flags="--to <file.tar.gz> [--scope db|config|plugins|all] [--config <path>]" d="Atomic scoped snapshot to a tar.gz archive via SQLite VACUUM INTO. Safe under concurrent writers."
 
 ### Configuration Management
 - config.check tier=READ mut=0 out=human|json flags="[--json] [--strict]" d="Validate syntax, policy, and integrity checksums."
