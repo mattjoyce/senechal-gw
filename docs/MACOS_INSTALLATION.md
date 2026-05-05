@@ -305,10 +305,12 @@ Confirm:
 cd ~/Projects/ductile
 git pull
 
+# Stop the service first — the running binary cannot be overwritten
+launchctl stop com.mattjoyce.ductile-local
+
 go build -ldflags "$(./scripts/version.sh)" -o ~/.local/bin/ductile ./cmd/ductile
 
-# Restart the service
-launchctl stop com.mattjoyce.ductile-local
+# Restart
 launchctl start com.mattjoyce.ductile-local
 ```
 
@@ -319,6 +321,62 @@ launchctl stop com.mattjoyce.ductile-local
 launchctl start com.mattjoyce.ductile-local
 ```
 
+### 9.1. macOS TCC pre-warm (do this immediately after every redeploy)
+
+Ductile is ad-hoc signed (`go build` produces a per-build cdhash). macOS TCC indexes Files-and-Folders grants by cdhash, so **every rebuild invalidates every existing TCC grant**. Plugins that touch protected paths (`~/Documents`, `/Volumes/...`, `~/Desktop`, `~/Downloads`, Full Disk) will hit a fresh permission popup the first time they access each one.
+
+If you redeploy and walk away, an inbound job (e.g. an email arriving at 3am that triggers a plugin reading `~/Documents`) will hang on the unanswered popup until its plugin timeout fires (default 300s), then hard-fail. Logs show the plugin's whole output emitting in one burst when the timeout triggers — no flush during the block.
+
+**Mitigation: pre-warm TCC while you're at the keyboard, immediately after every restart.**
+
+Trigger one access of each protected service that downstream plugins use, so the OS prompts you synchronously and you click Allow. The popup grants the new cdhash for that service and subsequent unattended access works.
+
+For the typical setup (email_handler reading Obsidian + NAS):
+
+```bash
+# Adapt paths to whatever your plugins actually read.
+# Each command below should trigger ductile-as-parent → child → protected path.
+# The exact command shape depends on the plugin you're driving; the goal is
+# any read that crosses ductile's process tree into a TCC-protected directory.
+
+# Example: invoke a plugin that reads ~/Documents
+curl -s -X POST -H "Authorization: Bearer $DUCTILE_TOKEN" \
+  http://127.0.0.1:8082/plugin/<your-docs-touching-plugin>/<command> \
+  -d '{"path": "/Users/YOU/Documents/some-known-file.md"}'
+
+# Example: invoke a plugin that reads /Volumes/...
+curl -s -X POST -H "Authorization: Bearer $DUCTILE_TOKEN" \
+  http://127.0.0.1:8082/plugin/<your-volumes-touching-plugin>/<command> \
+  -d '{"path": "/Volumes/<some-mount>/known-file.txt"}'
+```
+
+Click **Allow** on each TCC popup that appears. Each Allow grants the new cdhash for that service.
+
+### 9.2. Verify TCC state
+
+After clicking Allow, verify the grants exist for the new binary identity:
+
+```bash
+sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db \
+  "SELECT service, auth_value, datetime(last_modified,'unixepoch','localtime')
+   FROM access WHERE client LIKE '%ductile%';"
+```
+
+`auth_value=2` is Allowed, `auth_value=0` is Denied. Each service ductile needs should be listed with `auth_value=2` and a recent `last_modified` matching when you clicked Allow.
+
+To inspect TCC denials and prompts since the last redeploy:
+
+```bash
+/usr/bin/log show --predicate 'subsystem == "com.apple.TCC"' --last 1h \
+  | grep -iE "ductile|AUTHREQ_PROMPTING"
+```
+
+A line like `Failed to match existing code requirement for subject .../ductile and service kTCCServiceSystemPolicySomething` confirms the cdhash mismatch fired a prompt for that service.
+
+### 9.3. Long-term fix
+
+Apple Developer ID codesigning would anchor the designated code requirement on a stable identity instead of the per-build cdhash, and grants would carry forward across rebuilds. Trade-off: $99/yr for a Developer account. Until then, treat the pre-warm step as part of the redeploy procedure, not an optional extra.
+
 ---
 
 ## Known Differences from Linux Deployment
@@ -327,6 +385,7 @@ launchctl start com.mattjoyce.ductile-local
 2. **No EnvironmentFile equivalent** — launchd plist `EnvironmentVariables` replaces systemd's `EnvironmentFile`. Secrets must be inlined or loaded by the process at runtime.
 3. **launchd owns PATH** — plugins that shell out (e.g. `sys_exec`) inherit only the PATH set in the plist, not your shell's PATH. Add Homebrew (`/opt/homebrew/bin`) explicitly.
 4. **`strict_mode: false` recommended initially** — On first install, strict mode will reject config files with warnings. Disable until the config is stable, then re-enable.
+5. **TCC resets on every rebuild** — ad-hoc signed binaries change cdhash on every build, invalidating TCC Files-and-Folders grants. See section 9.1 for the required pre-warm step. Linux has no equivalent.
 
 ---
 
