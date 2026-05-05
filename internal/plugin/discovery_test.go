@@ -569,6 +569,11 @@ func TestValidateTrust(t *testing.T) {
 			name: "valid executable",
 			setupFn: func(t *testing.T) (string, string, string) {
 				dir := t.TempDir()
+				// Resolve macOS /var → /private/var so the symlink check
+				// (intentionally false here) doesn't false-positive.
+				if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+					dir = resolved
+				}
 				pluginDir := filepath.Join(dir, "test")
 				if err := os.Mkdir(pluginDir, 0o755); err != nil {
 					t.Fatalf("mkdir plugin dir: %v", err)
@@ -667,6 +672,14 @@ func TestValidateTrust(t *testing.T) {
 func TestValidateTrustInRoots(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
+	// Resolve macOS /var → /private/var symlinks so the (false) symlink
+	// guard doesn't reject the happy path.
+	if resolved, err := filepath.EvalSymlinks(rootA); err == nil {
+		rootA = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(rootB); err == nil {
+		rootB = resolved
+	}
 	pluginDir := filepath.Join(rootB, "test")
 	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
 		t.Fatalf("mkdir plugin dir: %v", err)

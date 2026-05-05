@@ -26,6 +26,11 @@ func writePluginFixture(t *testing.T, dir, name, manifestBody, binaryBody string
 
 func TestComputePluginFingerprintHappyPath(t *testing.T) {
 	tmp := t.TempDir()
+	// Resolve macOS /var → /private/var so the configured path matches
+	// what filepath.EvalSymlinks returns inside ComputePluginFingerprint.
+	if resolved, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = resolved
+	}
 	manifest, entry := writePluginFixture(t, tmp, "gmail", "name: gmail\n", "#!/bin/sh\necho hi\n")
 
 	fp, err := ComputePluginFingerprint(ResolvedPlugin{
@@ -547,6 +552,11 @@ func TestVerifyPluginFingerprintsPathDriftBytesMatchIsInformational(t *testing.T
 
 func TestComputePluginFingerprintRecordsConfiguredAndResolvedPaths(t *testing.T) {
 	tmp := t.TempDir()
+	// Resolve macOS /var → /private/var so the asserted resolved path
+	// (which compares against filepath.EvalSymlinks output) matches.
+	if resolved, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = resolved
+	}
 	realDir := filepath.Join(tmp, "real")
 	manifest, entry := writePluginFixture(t, realDir, "gmail", "name: gmail\n", "#!/bin/sh\necho hi\n")
 	linkDir := filepath.Join(tmp, "link")

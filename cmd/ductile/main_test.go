@@ -885,10 +885,12 @@ func writeConfigDirFixtureWithPlugin(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 
+	// allow_symlinks: true accommodates macOS t.TempDir() symlink layout.
 	configYAML := `
 service:
   tick_interval: 60s
   log_level: info
+  allow_symlinks: true
 state:
   path: ` + filepath.Join(dir, "state.db") + `
 plugin_roots:
@@ -1001,10 +1003,14 @@ func writeConfigDirFixture(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 
+	// allow_symlinks: true accommodates macOS t.TempDir() which returns
+	// /var/folders/... — a symlink to /private/var/folders/... — and would
+	// otherwise be refused by plugin_root symlink detection.
 	configYAML := `
 service:
   tick_interval: 60s
   log_level: info
+  allow_symlinks: true
 state:
   path: ` + filepath.Join(dir, "state.db") + `
 plugin_roots:
@@ -1385,10 +1391,12 @@ func writeRouteFixture(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 
+	// allow_symlinks: true accommodates macOS t.TempDir() symlink layout.
 	configYAML := `
 service:
   tick_interval: 60s
   log_level: info
+  allow_symlinks: true
 state:
   path: ` + filepath.Join(dir, "state.db") + `
 plugin_roots:
@@ -1539,6 +1547,12 @@ func TestRunConfigWebhookAddAndList(t *testing.T) {
 
 func TestRunConfigInitBackupRestore(t *testing.T) {
 	tmpDir := t.TempDir()
+	// Resolve macOS /var → /private/var symlink so the validation walker
+	// doesn't refuse the auto-init config (whose template, correctly, leaves
+	// service.allow_symlinks at the prod-safe default of false).
+	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		tmpDir = resolved
+	}
 	configDir := filepath.Join(tmpDir, "cfg")
 
 	initCode, _, initStderr := captureOutputWithExitCode(t, func() int {
