@@ -175,6 +175,13 @@ func (s *stubQueueService) CompleteWithResult(_ context.Context, _ string, _ que
 }
 func (s *stubQueueService) PruneJobLogs(_ context.Context, _ time.Duration) error  { return nil }
 func (s *stubQueueService) PruneJobQueue(_ context.Context, _ time.Duration) error { return nil }
+func (s *stubQueueService) PruneJobTransitions(_ context.Context, _ time.Duration) error {
+	return nil
+}
+func (s *stubQueueService) PruneJobAttempts(_ context.Context, _ time.Duration) error { return nil }
+func (s *stubQueueService) PruneBreakerTransitions(_ context.Context, _ time.Duration) error {
+	return nil
+}
 
 type circuitQueueStub struct {
 	stubQueueService

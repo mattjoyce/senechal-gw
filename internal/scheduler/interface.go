@@ -28,4 +28,7 @@ type QueueService interface {
 	CompleteWithResult(ctx context.Context, jobID string, status queue.Status, result json.RawMessage, lastError, stderr *string) error
 	PruneJobLogs(ctx context.Context, retention time.Duration) error
 	PruneJobQueue(ctx context.Context, retention time.Duration) error
+	PruneJobTransitions(ctx context.Context, retention time.Duration) error
+	PruneJobAttempts(ctx context.Context, retention time.Duration) error
+	PruneBreakerTransitions(ctx context.Context, retention time.Duration) error
 }

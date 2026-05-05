@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS job_transitions (
 );
 
 CREATE INDEX IF NOT EXISTS job_transitions_job_created_at_idx ON job_transitions(job_id, created_at);
+CREATE INDEX IF NOT EXISTS job_transitions_created_at_idx ON job_transitions(created_at);
 
 CREATE TABLE IF NOT EXISTS job_attempts (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS job_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS job_attempts_job_created_at_idx ON job_attempts(job_id, created_at);
+CREATE INDEX IF NOT EXISTS job_attempts_created_at_idx ON job_attempts(created_at);
 
 -- Hickey Sprint 2 config snapshots:
 -- append-only records of successful active runtime config values. Job rows
@@ -198,6 +200,9 @@ ON circuit_breaker_transitions(plugin, command, created_at);
 CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_job_idx
 ON circuit_breaker_transitions(job_id)
 WHERE job_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS circuit_breaker_transitions_created_at_idx
+ON circuit_breaker_transitions(created_at);
 
 -- Schedule Entries: Last fire times and next scheduled runs.
 CREATE TABLE IF NOT EXISTS schedule_entries (

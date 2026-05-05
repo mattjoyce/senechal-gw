@@ -1574,6 +1574,66 @@ WHERE status IN ('succeeded','skipped','failed','timed_out','dead')
 	return nil
 }
 
+// PruneJobTransitions deletes job_transitions rows older than the retention
+// duration. job_transitions is the append-only fact log over job_queue's
+// mutable status; retention here is independent of job_queue retention now
+// that the cross-table FK has been dropped (see commit f3b13e6).
+func (q *Queue) PruneJobTransitions(ctx context.Context, retention time.Duration) error {
+	if retention <= 0 {
+		return nil
+	}
+
+	cutoff := time.Now().UTC().Add(-retention)
+	_, err := q.db.ExecContext(ctx, `
+DELETE FROM job_transitions
+WHERE created_at < ?;
+`, cutoff.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("prune job transitions: %w", err)
+	}
+	return nil
+}
+
+// PruneJobAttempts deletes job_attempts rows older than the retention
+// duration. Append-only fact log of retry attempts; retention paired with
+// job_log so forensic visibility into "why did this retry" stays aligned
+// with the canonical job log.
+func (q *Queue) PruneJobAttempts(ctx context.Context, retention time.Duration) error {
+	if retention <= 0 {
+		return nil
+	}
+
+	cutoff := time.Now().UTC().Add(-retention)
+	_, err := q.db.ExecContext(ctx, `
+DELETE FROM job_attempts
+WHERE created_at < ?;
+`, cutoff.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("prune job attempts: %w", err)
+	}
+	return nil
+}
+
+// PruneBreakerTransitions deletes circuit_breaker_transitions rows older
+// than the retention duration. Append-only fact log of breaker state
+// changes; lower volume than the job-side fact logs but valuable for
+// incident review across longer windows.
+func (q *Queue) PruneBreakerTransitions(ctx context.Context, retention time.Duration) error {
+	if retention <= 0 {
+		return nil
+	}
+
+	cutoff := time.Now().UTC().Add(-retention)
+	_, err := q.db.ExecContext(ctx, `
+DELETE FROM circuit_breaker_transitions
+WHERE created_at < ?;
+`, cutoff.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("prune breaker transitions: %w", err)
+	}
+	return nil
+}
+
 // Complete marks a job complete and writes a log row. This signature is kept
 // stable since other sprint work may call it directly.
 func (q *Queue) Complete(ctx context.Context, jobID string, status Status, lastError, stderr *string) error {
