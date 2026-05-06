@@ -1,0 +1,6 @@
+4|0|SEARCH job_queue USING COVERING INDEX sqlite_autoindex_job_queue_1 (id=?)
+8|0|LIST SUBQUERY 3
+14|8|SEARCH candidate USING INDEX job_queue_status_created_at_idx (status=?)
+30|8|CORRELATED SCALAR SUBQUERY 1
+34|30|SEARCH running USING COVERING INDEX job_queue_dedupe_status_completed_idx (dedupe_key=? AND status=?)
+51|8|CREATE BLOOM FILTER

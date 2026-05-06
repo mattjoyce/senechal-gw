@@ -1,0 +1,2 @@
+8|0|SEARCH l USING INDEX job_log_completed_at_idx (completed_at>?)
+15|0|SEARCH q USING INDEX sqlite_autoindex_job_queue_1 (id=?) LEFT-JOIN

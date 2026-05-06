@@ -1,0 +1,2 @@
+5|0|SEARCH plugin_facts USING INDEX plugin_facts_plugin_seq_idx (plugin_name=?)
+33|0|USE TEMP B-TREE FOR ORDER BY

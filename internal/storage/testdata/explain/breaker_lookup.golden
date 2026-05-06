@@ -1,0 +1,1 @@
+3|0|SEARCH circuit_breakers USING INDEX sqlite_autoindex_circuit_breakers_1 (plugin=? AND command=?)
