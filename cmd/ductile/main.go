@@ -2356,6 +2356,15 @@ func (rt *runtimeState) Stop() {
 		}
 		rt.wg.Wait()
 		if rt.db != nil {
+			// Refresh planner statistics on graceful shutdown so the next
+			// run picks indexes against current row counts. Bounded by a
+			// short timeout because rt.ctx is already cancelled and the
+			// caller is waiting for shutdown to complete.
+			octx, ocancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if _, err := rt.db.ExecContext(octx, "PRAGMA optimize;"); err != nil && rt.logger != nil {
+				rt.logger.Warn("PRAGMA optimize on shutdown failed", "error", err)
+			}
+			ocancel()
 			_ = rt.db.Close()
 		}
 	})
