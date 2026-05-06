@@ -1,0 +1,1 @@
+6|0|SEARCH job_queue USING INDEX job_queue_status_created_at_idx (status=?)

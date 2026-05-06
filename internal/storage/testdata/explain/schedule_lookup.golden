@@ -1,0 +1,1 @@
+3|0|SEARCH schedule_entries USING INDEX sqlite_autoindex_schedule_entries_1 (plugin=? AND schedule_id=?)
