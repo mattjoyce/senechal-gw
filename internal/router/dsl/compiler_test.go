@@ -48,6 +48,7 @@ func TestCompileSpecsValidNestedPipeline(t *testing.T) {
 	p := set.Pipelines["wisdom-chain"]
 	if p == nil {
 		t.Fatalf("compiled pipeline wisdom-chain not found")
+		return
 	}
 	if p.Trigger != "discord.video_link_received" {
 		t.Fatalf("trigger = %q, want %q", p.Trigger, "discord.video_link_received")
@@ -258,6 +259,7 @@ func TestCompileSpecsAcceptsBaggageOnUsesStep(t *testing.T) {
 	baggage := set.Pipelines["explicit-baggage"].Nodes["transcribe"].Baggage
 	if baggage == nil {
 		t.Fatalf("compiled node baggage = nil")
+		return
 	}
 	if baggage.Mappings["summary.text"] != "payload.text" {
 		t.Fatalf("summary.text mapping = %q, want payload.text", baggage.Mappings["summary.text"])
@@ -302,6 +304,7 @@ func TestLoadFileParsesBaggageYAML(t *testing.T) {
 	baggage := fileSpec.Pipelines[0].Steps[0].Baggage
 	if baggage == nil {
 		t.Fatalf("loaded baggage = nil")
+		return
 	}
 	if baggage.Mappings["whisper.text"] != "payload.text" {
 		t.Fatalf("whisper.text mapping = %q, want payload.text", baggage.Mappings["whisper.text"])
@@ -483,6 +486,7 @@ func TestCompileSpecsOnHookAccepted(t *testing.T) {
 	p := set.Pipelines["notify-on-done"]
 	if p == nil {
 		t.Fatalf("pipeline not found")
+		return
 	}
 	if !p.IsHook {
 		t.Fatalf("IsHook = false, want true")
@@ -580,6 +584,7 @@ func TestCompileSpecsEmitsCompiledRoutesManifest(t *testing.T) {
 	p := set.Pipelines["wisdom-chain"]
 	if p == nil {
 		t.Fatalf("compiled pipeline wisdom-chain not found")
+		return
 	}
 	if len(p.CompiledRoutes) != 7 {
 		t.Fatalf("compiled route count = %d, want 7", len(p.CompiledRoutes))
@@ -670,6 +675,7 @@ func TestCompileSpecsEmitsCompiledRoutesForHookPipeline(t *testing.T) {
 	p := set.Pipelines["notify-on-complete"]
 	if p == nil {
 		t.Fatalf("pipeline not found")
+		return
 	}
 	if len(p.CompiledRoutes) != 2 {
 		t.Fatalf("compiled route count = %d, want 2", len(p.CompiledRoutes))

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
 	"gopkg.in/yaml.v3"
+	_ "modernc.org/sqlite"
 )
 
 func TestParseScope(t *testing.T) {
@@ -53,10 +53,10 @@ func TestParseScope(t *testing.T) {
 // fixture builds a minimal config dir + state DB + plugin root + env file
 // for round-tripping each backup scope through writeBackupArchive.
 type backupFixture struct {
-	configDir   string
-	dbPath      string
-	pluginRoot  string
-	envFile     string
+	configDir  string
+	dbPath     string
+	pluginRoot string
+	envFile    string
 }
 
 func newBackupFixture(t *testing.T) *backupFixture {

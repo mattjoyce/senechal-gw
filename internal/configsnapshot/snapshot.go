@@ -359,16 +359,16 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 
 	return map[string]any{
 		"service": map[string]any{
-			"name":              cfg.Service.Name,
-			"tick_interval":     durationString(cfg.Service.TickInterval),
-			"log_level":         cfg.Service.LogLevel,
-			"log_format":        cfg.Service.LogFormat,
-			"dedupe_ttl":        durationString(cfg.Service.DedupeTTL),
+			"name":                cfg.Service.Name,
+			"tick_interval":       durationString(cfg.Service.TickInterval),
+			"log_level":           cfg.Service.LogLevel,
+			"log_format":          cfg.Service.LogFormat,
+			"dedupe_ttl":          durationString(cfg.Service.DedupeTTL),
 			"job_log_retention":   durationString(cfg.Service.JobLogRetention),
 			"job_queue_retention": durationString(cfg.Service.JobQueueRetention),
-			"max_workers":       cfg.Service.MaxWorkers,
-			"strict_mode":       cfg.Service.StrictMode,
-			"allow_symlinks":    cfg.Service.AllowSymlinks,
+			"max_workers":         cfg.Service.MaxWorkers,
+			"strict_mode":         cfg.Service.StrictMode,
+			"allow_symlinks":      cfg.Service.AllowSymlinks,
 		},
 		"state": map[string]any{
 			"path": cfg.State.Path,

@@ -547,6 +547,7 @@ commands:
 	values := manifest.Commands[0].Values
 	if values == nil {
 		t.Fatal("values missing")
+		return
 	}
 	if got, want := values.Consume[1], "payload.message"; got != want {
 		t.Fatalf("Consume[1] = %q, want %q", got, want)

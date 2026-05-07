@@ -37,11 +37,11 @@ type EnvironmentVarsConfig struct {
 
 // ServiceConfig defines core service settings.
 type ServiceConfig struct {
-	Name            string        `yaml:"name"`
-	TickInterval    time.Duration `yaml:"tick_interval"`
-	LogLevel        string        `yaml:"log_level"`
-	LogFormat       string        `yaml:"log_format"`
-	DedupeTTL       time.Duration `yaml:"dedupe_ttl"`
+	Name                        string        `yaml:"name"`
+	TickInterval                time.Duration `yaml:"tick_interval"`
+	LogLevel                    string        `yaml:"log_level"`
+	LogFormat                   string        `yaml:"log_format"`
+	DedupeTTL                   time.Duration `yaml:"dedupe_ttl"`
 	JobLogRetention             time.Duration `yaml:"job_log_retention"`
 	JobQueueRetention           time.Duration `yaml:"job_queue_retention"`
 	JobTransitionsRetention     time.Duration `yaml:"job_transitions_retention"`
@@ -483,11 +483,11 @@ func (cf *ConfigFiles) HighSecurityFiles() []string {
 func Defaults() *Config {
 	return &Config{
 		Service: ServiceConfig{
-			Name:            "ductile",
-			TickInterval:    60 * time.Second,
-			LogLevel:        "info",
-			LogFormat:       "json",
-			DedupeTTL:       24 * time.Hour,
+			Name:                        "ductile",
+			TickInterval:                60 * time.Second,
+			LogLevel:                    "info",
+			LogFormat:                   "json",
+			DedupeTTL:                   24 * time.Hour,
 			JobLogRetention:             30 * 24 * time.Hour,
 			JobQueueRetention:           24 * time.Hour,
 			JobTransitionsRetention:     30 * 24 * time.Hour,

@@ -2271,7 +2271,7 @@ func loadJSONObjectInput(rawValue, filePath, fieldName string) (map[string]any, 
 	var data []byte
 	switch {
 	case strings.TrimSpace(filePath) != "":
-		readData, err := os.ReadFile(filePath)
+		readData, err := readFileWithinParent(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read %s file: %w", fieldName, err)
 		}
@@ -2302,6 +2302,19 @@ func loadJSONObjectInput(rawValue, filePath, fieldName string) (map[string]any, 
 		return nil, fmt.Errorf("%s must be a JSON object", fieldName)
 	}
 	return obj, nil
+}
+
+func readFileWithinParent(path string) ([]byte, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve path: %w", err)
+	}
+	root, err := os.OpenRoot(filepath.Dir(absPath))
+	if err != nil {
+		return nil, fmt.Errorf("open parent root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	return root.ReadFile(filepath.Base(absPath))
 }
 
 type runtimeState struct {

@@ -98,6 +98,7 @@ echo '{"status": "ok", "result": "notified"}'
 		}
 		if hookJob == nil {
 			t.Fatal("expected hook job to be enqueued, but got none")
+			return
 		}
 		if hookJob.Plugin != "notifier" {
 			t.Errorf("hook job plugin = %q, want %q", hookJob.Plugin, "notifier")
@@ -286,6 +287,7 @@ echo '{"status": "ok", "result": "notified"}'
 	}
 	if hookJob == nil {
 		t.Fatal("expected hook job for failed job, but got none")
+		return
 	}
 
 	var ev protocol.Event

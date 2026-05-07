@@ -1494,18 +1494,19 @@ echo '{"status":"ok","result":"handled by b","logs":[{"level":"info","message":"
 	}
 	if childJob == nil {
 		t.Fatalf("expected routed child job")
-	}
-	if childJob.Plugin != "plugin-b" || childJob.Command != "handle" {
-		t.Fatalf("unexpected child job: %+v", childJob)
-	}
-	if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
-		t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
-	}
-	if childJob.EventContextID == nil {
-		t.Fatalf("child event_context_id is nil")
-	}
-	if childJob.DedupeKey == nil || *childJob.DedupeKey != "chain:start:hello" {
-		t.Fatalf("child dedupe_key = %v, want %q", childJob.DedupeKey, "chain:start:hello")
+	} else {
+		if childJob.Plugin != "plugin-b" || childJob.Command != "handle" {
+			t.Fatalf("unexpected child job: %+v", childJob)
+		}
+		if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
+			t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
+		}
+		if childJob.EventContextID == nil {
+			t.Fatalf("child event_context_id is nil")
+		}
+		if childJob.DedupeKey == nil || *childJob.DedupeKey != "chain:start:hello" {
+			t.Fatalf("child dedupe_key = %v, want %q", childJob.DedupeKey, "chain:start:hello")
+		}
 	}
 
 	var routedEvent protocol.Event
@@ -1823,12 +1824,13 @@ echo '{"status":"ok","result":"step b complete"}'
 	}
 	if childJob == nil {
 		t.Fatal("expected routed child job")
-	}
-	if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
-		t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
-	}
-	if childJob.EventContextID == nil {
-		t.Fatal("child event_context_id is nil")
+	} else {
+		if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
+			t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
+		}
+		if childJob.EventContextID == nil {
+			t.Fatal("child event_context_id is nil")
+		}
 	}
 
 	childCtx, err := contextStore.Get(ctx, *childJob.EventContextID)
@@ -1977,6 +1979,7 @@ echo '{"status":"ok","result":"target step complete"}'
 	}
 	if childJob == nil {
 		t.Fatal("expected routed child job")
+		return
 	}
 	if childJob.ParentJobID == nil || *childJob.ParentJobID != rootJobID {
 		t.Fatalf("child parent_job_id = %v, want %s", childJob.ParentJobID, rootJobID)
@@ -2106,6 +2109,7 @@ echo '{"status":"ok","result":"should-also-not-run"}'
 	pipeline := set.Pipelines["chain"]
 	if pipeline == nil {
 		t.Fatal("compiled pipeline chain not found")
+		return
 	}
 	maybeNode, ok := pipeline.Nodes["maybe"]
 	if !ok {
@@ -2163,6 +2167,7 @@ echo '{"status":"ok","result":"should-also-not-run"}'
 	}
 	if seedJob == nil {
 		t.Fatal("expected seed job")
+		return
 	}
 	if seedJob.EventContextID == nil {
 		t.Fatal("seed job event_context_id is nil")
@@ -2195,6 +2200,7 @@ echo '{"status":"ok","result":"should-also-not-run"}'
 	}
 	if maybeJob == nil {
 		t.Fatal("expected maybe job")
+		return
 	}
 	if maybeJob.EventContextID == nil {
 		t.Fatal("maybe job event_context_id is nil")
@@ -2224,6 +2230,7 @@ echo '{"status":"ok","result":"should-also-not-run"}'
 	}
 	if commitJob == nil {
 		t.Fatalf("expected commit job after skipped maybe step")
+		return
 	}
 	if commitJob.EventContextID == nil {
 		t.Fatal("commit job event_context_id is nil")

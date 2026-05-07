@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"gopkg.in/yaml.v3"
+	_ "modernc.org/sqlite"
 
 	"github.com/mattjoyce/ductile/internal/config"
 )
@@ -99,19 +99,19 @@ var configRuntimeExcludes = []string{
 // It is the self-documenting record of what the archive contains, when, and
 // from where.
 type backupManifest struct {
-	DuctileVersion string             `yaml:"ductile_version"`
-	DuctileCommit  string             `yaml:"ductile_commit"`
-	Hostname       string             `yaml:"hostname"`
-	CreatedAt      string             `yaml:"created_at"`
-	Scope          string             `yaml:"scope"`
-	SourceDBPath   string             `yaml:"source_db_path"`
-	SourceDBSHA256 string             `yaml:"source_db_sha256"`
-	SourceConfig   string             `yaml:"source_config_dir,omitempty"`
-	Included       []string           `yaml:"included"`
-	Excluded       []manifestExcluded `yaml:"excluded,omitempty"`
+	DuctileVersion string               `yaml:"ductile_version"`
+	DuctileCommit  string               `yaml:"ductile_commit"`
+	Hostname       string               `yaml:"hostname"`
+	CreatedAt      string               `yaml:"created_at"`
+	Scope          string               `yaml:"scope"`
+	SourceDBPath   string               `yaml:"source_db_path"`
+	SourceDBSHA256 string               `yaml:"source_db_sha256"`
+	SourceConfig   string               `yaml:"source_config_dir,omitempty"`
+	Included       []string             `yaml:"included"`
+	Excluded       []manifestExcluded   `yaml:"excluded,omitempty"`
 	PluginRoots    []manifestPluginRoot `yaml:"plugin_roots,omitempty"`
-	EnvFiles       []manifestEnvFile  `yaml:"env_files,omitempty"`
-	Warnings       []string           `yaml:"warnings,omitempty"`
+	EnvFiles       []manifestEnvFile    `yaml:"env_files,omitempty"`
+	Warnings       []string             `yaml:"warnings,omitempty"`
 }
 
 type manifestExcluded struct {
@@ -416,7 +416,7 @@ func writeBackupArchive(dest string, plan *backupPlan) error {
 	}
 	plan.manifest.SourceDBSHA256 = dbHash
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	out, err := openFileWithinParent(dest, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("create archive: %w", err)
 	}
@@ -497,7 +497,7 @@ func tarAddFile(tw *tar.Writer, srcPath, archivePath string) error {
 	if err := tw.WriteHeader(hdr); err != nil {
 		return fmt.Errorf("write tar header for %s: %w", archivePath, err)
 	}
-	f, err := os.Open(srcPath)
+	f, err := openFileWithinParent(srcPath, os.O_RDONLY, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", srcPath, err)
 	}
@@ -571,7 +571,7 @@ func tarAddPluginRoot(tw *tar.Writer, src, archiveBase string) error {
 }
 
 func sha256File(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := openFileWithinParent(path, os.O_RDONLY, 0)
 	if err != nil {
 		return "", err
 	}
@@ -581,6 +581,19 @@ func sha256File(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func openFileWithinParent(path string, flag int, perm os.FileMode) (*os.File, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve path: %w", err)
+	}
+	root, err := os.OpenRoot(filepath.Dir(absPath))
+	if err != nil {
+		return nil, fmt.Errorf("open parent root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	return root.OpenFile(filepath.Base(absPath), flag, perm)
 }
 
 // runVacuumInto opens a fresh connection to the source DB and executes
@@ -599,11 +612,10 @@ func runVacuumInto(srcPath, destPath string) error {
 	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout = 5000;"); err != nil {
 		return fmt.Errorf("busy_timeout pragma: %w", err)
 	}
-	// VACUUM INTO is the documented atomic-snapshot mechanism. Cannot run
-	// inside a transaction. SQLite does not bind parameters in this DDL,
-	// so the path is escaped inline.
-	stmt := fmt.Sprintf("VACUUM INTO '%s';", strings.ReplaceAll(destPath, "'", "''"))
-	if _, err := db.ExecContext(ctx, stmt); err != nil {
+	// VACUUM INTO is the documented atomic-snapshot mechanism. It cannot run
+	// inside a transaction. SQLite accepts a bound scalar expression for the
+	// destination path, so keep the operator-provided path out of SQL text.
+	if _, err := db.ExecContext(ctx, "VACUUM INTO ?;", destPath); err != nil {
 		return fmt.Errorf("VACUUM INTO %s: %w", destPath, err)
 	}
 	return nil

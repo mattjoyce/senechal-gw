@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"time"
 )
 
 var (
@@ -147,18 +146,4 @@ func validateEventTypeList(path string, events []string) error {
 		seen[eventType] = struct{}{}
 	}
 	return nil
-}
-
-func defaultRelayRequestTimeout(timeout time.Duration) time.Duration {
-	if timeout > 0 {
-		return timeout
-	}
-	return 10 * time.Second
-}
-
-func defaultRelayAllowedClockSkew(skew time.Duration) time.Duration {
-	if skew > 0 {
-		return skew
-	}
-	return 5 * time.Minute
 }

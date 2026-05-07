@@ -643,12 +643,13 @@ plugins:
 	}
 	if got == nil {
 		t.Fatal("expected circuit breaker row after reset")
-	}
-	if got.State != queue.CircuitClosed {
-		t.Fatalf("state=%q want %q", got.State, queue.CircuitClosed)
-	}
-	if got.FailureCount != 0 {
-		t.Fatalf("failure_count=%d want 0", got.FailureCount)
+	} else {
+		if got.State != queue.CircuitClosed {
+			t.Fatalf("state=%q want %q", got.State, queue.CircuitClosed)
+		}
+		if got.FailureCount != 0 {
+			t.Fatalf("failure_count=%d want 0", got.FailureCount)
+		}
 	}
 
 	transitions, err := q.ListCircuitBreakerTransitions(context.Background(), "echo", "poll", 10)

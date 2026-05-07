@@ -163,12 +163,13 @@ func TestQueueRecordsConfigSnapshotIDs(t *testing.T) {
 	}
 	if job == nil {
 		t.Fatal("expected dequeued job")
-	}
-	if job.EnqueuedConfigSnapshotID == nil || *job.EnqueuedConfigSnapshotID != "cfg_runtime" {
-		t.Fatalf("job enqueued snapshot = %v", job.EnqueuedConfigSnapshotID)
-	}
-	if job.StartedConfigSnapshotID == nil || *job.StartedConfigSnapshotID != "cfg_runtime" {
-		t.Fatalf("job started snapshot = %v", job.StartedConfigSnapshotID)
+	} else {
+		if job.EnqueuedConfigSnapshotID == nil || *job.EnqueuedConfigSnapshotID != "cfg_runtime" {
+			t.Fatalf("job enqueued snapshot = %v", job.EnqueuedConfigSnapshotID)
+		}
+		if job.StartedConfigSnapshotID == nil || *job.StartedConfigSnapshotID != "cfg_runtime" {
+			t.Fatalf("job started snapshot = %v", job.StartedConfigSnapshotID)
+		}
 	}
 
 	if err := q.Complete(ctx, id, StatusSucceeded, nil, nil); err != nil {
@@ -228,8 +229,7 @@ func TestQueueRecordsJobLineageLifecycle(t *testing.T) {
 	}
 	if second == nil {
 		t.Fatal("expected second dequeue")
-	}
-	if second.Attempt != 2 {
+	} else if second.Attempt != 2 {
 		t.Fatalf("second attempt=%d want 2", second.Attempt)
 	}
 
@@ -655,8 +655,7 @@ func TestQueueDequeueRespectsNextRetryAtStrictly(t *testing.T) {
 	}
 	if job == nil {
 		t.Fatal("expected job dequeue after next_retry_at passed")
-	}
-	if job.ID != id {
+	} else if job.ID != id {
 		t.Fatalf("dequeued job id = %s, want %s", job.ID, id)
 	}
 }
@@ -831,6 +830,7 @@ func TestQueueLatestCompletedPollResult(t *testing.T) {
 	}
 	if res == nil {
 		t.Fatal("expected latest completed poll result")
+		return
 	}
 	if res.JobID != id {
 		t.Fatalf("job id=%q want %q", res.JobID, id)
@@ -848,6 +848,7 @@ func TestQueueLatestCompletedPollResult(t *testing.T) {
 	}
 	if generic == nil {
 		t.Fatal("expected latest completed command result")
+		return
 	}
 	if generic.JobID != id {
 		t.Fatalf("generic job id=%q want %q", generic.JobID, id)
@@ -903,6 +904,7 @@ func TestQueueCircuitBreakerRoundTripAndReset(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected breaker row after upsert")
+		return
 	}
 	if got.State != CircuitOpen {
 		t.Fatalf("state=%q want %q", got.State, CircuitOpen)
@@ -926,6 +928,7 @@ func TestQueueCircuitBreakerRoundTripAndReset(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected breaker row after reset")
+		return
 	}
 	if got.State != CircuitClosed {
 		t.Fatalf("state=%q want %q", got.State, CircuitClosed)
@@ -1054,6 +1057,7 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected persisted schedule state")
+		return
 	}
 	if got.Status != ScheduleEntryPausedInvalid {
 		t.Fatalf("status=%q want %q", got.Status, ScheduleEntryPausedInvalid)
@@ -1089,6 +1093,7 @@ func TestQueueScheduleEntryStateRoundTrip(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("expected state after update")
+		return
 	}
 	if got.Status != ScheduleEntryActive {
 		t.Fatalf("status=%q want %q", got.Status, ScheduleEntryActive)
