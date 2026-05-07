@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -529,6 +528,7 @@ func (d *Dispatcher) spawnPlugin(
 
 	// Prepare command (don't use CommandContext - we'll manage termination ourselves)
 	cmd := exec.Command(entrypoint)
+	configurePluginProcess(cmd)
 
 	// Prepare stdin pipe
 	stdin, err := cmd.StdinPipe()
@@ -584,10 +584,8 @@ func (d *Dispatcher) spawnPlugin(
 	case <-timeoutTimer.C:
 		// Timeout occurred - enforce termination
 		logger.Warn("plugin execution timed out, sending SIGTERM")
-		if cmd.Process != nil {
-			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-				logger.Error("failed to send SIGTERM", "error", err)
-			}
+		if err := terminatePluginProcess(cmd); err != nil {
+			logger.Error("failed to send SIGTERM", "error", err)
 		}
 
 		// Wait for grace period
@@ -601,10 +599,8 @@ func (d *Dispatcher) spawnPlugin(
 		case <-grace.C:
 			// Grace period expired, send SIGKILL
 			logger.Warn("plugin did not exit after SIGTERM, sending SIGKILL")
-			if cmd.Process != nil {
-				if err := cmd.Process.Kill(); err != nil {
-					logger.Error("failed to send SIGKILL", "error", err)
-				}
+			if err := killPluginProcess(cmd); err != nil {
+				logger.Error("failed to send SIGKILL", "error", err)
 			}
 			<-waitErr // Wait for process to die
 		}
