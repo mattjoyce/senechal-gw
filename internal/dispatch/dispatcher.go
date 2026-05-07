@@ -536,10 +536,13 @@ func (d *Dispatcher) spawnPlugin(
 		return nil, protocol.ResponseCompat{}, nil, nil, "", 0, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
-	// Capture stdout and stderr
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// Capture stdout and stderr with hard memory caps. Stdout is the protocol
+	// channel, so overflow is a protocol failure; stderr is diagnostic evidence
+	// and is truncated without failing an otherwise valid response.
+	stdout := newBoundedBuffer(maxStdoutBytes)
+	stderr := newBoundedBuffer(maxStderrBytes)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	logger.Info("plugin executing", "entrypoint", entrypoint, "timeout", timeout)
 
@@ -605,7 +608,13 @@ func (d *Dispatcher) spawnPlugin(
 			<-waitErr // Wait for process to die
 		}
 
-		stderrStr := truncateStderr(stderr.String())
+		if stdout.Truncated() {
+			logger.Warn("plugin stdout exceeded capture limit", "limit_bytes", maxStdoutBytes)
+		}
+		if stderr.Truncated() {
+			logger.Warn("plugin stderr truncated", "limit_bytes", maxStderrBytes)
+		}
+		stderrStr := stderr.String()
 		return nil, protocol.ResponseCompat{}, nil, stdout.Bytes(), stderrStr, 0, context.DeadlineExceeded
 
 	case err := <-waitErr:
@@ -613,7 +622,10 @@ func (d *Dispatcher) spawnPlugin(
 		werr := <-writeErr
 
 		stdoutBytes := stdout.Bytes()
-		stderrStr := truncateStderr(stderr.String())
+		stderrStr := stderr.String()
+		if stderr.Truncated() {
+			logger.Warn("plugin stderr truncated", "limit_bytes", maxStderrBytes)
+		}
 		exitCode := 0
 
 		// Check exit code
@@ -624,6 +636,11 @@ func (d *Dispatcher) spawnPlugin(
 			} else {
 				return nil, protocol.ResponseCompat{}, nil, stdoutBytes, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
 			}
+		}
+
+		if stdout.Truncated() {
+			logger.Error("plugin stdout exceeded capture limit", "limit_bytes", maxStdoutBytes)
+			return nil, protocol.ResponseCompat{}, json.RawMessage(stdoutBytes), stdoutBytes, stderrStr, exitCode, outputLimitError{stream: "stdout", limit: maxStdoutBytes}
 		}
 
 		// Decode response from stdout

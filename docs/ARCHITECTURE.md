@@ -375,8 +375,8 @@ plugins:
 ```
 
 **Resource caps:**
-- Max stdout: 10 MB. Truncated with logged warning.
-- Max stderr: 1 MB. Truncated.
+- Max stdout: 10 MiB captured. Exceeding this cap is a protocol/output failure; the captured prefix is kept for diagnostics.
+- Max stderr: 64 KiB captured for diagnostics. Excess stderr is truncated with a logged warning.
 
 ### 5.7 Retry & Backoff
 
