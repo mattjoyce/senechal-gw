@@ -60,8 +60,11 @@ preferences; they are how we keep Ductile small enough to reason about.
 
 1. **Work Queue (SQLite-backed).** All producers submit to a single FIFO
    queue. Producers: Scheduler (heartbeat ticks), Webhook receiver, Router
-   (plugin output), CLI/API. Serial dispatch by default (`max_workers: 1`);
-   configurable per-plugin with `parallelism`.
+   (plugin output), CLI/API. Dispatch uses a bounded worker pool by default
+   (`service.max_workers` defaults to `max(1, CPU-1)`). Plugin concurrency is
+   controlled by each plugin's `parallelism` config and manifest
+   `concurrency_safe` hint. Operators can force whole-system serial dispatch
+   with `service.max_workers: 1`.
 
 2. **Plugin Lifecycle: Spawn-Per-Command.** No long-lived plugin processes.
    Fork entrypoint → write JSON to stdin → read JSON from stdout → kill
@@ -143,8 +146,11 @@ constructors.
 
 These are non-negotiable without explicit redesign:
 
-1. **Serial dispatch by default** — `max_workers: 1`. Increase only when
-   measured throughput justifies it.
+1. **Bounded dispatch by default; serial is an operator cap** —
+   `service.max_workers` defaults to `max(1, CPU-1)` for bounded global
+   concurrency. Operators who need whole-system serial execution set
+   `service.max_workers: 1`. Per-plugin concurrency remains controlled by
+   `parallelism` and the plugin manifest's `concurrency_safe` hint.
 2. **No streaming** — no WebSockets, no persistent plugin connections.
 3. **Exact-match routing** — no wildcards. Conditional logic belongs in
    plugins or in `if` predicates.

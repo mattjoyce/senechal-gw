@@ -2663,7 +2663,8 @@ echo '{"status":"ok","result":"done"}'
 		t.Fatalf("registry.Add(%s): %v", plug.Name, err)
 	}
 
-	// Default config: max_workers=1, parallelism=1
+	// This plugin keeps effective parallelism 1, so two jobs should run serially
+	// even though the global worker pool default may be larger than one.
 	cfg := config.Defaults()
 	cfg.PluginRoots = []string{pluginsDir}
 	cfg.Plugins["serial"] = config.PluginConf{

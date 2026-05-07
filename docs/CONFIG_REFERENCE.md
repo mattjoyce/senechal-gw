@@ -134,7 +134,8 @@ service:
   log_format: json
   dedupe_ttl: 24h
   job_log_retention: 30d
-  max_workers: 1
+  # Omit to use the default: max(1, CPU-1). Set to 1 to force global serial dispatch.
+  max_workers: 4
   strict_mode: true  # Enforce integrity & configuration checks on startup
 
 plugin_roots:
@@ -192,14 +193,18 @@ plugins:
 
 ### 4.2.1 Concurrency controls
 
-- `service.max_workers`: Global worker cap across all plugins.
+- `service.max_workers`: Global worker cap across all plugins. If omitted,
+  Ductile uses `max(1, CPU-1)`. Set this to `1` to force whole-system serial
+  dispatch.
 - `plugins.<name>.parallelism`: Per-plugin concurrency cap.
 - Constraint: `1 <= parallelism <= max_workers`.
 
 Manifest interaction:
-- Plugins may declare `concurrency_safe: false` in `manifest.yaml`.
-- Such plugins run serial by default (effective parallelism = 1).
-- Operators can explicitly override with `plugins.<name>.parallelism > 1`.
+- Plugins may declare `concurrency_safe: false` in `manifest.yaml`; omitted
+  means `true`.
+- The manifest hint is the plugin author's safety declaration. Operators use
+  `plugins.<name>.parallelism` to choose how much same-plugin concurrency to
+  allow within the global `service.max_workers` cap.
 
 ### 4.3 webhooks.yaml (High Security - Experimental)
 

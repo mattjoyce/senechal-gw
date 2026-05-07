@@ -161,8 +161,8 @@ queued → running → succeeded
 
 **Bounded Worker Pool.** Ductile uses a global worker pool to process jobs in parallel. This ensures high throughput while preventing resource exhaustion.
 
-- **Global Limit:** Controlled by `service.max_workers` (defaults to `CPU-1`).
-- **Plugin Parallelism:** Each plugin can define a `parallelism` limit in its configuration. If a plugin is not marked as `concurrency_safe: true` in its manifest, it defaults to a parallelism of 1 (serial execution).
+- **Global Limit:** Controlled by `service.max_workers` (defaults to `max(1, CPU-1)`). Operators can force whole-system serial dispatch by setting `service.max_workers: 1`.
+- **Plugin Parallelism:** Each plugin can define a `parallelism` limit in its configuration. The plugin manifest's `concurrency_safe` hint is the plugin author's declaration about whether same-plugin concurrent execution is safe; omitted means `true`.
 - **Smart Dequeue:** The scheduler and dispatcher skip jobs for plugins that have reached their active parallelism cap, ensuring the worker pool remains available for other tasks. Running counts and same-`dedupe_key` execution exclusion are derived from `job_queue`; dispatcher in-memory counters are local worker lifecycle coordination only.
 
 Revisit condition: sustained queue wait times exceed 60 seconds with all workers saturated.

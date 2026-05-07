@@ -95,8 +95,10 @@ func New(
 
 // Start runs the main dispatch loop with bounded concurrency. It tracks active
 // workers globally and per-plugin, filling available slots each tick or when a
-// worker completes. When cfg.Service.MaxWorkers == 1 (the default) this behaves
-// identically to the original serial dispatcher.
+// worker completes. Operators can set cfg.Service.MaxWorkers == 1 to force
+// whole-system serial dispatch; otherwise the worker pool runs up to the
+// configured global cap while plugin lane eligibility is controlled by each
+// plugin's effective parallelism.
 //
 // This is a blocking call that runs until ctx is cancelled.
 func (d *Dispatcher) Start(ctx context.Context) error {

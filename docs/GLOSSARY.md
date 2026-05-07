@@ -49,7 +49,7 @@ Immutable metadata (e.g., `origin_user_id`, `trace_id`) that persists across eve
 
 ## Worker Pool (Max Workers)
 
-The global set of execution slots that process jobs in parallel. Controlled by `service.max_workers` (defaults to `CPU-1`).
+The global set of execution slots that process jobs in parallel. Controlled by `service.max_workers` (defaults to `max(1, CPU-1)`). Operators can force whole-system serial dispatch by setting it to `1`.
 
 ## Parallelism
 
@@ -57,7 +57,7 @@ The maximum number of concurrent jobs allowed for a specific plugin or alias. Pr
 
 ## Concurrency Safe
 
-A boolean hint in a plugin's `manifest.yaml`. If false (default), the plugin is restricted to a parallelism of 1 (serial execution) to prevent race conditions.
+A boolean hint in a plugin's `manifest.yaml`. Omitted means `true`. If set to `false`, the plugin author is declaring that same-plugin concurrent execution is unsafe unless an operator deliberately constrains or overrides plugin parallelism.
 
 ## Smart Dequeue
 
