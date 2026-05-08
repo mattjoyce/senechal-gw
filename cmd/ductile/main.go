@@ -248,7 +248,7 @@ Config Commands:
   config restore    Restore config backup
 
 Job Commands:
-  job inspect <id>  Show lineage, baggage, and workspace artifacts
+  job inspect <id>  Show lineage, baggage, and execution details
   job logs          Query stored job logs for audit and troubleshooting
 
 Plugin Commands:

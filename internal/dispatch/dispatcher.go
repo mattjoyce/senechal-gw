@@ -1062,9 +1062,7 @@ func (d *Dispatcher) skipJob(ctx context.Context, logger *slog.Logger, job *queu
 	//
 	// A skipped first-class `if` step can still expand the execution tree. For
 	// synchronous callers, notifying completion before successor enqueue can make
-	// the tree appear finished too early. Preflight now ensures the skipped job
-	// already has a workspace, so downstream clone/inheritance semantics remain
-	// valid even though no plugin process ran.
+	// the tree appear finished too early.
 	if err := d.routeSkippedStepSuccessors(ctx, logger, job, reason); err != nil {
 		errMsg := fmt.Sprintf("failed to route successors after skip: %v", err)
 		d.completeJob(ctx, logger, job.ID, job.Plugin, job.StartedAt, queue.StatusFailed, nil, &errMsg, nil)

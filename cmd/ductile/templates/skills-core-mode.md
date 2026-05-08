@@ -27,8 +27,8 @@ ductile job inspect <job_id>
   integrity checksums. Run this first when the gateway behaves unexpectedly.
 - **`ductile system status --json`** — Check gateway health: PID lock, state DB,
   config load, and plugin reachability.
-- **`ductile job inspect <job_id>`** — Retrieve logs, baggage, and workspace
-  artifacts for a specific job execution.
+- **`ductile job inspect <job_id>`** — Retrieve logs, baggage, and execution
+  details for a specific job execution.
 
 ---
 

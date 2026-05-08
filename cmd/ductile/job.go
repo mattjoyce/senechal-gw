@@ -59,7 +59,7 @@ func printJobNounHelp(w *os.File) {
 
 func printJobInspectHelp() {
 	fmt.Println("Usage: ductile job inspect <job_id> [--config PATH] [--json]")
-	fmt.Println("Inspect job lineage, baggage, and workspace artifacts.")
+	fmt.Println("Inspect job lineage, baggage, and execution details.")
 }
 
 func printJobLogsHelp() {

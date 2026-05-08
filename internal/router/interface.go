@@ -21,8 +21,8 @@ type PipelineInfo struct {
 // Request captures the control-plane inputs needed to calculate fan-out in the
 // Governance Hybrid model.
 //
-// The router works only with metadata and event envelopes; artifact cloning and
-// workspace lifecycle remain in the workspace manager (data plane).
+// The router works only with metadata and event envelopes. Filesystem artifact
+// handling is plugin-owned; the core does not provision per-job workspaces.
 //
 // SourceContext is the upstream job's accumulated durable context (Sprint 17).
 // Entry-route trigger predicates evaluate against payload + this context so

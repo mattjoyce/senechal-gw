@@ -40,13 +40,13 @@ preferences; they are how we keep Ductile small enough to reason about.
   separate names and separate storage. *Plugins stay dumb; the core controls
   flow* is this rule applied to processes.
 - **Distinguish value, state, and identity.** A *value* is immutable (a fact,
-  a config snapshot, a payload). *State* is a place that changes (a queue
-  row, a workspace). *Identity* is a stable name for a series of values over
-  time (a pipeline, a plugin alias). Code that conflates these is the code
-  that breaks under retry and crash.
+  a config snapshot, a payload). *State* is a place that changes (a queue row,
+  a plugin-owned filesystem path). *Identity* is a stable name for a series of
+  values over time (a pipeline, a plugin alias). Code that conflates these is
+  the code that breaks under retry and crash.
 - **Names are part of the contract.** `plugin_facts`, `compatibility_view`,
-  `baggage`, `workspace`, `fact_outputs` were chosen carefully. New names get
-  the same care; renames are a real change, not a cleanup.
+  `baggage`, and `fact_outputs` were chosen carefully. New names get the same
+  care; renames are a real change, not a cleanup.
 - **Design before typing.** For anything touching the queue, durability, or
   the plugin protocol, write the proposal first (in an issue or working note)
   and get it reviewed before code. The cost of a wrong abstraction here is
@@ -68,18 +68,17 @@ preferences; they are how we keep Ductile small enough to reason about.
 
 2. **Plugin Lifecycle: Spawn-Per-Command.** No long-lived plugin processes.
    Fork entrypoint → write JSON to stdin → read JSON from stdout → kill
-   process. Protocol v2 carries `context` (baggage) and `workspace_dir`.
-   Timeouts: SIGTERM → 5s grace → SIGKILL.
+   process. Protocol v2 carries `context` (baggage). The core does not
+   provision or pass `workspace_dir`; plugins own any filesystem scratch or
+   cache paths they require. Timeouts: SIGTERM → 5s grace → SIGKILL.
 
-3. **State Model.** Four distinct concerns, four distinct names:
+3. **State Model.** Three distinct concerns, three distinct names:
    - `config` — static, from config files, env-interpolated.
    - `plugin_facts` — append-only durable record of plugin observations.
      The durable place a plugin remembers things.
    - `plugin_state` — compatibility/cache view of the latest fact, rebuilt
      automatically by the core via the manifest's `compatibility_view`
      declaration.
-   - `workspace` — per-job directory on disk for file artefacts; inherited
-     across pipeline steps.
 
 4. **Pipeline Engine.** YAML DSL for event-driven orchestration. Steps can
    `uses` a plugin, `call` another pipeline, `split` for parallel fan-out,
@@ -99,7 +98,6 @@ synonyms.
 | `plugin_fact` | value | An append-only durable record of something a plugin observed. The thing a plugin remembers. |
 | `plugin_state` | view | A compatibility/cache projection of the latest fact. Derived, not authoritative. |
 | `baggage` | value | Metadata propagated along a pipeline. Travels with the payload; does not mutate upstream. |
-| `workspace` | state | A per-job directory on disk. A *place* that holds files; inherited across pipeline steps. |
 | `pipeline` | identity | A named series of steps. Stable across runs; its executions are values. |
 | `job` | identity | A queued unit of work. Its status is state; its inputs are values. |
 | `event` | value | An immutable trigger record. Routes consume events; events do not change. |
@@ -113,7 +111,7 @@ ductile/
 │   ├── api/            REST API server
 │   ├── auth/           Token auth, scopes
 │   ├── config/         YAML parser, ${ENV} interpolation, integrity
-│   ├── dispatch/       Plugin spawn, preflight, workspace, pipeline routing
+│   ├── dispatch/       Plugin spawn, preflight, pipeline routing
 │   ├── doctor/         Startup preflight checks
 │   ├── e2e/            End-to-end test harness
 │   ├── events/         Event hub
@@ -130,7 +128,6 @@ ductile/
 │   ├── storage/        SQLite helpers
 │   ├── tui/            Terminal UI (system watch)
 │   ├── webhook/        HTTP listener, HMAC verification
-│   └── workspace/      Workspace lifecycle (create, clone, shard)
 ├── plugins/            Bundled reference plugins
 ├── schemas/            JSON schemas for config files
 ├── scripts/            Test orchestration, version, migrations

@@ -107,7 +107,7 @@ Watch for cases where `Result.status == "ok"` but `LastError` is set: the plugin
 succeeded, and the failure is downstream in Ductile's routing/context layer. Those are
 core bugs, not plugin bugs, and usually need to be matched against recent upstream commits.
 
-For job lineage (baggage, workspace, attempt history) across a pipeline:
+For job lineage (baggage, attempts, routing context) across a pipeline:
 
 ```bash
 ductile job inspect <job-id>

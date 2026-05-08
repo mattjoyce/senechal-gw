@@ -76,7 +76,8 @@ The Go Dispatcher (`internal/dispatch/`) will be updated with an **Orchestration
 3. **Intercept `foreach`:** 
    - Pause the parent job.
    - For each item in the array: Create a new `job_queue` entry.
-   - Perform a **Zero-Copy Clone** (`cp -al`) of the parent's `workspace_dir` to the child's dir.
+   - Propagate baggage/context only. Filesystem artifacts are plugin-owned;
+     the core does not clone or pass workspace directories.
    - Resume when all children reach a terminal state (for `synchronous` pipelines).
 
 ### 3.2 The Minimalist Expression Engine
