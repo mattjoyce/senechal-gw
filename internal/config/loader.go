@@ -668,6 +668,9 @@ func validate(cfg *Config) error {
 	if cfg.Service.MaxWorkers <= 0 {
 		return fmt.Errorf("service.max_workers must be positive")
 	}
+	if cfg.Service.DedupeTTL > 0 && cfg.Service.JobQueueRetention > 0 && cfg.Service.JobQueueRetention < cfg.Service.DedupeTTL {
+		return fmt.Errorf("service.job_queue_retention (%s) must be >= service.dedupe_ttl (%s) because dedupe checks use terminal rows in job_queue", cfg.Service.JobQueueRetention, cfg.Service.DedupeTTL)
+	}
 
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLogLevels[cfg.Service.LogLevel] {

@@ -134,6 +134,7 @@ service:
   log_format: json
   dedupe_ttl: 24h
   job_log_retention: 30d
+  job_queue_retention: 24h
   # Omit to use the default: max(1, CPU-1). Set to 1 to force global serial dispatch.
   max_workers: 4
   strict_mode: true  # Enforce integrity & configuration checks on startup
@@ -165,6 +166,9 @@ tcc_paths:
 ```
 
 Relative paths (like `./data/state.db`) are resolved against the directory containing `config.yaml`.
+
+`dedupe_ttl` uses recent terminal rows in `job_queue`, so `job_queue_retention`
+must be at least as long as `dedupe_ttl`. The defaults are both 24h.
 
 > **Note:** As of Sprint 18 the core no longer provisions per-job
 > filesystem workspaces; the `workspace:` config section has been

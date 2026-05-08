@@ -987,6 +987,51 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "job queue retention equals dedupe ttl",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval:      60 * time.Second,
+					LogLevel:          "info",
+					MaxWorkers:        1,
+					DedupeTTL:         24 * time.Hour,
+					JobQueueRetention: 24 * time.Hour,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "job queue retention longer than dedupe ttl",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval:      60 * time.Second,
+					LogLevel:          "info",
+					MaxWorkers:        1,
+					DedupeTTL:         12 * time.Hour,
+					JobQueueRetention: 24 * time.Hour,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "job queue retention shorter than dedupe ttl",
+			cfg: &Config{
+				Service: ServiceConfig{
+					TickInterval:      60 * time.Second,
+					LogLevel:          "info",
+					MaxWorkers:        1,
+					DedupeTTL:         24 * time.Hour,
+					JobQueueRetention: time.Hour,
+				},
+				State:       StateConfig{Path: "./test.db"},
+				PluginRoots: []string{"./plugins"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid log level",
 			cfg: &Config{
 				Service: ServiceConfig{
