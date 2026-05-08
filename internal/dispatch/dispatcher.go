@@ -1810,11 +1810,3 @@ func (d *Dispatcher) notifyCompletion(jobID string) {
 		}
 	}
 }
-
-// truncateStderr truncates stderr to maxStderrBytes.
-func truncateStderr(s string) string {
-	if len(s) > maxStderrBytes {
-		return s[:maxStderrBytes]
-	}
-	return s
-}

@@ -102,7 +102,7 @@ func runEcho(ctx context.Context, root string, cfg map[string]any) (*protocol.Re
 	// The echo plugin should communicate errors via JSON (status=error), not exit status.
 	_ = cmd.Run()
 
-	resp, _, err := protocol.DecodeResponse(&stdout)
+	resp, _, _, err := protocol.DecodeResponseLenient(&stdout)
 	if err != nil {
 		return nil, stderr.String(), err
 	}

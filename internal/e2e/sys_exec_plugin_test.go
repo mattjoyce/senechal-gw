@@ -154,7 +154,7 @@ func TestSysExecPlugin_LogIncludesUpstreamPipelinePlugin(t *testing.T) {
 		t.Fatalf("run sys_exec: %v (stderr=%q)", err, stderr.String())
 	}
 
-	resp, _, err := protocol.DecodeResponse(&stdout)
+	resp, _, _, err := protocol.DecodeResponseLenient(&stdout)
 	if err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -218,7 +218,7 @@ func runSysExec(t *testing.T, command string, cfg map[string]any, payload map[st
 
 	_ = cmd.Run()
 
-	resp, compat, err := protocol.DecodeResponse(&stdout)
+	resp, compat, _, err := protocol.DecodeResponseLenient(&stdout)
 	if err != nil {
 		return nil, protocol.ResponseCompat{}, stderr.String(), err
 	}

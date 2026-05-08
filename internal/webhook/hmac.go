@@ -66,16 +66,3 @@ func parseSignature(signature string) ([]byte, error) {
 	// Handle plain hex format
 	return hex.DecodeString(signature)
 }
-
-// computeExpectedSignature computes the HMAC-SHA256 signature for a body.
-// Used for testing and validation. Returns hex-encoded signature.
-func computeExpectedSignature(body []byte, secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-// formatGitHubSignature formats a hex signature in GitHub's X-Hub-Signature-256 format.
-func formatGitHubSignature(hexSig string) string {
-	return "sha256=" + hexSig
-}

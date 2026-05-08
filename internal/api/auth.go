@@ -6,12 +6,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/auth"
 )
 
-// ExtractAPIKey extracts a bearer token from an Authorization: Bearer <token> header.
-// Deprecated: use internal/auth.ExtractBearerToken.
-func ExtractAPIKey(r *http.Request) (string, error) {
-	return auth.ExtractBearerToken(r)
-}
-
 // authMiddleware authenticates the bearer token and attaches a Principal to context.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

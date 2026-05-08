@@ -68,25 +68,6 @@ func EncodeRequest(w io.Writer, req *Request) error {
 	return nil
 }
 
-// DecodeResponse reads and deserializes a Response from JSON in r.
-// Returns an error if reading or unmarshaling fails, or if the response is invalid.
-func DecodeResponse(r io.Reader) (*Response, ResponseCompat, error) {
-	var wire responseV2Wire
-
-	decoder := json.NewDecoder(r)
-	decoder.DisallowUnknownFields() // Strict parsing
-
-	if err := decoder.Decode(&wire); err != nil {
-		return nil, ResponseCompat{}, fmt.Errorf("failed to decode response: %w", err)
-	}
-	resp := wire.response()
-	if err := validateResponse(resp); err != nil {
-		return nil, ResponseCompat{}, err
-	}
-
-	return resp, wire.compat(), nil
-}
-
 // DecodeResponseLenient is like DecodeResponse but captures any JSON on stdout.
 // Used when debugging protocol errors - returns raw bytes if strict decode fails.
 func DecodeResponseLenient(r io.Reader) (*Response, ResponseCompat, []byte, error) {

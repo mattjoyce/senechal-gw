@@ -1351,39 +1351,6 @@ func TestDispatcher_GetTimeout(t *testing.T) {
 	}
 }
 
-func TestTruncateStderr(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  int
-	}{
-		{
-			name:  "short string unchanged",
-			input: "short",
-			want:  5,
-		},
-		{
-			name:  "exactly at limit unchanged",
-			input: string(make([]byte, maxStderrBytes)),
-			want:  maxStderrBytes,
-		},
-		{
-			name:  "over limit truncated",
-			input: string(make([]byte, maxStderrBytes+1000)),
-			want:  maxStderrBytes,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := truncateStderr(tt.input)
-			if len(got) != tt.want {
-				t.Errorf("truncateStderr() length = %d, want %d", len(got), tt.want)
-			}
-		})
-	}
-}
-
 func TestDispatcher_RoutesTwoHopChainWithContextAndWorkspace(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "state.db")

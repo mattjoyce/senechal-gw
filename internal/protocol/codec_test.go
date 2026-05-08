@@ -89,7 +89,7 @@ func TestEncodeRequest(t *testing.T) {
 	}
 }
 
-func TestDecodeResponse(t *testing.T) {
+func TestDecodeResponseLenientValidation(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
@@ -199,10 +199,10 @@ func TestDecodeResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader := strings.NewReader(tt.input)
-			resp, compat, err := DecodeResponse(reader)
+			resp, compat, _, err := DecodeResponseLenient(reader)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("DecodeResponse() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("DecodeResponseLenient() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
