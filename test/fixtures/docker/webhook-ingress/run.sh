@@ -15,6 +15,7 @@ PID=""
 rm -rf "$CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
 cp -R "$CONFIG_SRC"/. "$CONFIG_DIR/"
+rm -rf "$STATE_DIR"
 mkdir -p "$STATE_DIR"
 SCENARIO_LOG="$ARTIFACT_DIR/scenario.log"
 exec > >(tee "$SCENARIO_LOG") 2>&1

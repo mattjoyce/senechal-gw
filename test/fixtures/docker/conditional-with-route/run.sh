@@ -137,6 +137,9 @@ ORDER BY COALESCE(json_extract(accumulated_json, '$.ductile.route_depth'), 0), c
 }
 
 fixture_log "starting ductile process"
+# Plugin processes inherit ductile's cwd; running from CONFIG_DIR anchors
+# relative working_dir entries (e.g. ./state) to the fixture's config tree.
+cd "$CONFIG_DIR"
 "$ROOT_DIR/ductile" system start --config "$CONFIG_DIR" >"$ARTIFACT_DIR/ductile.log" 2>&1 &
 PID=$!
 
