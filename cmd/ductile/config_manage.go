@@ -17,11 +17,9 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/doctor"
 	"github.com/mattjoyce/ductile/internal/plugin"
-	"github.com/mattjoyce/ductile/internal/tokenmgr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -144,7 +142,6 @@ func runConfigScope(args []string) int {
 
 func runConfigTokenCreate(args []string) int {
 	var configPath, configDir, name, scopesArg, scopesFile, description, format string
-	var useTUI bool
 
 	fs := flag.NewFlagSet("token create", flag.ContinueOnError)
 	fs.StringVar(&configPath, "config", "", "Path to config file or directory")
@@ -154,7 +151,6 @@ func runConfigTokenCreate(args []string) int {
 	fs.StringVar(&scopesFile, "scopes-file", "", "Path to scopes JSON file (or - for stdin)")
 	fs.StringVar(&description, "description", "", "Token description")
 	fs.StringVar(&format, "format", "human", "Output format (human, json)")
-	fs.BoolVar(&useTUI, "tui", false, "Use interactive TUI for scope selection")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
 		return 1
@@ -172,40 +168,18 @@ func runConfigTokenCreate(args []string) int {
 	}
 
 	var scopes []string
-	if useTUI || (scopesArg == "" && scopesFile == "") {
-		// Discover plugins for TUI
-		cfg, err := config.Load(resolvedPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Load config failed: %v\n", err)
-			return 1
-		}
-		registry, err := discoverRegistry(cfg, resolvedPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Plugin discovery failed: %v\n", err)
-			return 1
-		}
-
-		tm := tokenmgr.New(registry)
-		p := tea.NewProgram(tm)
-		if _, err := p.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-			return 1
-		}
-		scopes = tm.GetSelectedScopes()
-		if len(scopes) == 0 {
-			fmt.Fprintln(os.Stderr, "No scopes selected, aborting.")
-			return 1
-		}
-	} else {
-		if scopesArg != "" && scopesFile != "" {
-			fmt.Fprintln(os.Stderr, "Error: use only one of --scopes or --scopes-file")
-			return 1
-		}
-		scopes, err = parseScopesInput(scopesArg, scopesFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Parse scopes failed: %v\n", err)
-			return 1
-		}
+	if scopesArg == "" && scopesFile == "" {
+		fmt.Fprintln(os.Stderr, "Error: one of --scopes or --scopes-file is required")
+		return 1
+	}
+	if scopesArg != "" && scopesFile != "" {
+		fmt.Fprintln(os.Stderr, "Error: use only one of --scopes or --scopes-file")
+		return 1
+	}
+	scopes, err = parseScopesInput(scopesArg, scopesFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Parse scopes failed: %v\n", err)
+		return 1
 	}
 
 	if len(scopes) == 0 {

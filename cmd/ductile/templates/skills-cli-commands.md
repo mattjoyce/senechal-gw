@@ -27,7 +27,7 @@ Format: `<command> tier=<READ|WRITE> mut=<0|1> out=<human|json> [flags="<...>"] 
 - config.restore tier=WRITE mut=1 out=human flags="<archive-path>" d="Restore configuration from a backup archive."
 
 ### Auth & Scopes
-- config.token.create tier=WRITE mut=1 out=human|json flags="--name <n> [--scopes <csv>] [--tui]" d="Create a new scoped API token."
+- config.token.create tier=WRITE mut=1 out=human|json flags="--name <n> (--scopes <csv>|--scopes-file <path|->)" d="Create a new scoped API token."
 - config.token.list tier=READ mut=0 out=human|json d="List all registered API tokens (redacted)."
 - config.token.inspect tier=READ mut=0 out=human|json flags="<name>" d="Inspect token details and verify scope integrity."
 - config.token.delete tier=WRITE mut=1 out=human|json flags="<name>" d="Revoke an API token."
