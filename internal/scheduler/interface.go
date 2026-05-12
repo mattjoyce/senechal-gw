@@ -8,8 +8,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/queue"
 )
 
-//go:generate mockgen -destination=mocks/mock_queue.go -package=mocks github.com/mattjoyce/ductile/internal/scheduler QueueService
-
 // QueueService defines the interface for queue operations used by the scheduler.
 type QueueService interface {
 	Enqueue(ctx context.Context, req queue.EnqueueRequest) (string, error)
