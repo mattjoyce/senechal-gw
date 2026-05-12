@@ -20,7 +20,6 @@ import (
 	"github.com/mattjoyce/ductile/internal/router"
 	"github.com/mattjoyce/ductile/internal/router/dsl"
 	"github.com/mattjoyce/ductile/internal/state"
-	"github.com/rs/cors"
 )
 
 // JobQueuer defines the interface for job queue operations
@@ -174,15 +173,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
 
-	// CORS
-	r.Use(cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"}, // Be more restrictive in production if needed
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true,
-		MaxAge:           300, // Maximum value not ignored by any of major browsers
-	}).Handler)
+	r.Use(corsMiddleware)
 
 	// Routes
 	// Unauthenticated discovery endpoints.
@@ -216,6 +207,41 @@ func (s *Server) setupRoutes() *chi.Mux {
 	})
 
 	return r
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	const (
+		allowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
+		allowedHeaders = "Accept, Authorization, Content-Type, X-CSRF-Token"
+		exposedHeaders = "Link"
+		maxAge         = "300"
+	)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		h := w.Header()
+		h.Add("Vary", "Origin")
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Set("Access-Control-Expose-Headers", exposedHeaders)
+
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			h.Add("Vary", "Access-Control-Request-Method")
+			h.Add("Vary", "Access-Control-Request-Headers")
+			h.Set("Access-Control-Allow-Methods", allowedMethods)
+			h.Set("Access-Control-Allow-Headers", allowedHeaders)
+			h.Set("Access-Control-Max-Age", maxAge)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loggingMiddleware logs HTTP requests
