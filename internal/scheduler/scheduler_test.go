@@ -5,15 +5,74 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/mattjoyce/ductile/internal/config"
 	"github.com/mattjoyce/ductile/internal/queue"
 )
+
+var assert testAssert
+
+type testAssert struct{}
+
+func (testAssert) NoError(t *testing.T, err error, _ ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func (testAssert) Error(t *testing.T, err error, _ ...any) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func (testAssert) Equal(t *testing.T, want, got any, _ ...any) {
+	t.Helper()
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func (testAssert) True(t *testing.T, got bool, _ ...any) {
+	t.Helper()
+	if !got {
+		t.Fatal("got false, want true")
+	}
+}
+
+func (testAssert) False(t *testing.T, got bool, _ ...any) {
+	t.Helper()
+	if got {
+		t.Fatal("got true, want false")
+	}
+}
+
+func (testAssert) NotNil(t *testing.T, got any, _ ...any) {
+	t.Helper()
+	if got == nil || reflect.ValueOf(got).IsNil() {
+		t.Fatal("got nil, want non-nil")
+	}
+}
+
+func (testAssert) GreaterOrEqual(t *testing.T, got, want time.Duration, _ ...any) {
+	t.Helper()
+	if got < want {
+		t.Fatalf("got %s, want >= %s", got, want)
+	}
+}
+
+func (testAssert) LessOrEqual(t *testing.T, got, want time.Duration, _ ...any) {
+	t.Helper()
+	if got > want {
+		t.Fatalf("got %s, want <= %s", got, want)
+	}
+}
 
 // TestLogBuffer is a bytes.Buffer that can be used to capture log output.
 type TestLogBuffer struct {

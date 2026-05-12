@@ -3,11 +3,50 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
+
+var assert testAssert
+
+type testAssert struct{}
+
+func (testAssert) NoError(t *testing.T, err error, _ ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func (testAssert) Error(t *testing.T, err error, _ ...any) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func (testAssert) Equal(t *testing.T, want, got any, _ ...any) {
+	t.Helper()
+	if !reflect.DeepEqual(want, got) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func (testAssert) False(t *testing.T, got bool, _ ...any) {
+	t.Helper()
+	if got {
+		t.Fatal("got true, want false")
+	}
+}
+
+func (testAssert) Contains(t *testing.T, got, want string, _ ...any) {
+	t.Helper()
+	if !strings.Contains(got, want) {
+		t.Fatalf("%q does not contain %q", got, want)
+	}
+}
 
 func TestGetPath(t *testing.T) {
 	cfg := &Config{
