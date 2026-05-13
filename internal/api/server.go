@@ -173,7 +173,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
 
-	r.Use(corsMiddleware)
+	r.Use(s.corsMiddleware)
 
 	// Routes
 	// Unauthenticated discovery endpoints.
@@ -209,7 +209,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	return r
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	const (
 		allowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
 		allowedHeaders = "Accept, Authorization, Content-Type, X-CSRF-Token"
@@ -224,10 +224,50 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		var allowedOrigins []string
+		allowCredentials := false
+
+		if s.config.RuntimeConfig != nil {
+			allowedOrigins = s.config.RuntimeConfig.API.CORS.AllowedOrigins
+			allowCredentials = s.config.RuntimeConfig.API.CORS.AllowCredentials
+		}
+
+		if len(allowedOrigins) == 0 {
+			allowedOrigins = []string{"*"}
+			allowCredentials = false
+		}
+
+		isAllowed := false
+		for _, o := range allowedOrigins {
+			if o == "*" || o == origin {
+				isAllowed = true
+				break
+			}
+		}
+
+		for _, o := range allowedOrigins {
+			if o == "*" {
+				allowCredentials = false
+				break
+			}
+		}
+
+		if !isAllowed {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		allowOriginHeader := origin
+		if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
+			allowOriginHeader = "*"
+		}
+
 		h := w.Header()
 		h.Add("Vary", "Origin")
-		h.Set("Access-Control-Allow-Origin", origin)
-		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Set("Access-Control-Allow-Origin", allowOriginHeader)
+		if allowCredentials {
+			h.Set("Access-Control-Allow-Credentials", "true")
+		}
 		h.Set("Access-Control-Expose-Headers", exposedHeaders)
 
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {

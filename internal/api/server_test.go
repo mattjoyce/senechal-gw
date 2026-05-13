@@ -7,7 +7,11 @@ import (
 )
 
 func TestCORSMiddlewarePreflight(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := (&Server{
+		config: Config{
+			RuntimeConfig: nil,
+		},
+	}).corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("preflight should not call next handler")
 	}))
 
@@ -22,8 +26,8 @@ func TestCORSMiddlewarePreflight(t *testing.T) {
 	if resp.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusNoContent)
 	}
-	assertHeader(t, resp, "Access-Control-Allow-Origin", "https://example.test")
-	assertHeader(t, resp, "Access-Control-Allow-Credentials", "true")
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+
 	assertHeader(t, resp, "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	assertHeader(t, resp, "Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
 	assertHeader(t, resp, "Access-Control-Max-Age", "300")
@@ -31,7 +35,11 @@ func TestCORSMiddlewarePreflight(t *testing.T) {
 
 func TestCORSMiddlewareActualRequest(t *testing.T) {
 	called := false
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := (&Server{
+		config: Config{
+			RuntimeConfig: nil,
+		},
+	}).corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.Header().Set("Link", "</jobs>; rel=next")
 		w.WriteHeader(http.StatusAccepted)
@@ -49,13 +57,17 @@ func TestCORSMiddlewareActualRequest(t *testing.T) {
 	if resp.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusAccepted)
 	}
-	assertHeader(t, resp, "Access-Control-Allow-Origin", "https://example.test")
-	assertHeader(t, resp, "Access-Control-Allow-Credentials", "true")
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+
 	assertHeader(t, resp, "Access-Control-Expose-Headers", "Link")
 }
 
 func TestCORSMiddlewareNoOrigin(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := (&Server{
+		config: Config{
+			RuntimeConfig: nil,
+		},
+	}).corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
