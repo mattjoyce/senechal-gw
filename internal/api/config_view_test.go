@@ -103,3 +103,94 @@ func TestRenderCompiledRoutesSkipsPipelinesWithNoRoutes(t *testing.T) {
 		t.Fatalf("expected empty output, got %+v", out)
 	}
 }
+
+// TestSanitizePluginConfigRecursive is the F-006 regression: sensitive
+// values must be redacted at every nesting depth, including under a
+// non-sensitive parent key, inside nested maps, and in list elements.
+// The shallow (pre-fix) implementation passed nested maps through
+// unchanged, so this test genuinely requires the recursive walk.
+func TestSanitizePluginConfigRecursive(t *testing.T) {
+	if got := sanitizePluginConfig(nil); got != nil {
+		t.Fatalf("nil input must return nil, got %+v", got)
+	}
+
+	in := map[string]any{
+		"endpoint": "https://example.test", // non-sensitive scalar
+		"api_key":  "TOP_SECRET",           // top-level sensitive
+		"redaction_fixture": map[string]any{ // non-sensitive parent
+			"nested_token": "LEAK_NESTED_TOKEN", // sensitive at depth 2
+			"inner": map[string]any{
+				"password": "LEAK_DEEP_PASSWORD", // sensitive at depth 3
+				"region":   "us-east-1",          // preserved
+			},
+			"list": []any{
+				map[string]any{"api_key": "LEAK_LIST_API_KEY"}, // in slice
+				"plain-element",
+			},
+		},
+		"strmap": map[string]string{
+			"secret": "LEAK_STRMAP_SECRET", // sensitive in map[string]string
+			"name":   "keep-me",
+		},
+	}
+	out := sanitizePluginConfig(in)
+
+	if out["endpoint"] != "https://example.test" {
+		t.Errorf("non-sensitive scalar altered: %v", out["endpoint"])
+	}
+	if out["api_key"] != redactionSentinel {
+		t.Errorf("top-level sensitive not redacted: %v", out["api_key"])
+	}
+
+	rf, ok := out["redaction_fixture"].(map[string]any)
+	if !ok {
+		t.Fatalf("redaction_fixture not a map: %T", out["redaction_fixture"])
+	}
+	if rf["nested_token"] != redactionSentinel {
+		t.Errorf("depth-2 sensitive leaked: %v", rf["nested_token"])
+	}
+	inner, ok := rf["inner"].(map[string]any)
+	if !ok {
+		t.Fatalf("inner not a map: %T", rf["inner"])
+	}
+	if inner["password"] != redactionSentinel {
+		t.Errorf("depth-3 sensitive leaked: %v", inner["password"])
+	}
+	if inner["region"] != "us-east-1" {
+		t.Errorf("non-sensitive nested value altered: %v", inner["region"])
+	}
+	lst, ok := rf["list"].([]any)
+	if !ok {
+		t.Fatalf("list not a slice: %T", rf["list"])
+	}
+	elem0, ok := lst[0].(map[string]any)
+	if !ok {
+		t.Fatalf("list[0] not a map: %T", lst[0])
+	}
+	if elem0["api_key"] != redactionSentinel {
+		t.Errorf("sensitive in slice element leaked: %v", elem0["api_key"])
+	}
+	if lst[1] != "plain-element" {
+		t.Errorf("non-sensitive slice element altered: %v", lst[1])
+	}
+
+	sm, ok := out["strmap"].(map[string]any)
+	if !ok {
+		t.Fatalf("strmap not a map: %T", out["strmap"])
+	}
+	if sm["secret"] != redactionSentinel {
+		t.Errorf("map[string]string sensitive leaked: %v", sm["secret"])
+	}
+	if sm["name"] != "keep-me" {
+		t.Errorf("map[string]string non-sensitive altered: %v", sm["name"])
+	}
+
+	// Input must not be mutated by sanitization.
+	if in["api_key"] != "TOP_SECRET" {
+		t.Errorf("input mutated: api_key now %v", in["api_key"])
+	}
+	origRF := in["redaction_fixture"].(map[string]any)
+	if origRF["nested_token"] != "LEAK_NESTED_TOKEN" {
+		t.Errorf("input nested map mutated: %v", origRF["nested_token"])
+	}
+}
