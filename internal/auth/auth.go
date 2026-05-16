@@ -30,7 +30,12 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
-func ExtractBearerToken(r *http.Request) (string, error) {
+// ExtractBearerToken reads the bearer token from the Authorization header.
+// When allowQueryToken is true it also falls back to the ?token= query
+// parameter — this must only be set for endpoints where browser APIs cannot
+// send custom headers (e.g. EventSource/SSE). All other callers must pass
+// false so URL tokens are not accepted and cannot leak through logs or history.
+func ExtractBearerToken(r *http.Request, allowQueryToken bool) (string, error) {
 	auth := r.Header.Get("Authorization")
 	if auth != "" {
 		const prefix = "Bearer "
@@ -43,12 +48,13 @@ func ExtractBearerToken(r *http.Request) (string, error) {
 		}
 	}
 
-	// Fallback to query parameter for SSE/EventSource support
-	if qToken := r.URL.Query().Get("token"); qToken != "" {
-		return qToken, nil
+	if allowQueryToken {
+		if qToken := r.URL.Query().Get("token"); qToken != "" {
+			return qToken, nil
+		}
 	}
 
-	return "", errors.New("missing Authorization header or token query parameter")
+	return "", errors.New("missing or invalid Authorization header")
 }
 
 func constantTimeEqual(a, b string) bool {
