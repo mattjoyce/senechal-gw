@@ -57,11 +57,18 @@ type StateConfig struct {
 	Path string `yaml:"path"`
 }
 
+// CORSConfig defines CORS policy settings.
+type CORSConfig struct {
+	AllowedOrigins   []string `yaml:"allowed_origins,omitempty"`
+	AllowCredentials bool     `yaml:"allow_credentials,omitempty"`
+}
+
 // APIConfig defines HTTP API server settings.
 type APIConfig struct {
 	Enabled           bool          `yaml:"enabled"`
 	Listen            string        `yaml:"listen"`
 	Auth              APIAuthConfig `yaml:"auth"`
+	CORS              CORSConfig    `yaml:"cors,omitempty"`
 	MaxConcurrentSync int           `yaml:"max_concurrent_sync,omitempty"`
 	MaxSyncTimeout    time.Duration `yaml:"max_sync_timeout,omitempty"`
 }
@@ -502,6 +509,10 @@ func Defaults() *Config {
 		API: APIConfig{
 			Enabled: false,
 			Listen:  "127.0.0.1:8080",
+			CORS: CORSConfig{
+				AllowedOrigins:   []string{"*"},
+				AllowCredentials: false,
+			},
 		},
 		Plugins: make(map[string]PluginConf),
 	}

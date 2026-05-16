@@ -1,0 +1,4 @@
+## 2026-05-16 - Prevent Credentials with Wildcard CORS Origins
+**Vulnerability:** The API server's default CORS middleware automatically accepted any origin by echoing it back in the `Access-Control-Allow-Origin` header and unconditionally set `Access-Control-Allow-Credentials: true`. This was an overly permissive CORS configuration.
+**Learning:** The previous implementation did not validate origins against a configured allowlist and allowed wildcard-like access to endpoints while also allowing credentials (cookies, auth headers), which violates secure CORS design.
+**Prevention:** Introduce a `CORSConfig` structure under `APIConfig` to manage `AllowedOrigins` and `AllowCredentials`. The middleware must check the incoming `Origin` against this list, and importantly, force `AllowCredentials = false` if the `AllowedOrigins` contains a wildcard (`*`).
