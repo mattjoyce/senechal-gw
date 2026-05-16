@@ -4,10 +4,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/mattjoyce/ductile/internal/config"
 )
 
 func TestCORSMiddlewarePreflight(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s := &Server{
+		config: Config{
+			RuntimeConfig: &config.Config{
+				API: config.APIConfig{
+					CORS: config.CORSConfig{
+						AllowedOrigins:   []string{"https://example.test"},
+						AllowCredentials: true,
+					},
+				},
+			},
+		},
+	}
+	handler := s.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("preflight should not call next handler")
 	}))
 
@@ -30,8 +44,20 @@ func TestCORSMiddlewarePreflight(t *testing.T) {
 }
 
 func TestCORSMiddlewareActualRequest(t *testing.T) {
+	s := &Server{
+		config: Config{
+			RuntimeConfig: &config.Config{
+				API: config.APIConfig{
+					CORS: config.CORSConfig{
+						AllowedOrigins:   []string{"https://example.test"},
+						AllowCredentials: true,
+					},
+				},
+			},
+		},
+	}
 	called := false
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := s.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.Header().Set("Link", "</jobs>; rel=next")
 		w.WriteHeader(http.StatusAccepted)
@@ -55,7 +81,18 @@ func TestCORSMiddlewareActualRequest(t *testing.T) {
 }
 
 func TestCORSMiddlewareNoOrigin(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	s := &Server{
+		config: Config{
+			RuntimeConfig: &config.Config{
+				API: config.APIConfig{
+					CORS: config.CORSConfig{
+						AllowedOrigins: []string{"*"},
+					},
+				},
+			},
+		},
+	}
+	handler := s.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -65,6 +102,38 @@ func TestCORSMiddlewareNoOrigin(t *testing.T) {
 	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
 	}
+}
+
+func TestCORSMiddlewareWildcardForcesNoCredentials(t *testing.T) {
+	s := &Server{
+		config: Config{
+			RuntimeConfig: &config.Config{
+				API: config.APIConfig{
+					CORS: config.CORSConfig{
+						AllowedOrigins:   []string{"*"},
+						AllowCredentials: true, // Should be forced to false
+					},
+				},
+			},
+		},
+	}
+	called := false
+	handler := s.corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/pipeline/default", nil)
+	req.Header.Set("Origin", "https://example.test")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("actual request did not call next handler")
+	}
+	assertHeader(t, resp, "Access-Control-Allow-Origin", "*")
+	assertHeader(t, resp, "Access-Control-Allow-Credentials", "")
 }
 
 func assertHeader(t *testing.T, resp *httptest.ResponseRecorder, key, want string) {

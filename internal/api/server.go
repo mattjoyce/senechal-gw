@@ -173,7 +173,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
 
-	r.Use(corsMiddleware)
+	r.Use(s.corsMiddleware)
 
 	// Routes
 	// Unauthenticated discovery endpoints.
@@ -209,7 +209,7 @@ func (s *Server) setupRoutes() *chi.Mux {
 	return r
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	const (
 		allowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
 		allowedHeaders = "Accept, Authorization, Content-Type, X-CSRF-Token"
@@ -224,10 +224,57 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Look up CORS policy
+		var policy config.CORSConfig
+		if s.config.RuntimeConfig != nil {
+			policy = s.config.RuntimeConfig.API.CORS
+		} else {
+			// Fallback to default if no runtime config is provided
+			policy = config.Defaults().API.CORS
+		}
+
+		// Security: Automatically disable credentials if using a wildcard origin
+		hasWildcard := false
+		for _, o := range policy.AllowedOrigins {
+			if o == "*" {
+				hasWildcard = true
+				break
+			}
+		}
+		if hasWildcard {
+			policy.AllowCredentials = false
+		}
+
+		// Check if origin is allowed
+		allowed := false
+		if hasWildcard {
+			allowed = true
+		} else {
+			for _, o := range policy.AllowedOrigins {
+				if o == origin {
+					allowed = true
+					break
+				}
+			}
+		}
+
+		if !allowed {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		h := w.Header()
 		h.Add("Vary", "Origin")
-		h.Set("Access-Control-Allow-Origin", origin)
-		h.Set("Access-Control-Allow-Credentials", "true")
+
+		if hasWildcard {
+			h.Set("Access-Control-Allow-Origin", "*")
+		} else {
+			h.Set("Access-Control-Allow-Origin", origin)
+		}
+
+		if policy.AllowCredentials {
+			h.Set("Access-Control-Allow-Credentials", "true")
+		}
 		h.Set("Access-Control-Expose-Headers", exposedHeaders)
 
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
