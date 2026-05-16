@@ -97,50 +97,69 @@ func TestAuthenticate(t *testing.T) {
 
 func TestExtractBearerToken(t *testing.T) {
 	tests := []struct {
-		name      string
-		authValue string
-		want      string
-		wantErr   bool
+		name            string
+		authValue       string
+		queryToken      string
+		allowQueryToken bool
+		want            string
+		wantErr         bool
 	}{
 		{
 			name:      "valid bearer token",
 			authValue: "Bearer my-secret-token",
 			want:      "my-secret-token",
-			wantErr:   false,
 		},
 		{
-			name:      "missing header",
-			authValue: "",
-			want:      "",
-			wantErr:   true,
+			name:    "missing header",
+			wantErr: true,
 		},
 		{
 			name:      "invalid format",
 			authValue: "Basic dXNlcm5hbWU6cGFzc3dvcmQ=",
-			want:      "",
 			wantErr:   true,
 		},
 		{
 			name:      "empty token after prefix",
 			authValue: "Bearer ",
-			want:      "",
 			wantErr:   true,
 		},
 		{
 			name:      "whitespace token",
 			authValue: "Bearer    ",
-			want:      "",
 			wantErr:   true,
+		},
+		{
+			name:            "query token allowed",
+			queryToken:      "sse-token",
+			allowQueryToken: true,
+			want:            "sse-token",
+		},
+		{
+			name:            "query token not allowed — rejected",
+			queryToken:      "sse-token",
+			allowQueryToken: false,
+			wantErr:         true,
+		},
+		{
+			name:            "header takes precedence over query token",
+			authValue:       "Bearer header-token",
+			queryToken:      "query-token",
+			allowQueryToken: true,
+			want:            "header-token",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req, _ := http.NewRequest("GET", "/", nil)
+			url := "/"
+			if tt.queryToken != "" {
+				url = "/?token=" + tt.queryToken
+			}
+			req, _ := http.NewRequest("GET", url, nil)
 			if tt.authValue != "" {
 				req.Header.Set("Authorization", tt.authValue)
 			}
-			got, err := ExtractBearerToken(req)
+			got, err := ExtractBearerToken(req, tt.allowQueryToken)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ExtractBearerToken() error = %v, wantErr %v", err, tt.wantErr)
 				return

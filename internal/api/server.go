@@ -73,6 +73,9 @@ type Config struct {
 	RuntimeConfig     *config.Config
 	ReloadFunc        func(context.Context) (ReloadResponse, error)
 	RelayReceiver     *relay.Receiver
+	// AllowedOrigins lists the origins that may receive credentialed CORS
+	// headers. An empty list disables cross-origin credential sharing entirely.
+	AllowedOrigins []string
 }
 
 // Server represents the HTTP API server
@@ -173,24 +176,27 @@ func (s *Server) setupRoutes() *chi.Mux {
 	r.Use(s.loggingMiddleware)
 	r.Use(middleware.Recoverer)
 
-	r.Use(corsMiddleware)
+	r.Use(corsMiddleware(s.config.AllowedOrigins))
 
 	// Routes
-	// Unauthenticated discovery endpoints.
+	// Always unauthenticated.
 	r.Get("/", s.handleRoot)
 	r.Get("/healthz", s.handleHealthz)
-	r.Get("/plugins", s.handleListPlugins)
-	r.Get("/skills", s.handleListSkills)
-	r.Get("/openapi.json", s.handleOpenAPIAll)
-	r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
-	r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
 	if s.relayReceiver != nil {
 		r.Post(s.relayReceiver.RoutePattern(), s.relayReceiver.HandleHTTP)
 	}
 
-	// Protected API.
+	// Protected API — header bearer token only.
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
+
+		// Discovery — any valid token; no scope restriction beyond authentication.
+		r.Get("/plugins", s.handleListPlugins)
+		r.Get("/skills", s.handleListSkills)
+		r.Get("/openapi.json", s.handleOpenAPIAll)
+		r.Get("/.well-known/ai-plugin.json", s.handleWellKnownPlugin)
+		r.Get("/plugin/{plugin}/openapi.json", s.handleOpenAPIPlugin)
+
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Post("/plugin/{plugin}/{command}", s.handlePluginTrigger)
 		r.With(s.requireScopes("plugin:ro", "plugin:rw", "*")).Get("/plugin/{plugin}", s.handleGetPlugin)
 		r.With(s.requireScopes("plugin:rw", "*")).Post("/pipeline/{pipeline}", s.handlePipelineTrigger)
@@ -199,17 +205,26 @@ func (s *Server) setupRoutes() *chi.Mux {
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/jobs", s.handleListJobs)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/job-logs", s.handleListJobLogs)
 		r.With(s.requireScopes("jobs:ro", "jobs:rw", "*")).Get("/scheduler/jobs", s.handleSchedulerJobs)
-		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
 		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/summary", s.handleAnalyticsSummary)
 		r.With(s.requireScopes("jobs:ro", "*")).Get("/analytics/queue", s.handleQueueMetrics)
 		r.With(s.requireScopes("system:rw", "*")).Post("/system/reload", s.handleSystemReload)
 		r.With(s.requireScopes("system:ro", "system:rw", "*")).Get("/config/view", s.handleConfigView)
 	})
 
+	// SSE endpoint — also accepts ?token= because EventSource cannot send
+	// Authorization headers. Scope check is otherwise identical.
+	r.Group(func(r chi.Router) {
+		r.Use(s.authenticate(true))
+		r.With(s.requireScopes("events:ro", "events:rw", "*")).Get("/events", s.handleEvents)
+	})
+
 	return r
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+// corsMiddleware returns a middleware that sets CORS headers for requests whose
+// Origin matches an entry in allowedOrigins. Credentialed headers are only sent
+// for listed origins; an empty list disables cross-origin credential sharing.
+func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 	const (
 		allowedMethods = "GET, POST, PUT, DELETE, OPTIONS"
 		allowedHeaders = "Accept, Authorization, Content-Type, X-CSRF-Token"
@@ -217,31 +232,45 @@ func corsMiddleware(next http.Handler) http.Handler {
 		maxAge         = "300"
 	)
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		if o != "" {
+			allowed[o] = struct{}{}
+		}
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			if _, ok := allowed[origin]; !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			h := w.Header()
+			h.Add("Vary", "Origin")
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Allow-Credentials", "true")
+			h.Set("Access-Control-Expose-Headers", exposedHeaders)
+
+			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+				h.Add("Vary", "Access-Control-Request-Method")
+				h.Add("Vary", "Access-Control-Request-Headers")
+				h.Set("Access-Control-Allow-Methods", allowedMethods)
+				h.Set("Access-Control-Allow-Headers", allowedHeaders)
+				h.Set("Access-Control-Max-Age", maxAge)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
 			next.ServeHTTP(w, r)
-			return
-		}
-
-		h := w.Header()
-		h.Add("Vary", "Origin")
-		h.Set("Access-Control-Allow-Origin", origin)
-		h.Set("Access-Control-Allow-Credentials", "true")
-		h.Set("Access-Control-Expose-Headers", exposedHeaders)
-
-		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
-			h.Add("Vary", "Access-Control-Request-Method")
-			h.Add("Vary", "Access-Control-Request-Headers")
-			h.Set("Access-Control-Allow-Methods", allowedMethods)
-			h.Set("Access-Control-Allow-Headers", allowedHeaders)
-			h.Set("Access-Control-Max-Age", maxAge)
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+		})
+	}
 }
 
 // loggingMiddleware logs HTTP requests

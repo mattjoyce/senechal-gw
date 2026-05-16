@@ -7,7 +7,7 @@ import (
 )
 
 func TestCORSMiddlewarePreflight(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := corsMiddleware([]string{"https://example.test"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("preflight should not call next handler")
 	}))
 
@@ -31,7 +31,7 @@ func TestCORSMiddlewarePreflight(t *testing.T) {
 
 func TestCORSMiddlewareActualRequest(t *testing.T) {
 	called := false
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := corsMiddleware([]string{"https://example.test"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.Header().Set("Link", "</jobs>; rel=next")
 		w.WriteHeader(http.StatusAccepted)
@@ -55,7 +55,7 @@ func TestCORSMiddlewareActualRequest(t *testing.T) {
 }
 
 func TestCORSMiddlewareNoOrigin(t *testing.T) {
-	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := corsMiddleware([]string{"https://example.test"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -64,6 +64,56 @@ func TestCORSMiddlewareNoOrigin(t *testing.T) {
 
 	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+	}
+}
+
+// TestCORSMiddlewareDisallowedOrigin verifies that an origin not in the allowed
+// list receives no credentialed CORS headers — the disallowed-origin scenario
+// from the F-003 security finding.
+func TestCORSMiddlewareDisallowedOrigin(t *testing.T) {
+	called := false
+	handler := corsMiddleware([]string{"https://allowed.example"})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://attacker.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("disallowed origin should still pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want empty for disallowed origin", got)
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for disallowed origin", got)
+	}
+}
+
+// TestCORSMiddlewareEmptyAllowList verifies that no origin receives credentialed
+// headers when AllowedOrigins is empty — the safe production default.
+func TestCORSMiddlewareEmptyAllowList(t *testing.T) {
+	called := false
+	handler := corsMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	req.Header.Set("Origin", "https://any.example")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if !called {
+		t.Fatal("empty allow list should pass through to next handler")
+	}
+	if got := resp.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want empty when allow list is empty", got)
 	}
 }
 

@@ -6,23 +6,29 @@ import (
 	"github.com/mattjoyce/ductile/internal/auth"
 )
 
-// authMiddleware authenticates the bearer token and attaches a Principal to context.
+// authMiddleware authenticates the bearer token from the Authorization header.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, err := auth.ExtractBearerToken(r)
-		if err != nil {
-			s.writeError(w, http.StatusUnauthorized, err.Error())
-			return
-		}
+	return s.authenticate(false)(next)
+}
 
-		principal, ok := auth.Authenticate(token, s.config.Tokens)
-		if !ok {
-			s.writeError(w, http.StatusUnauthorized, "invalid token")
-			return
-		}
+func (s *Server) authenticate(allowQueryToken bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token, err := auth.ExtractBearerToken(r, allowQueryToken)
+			if err != nil {
+				s.writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
 
-		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
-	})
+			principal, ok := auth.Authenticate(token, s.config.Tokens)
+			if !ok {
+				s.writeError(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
+
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+		})
+	}
 }
 
 // requireScopes enforces that the current Principal has at least one of the required scopes.

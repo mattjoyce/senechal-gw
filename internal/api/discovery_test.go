@@ -23,42 +23,34 @@ func (m *mockSkillsRouter) PipelineSummary() []router.PipelineInfo {
 }
 
 func TestHandleListPlugins_NoAuth(t *testing.T) {
-	reg := &mockRegistry{
+	server := newTestServer(&mockRegistry{
 		plugins: map[string]*plugin.Plugin{
 			"echo": {Name: "echo", Commands: plugin.Commands{{Name: "poll"}}},
 		},
-	}
-	server := newTestServer(reg)
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
-	// No Authorization header — discovery must be unauthenticated.
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200 without auth, got %d", rr.Code)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 without auth, got %d", rr.Code)
 	}
 }
 
 func TestHandleListSkills_NoAuth(t *testing.T) {
-	reg := &mockRegistry{
+	server := newTestServer(&mockRegistry{
 		plugins: map[string]*plugin.Plugin{
 			"echo": {Name: "echo", Commands: plugin.Commands{{Name: "poll", Type: plugin.CommandTypeWrite}}},
 		},
-	}
-	server := newTestServer(reg)
-	server.router = &mockSkillsRouter{
-		pipelines: []router.PipelineInfo{
-			{Name: "daily-summary", Trigger: "scheduler.tick", ExecutionMode: "asynchronous"},
-		},
-	}
+	})
 
 	req := httptest.NewRequest(http.MethodGet, "/skills", nil)
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status 200 without auth, got %d", rr.Code)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 without auth, got %d", rr.Code)
 	}
 }
 
@@ -150,6 +142,7 @@ func TestHandleListSkills(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/skills", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
@@ -335,6 +328,7 @@ func TestHandleWellKnownPlugin_NoAuth(t *testing.T) {
 	server := newTestServer(&mockRegistry{})
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/ai-plugin.json", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 

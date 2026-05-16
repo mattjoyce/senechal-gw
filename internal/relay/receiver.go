@@ -160,10 +160,22 @@ func (r *Receiver) accept(req *http.Request) (*rootAcceptance, error) {
 		}
 	}
 
+	// Use the caller-supplied dedupe key when present. If absent, derive one
+	// from envelope identity so a replay of the same signed envelope within the
+	// clock-skew window cannot enqueue a second job. Derivation requires
+	// origin.event_id; if that field is empty the caller has not opted into
+	// replay protection and we accept the risk rather than silently dropping.
+	dedupeKey := strings.TrimSpace(envelope.Event.DedupeKey)
+	if dedupeKey == "" {
+		if originEventID := strings.TrimSpace(envelope.Origin.EventID); originEventID != "" {
+			dedupeKey = "relay:" + peerName + ":" + strings.TrimSpace(envelope.Origin.Instance) + ":" + originEventID
+		}
+	}
+
 	localEvent := protocol.Event{
 		Type:      envelope.Event.Type,
 		Payload:   cloneMap(envelope.Event.Payload),
-		DedupeKey: strings.TrimSpace(envelope.Event.DedupeKey),
+		DedupeKey: dedupeKey,
 		Source:    "relay:" + peer.Name,
 		Timestamp: now,
 		EventID:   uuid.NewString(),

@@ -64,6 +64,9 @@ type APIConfig struct {
 	Auth              APIAuthConfig `yaml:"auth"`
 	MaxConcurrentSync int           `yaml:"max_concurrent_sync,omitempty"`
 	MaxSyncTimeout    time.Duration `yaml:"max_sync_timeout,omitempty"`
+	// AllowedOrigins lists origins that may receive credentialed CORS headers.
+	// Empty (the default) disables cross-origin credential sharing entirely.
+	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
 }
 
 // APIAuthConfig defines API authentication settings.

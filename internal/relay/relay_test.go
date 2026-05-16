@@ -538,3 +538,182 @@ pipelines:
 		t.Fatalf("job count = %d, want 1", count)
 	}
 }
+
+// TestReceiverDerivedDedupeKeyPreventsReplay is the F-002 regression: a relay
+// envelope that carries no explicit DedupeKey but does carry origin.event_id
+// must not enqueue a second job when the same envelope is resubmitted. The
+// receiver derives a stable dedupe key from peer + origin identity.
+func TestReceiverDerivedDedupeKeyPreventsReplay(t *testing.T) {
+	db := setupRelayDB(t)
+	q := queue.New(db)
+	contexts := state.NewContextStore(db)
+	engine := setupRelayRouter(t, `
+pipelines:
+  - name: process-offsite-backup
+    on: backup.ready
+    steps:
+      - id: verify-backup
+        uses: echo
+`)
+
+	cfg := &config.Config{
+		Service: config.ServiceConfig{Name: "lab"},
+		RemoteIngress: &config.RemoteIngressConfig{
+			ListenPath:       "/ingest/peer",
+			AllowedClockSkew: 5 * time.Minute,
+			RequireKeyID:     true,
+			TrustedPeers: []config.RelayPeerConfig{
+				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
+			},
+		},
+		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+	}
+	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	if err != nil {
+		t.Fatalf("NewReceiver: %v", err)
+	}
+	server := setupRelayServer(t, receiver)
+	defer server.Close()
+
+	senderCfg := &config.Config{
+		Service: config.ServiceConfig{Name: "home-primary"},
+		RelayInstances: []config.RelayInstanceConfig{
+			{
+				Name:        "lab",
+				Enabled:     true,
+				BaseURL:     server.URL,
+				IngressPath: "/ingest/peer/home-primary",
+				SecretRef:   "relay-lab-v1",
+				KeyID:       "v1",
+				Timeout:     5 * time.Second,
+				Allow:       []string{"backup.ready"},
+			},
+		},
+		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+	}
+	sender, err := NewSender(senderCfg)
+	if err != nil {
+		t.Fatalf("NewSender: %v", err)
+	}
+
+	// No explicit DedupeKey; the receiver must derive one from origin identity.
+	envelope := Envelope{
+		Event: EnvelopeEvent{
+			Type:    "backup.ready",
+			Payload: map[string]any{"path": "/srv/backups/latest.tar.zst"},
+		},
+		Origin: EnvelopeOrigin{Plugin: "backup-runner", JobID: "job-123", EventID: "evt-replay-001"},
+	}
+
+	first, err := sender.Send(context.Background(), "lab", envelope)
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	if _, err := q.Dequeue(context.Background()); err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE job_queue SET status = ?, completed_at = ? WHERE id = ?`, queue.StatusSucceeded, time.Now().UTC().Format(time.RFC3339Nano), first.JobID); err != nil {
+		t.Fatalf("mark succeeded: %v", err)
+	}
+
+	second, err := sender.Send(context.Background(), "lab", envelope)
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+	if second.JobID != first.JobID {
+		t.Fatalf("replay created new job: second.JobID = %q, want %q (first)", second.JobID, first.JobID)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM job_queue`).Scan(&count); err != nil {
+		t.Fatalf("count jobs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("job count = %d, want 1 — derived dedupe key did not prevent replay", count)
+	}
+}
+
+// TestReceiverDifferentOriginEventIDsEnqueueDistinct verifies that replay
+// protection does not conflate envelopes that carry distinct origin.event_ids.
+// Each distinct origin identity must produce a separate local job.
+func TestReceiverDifferentOriginEventIDsEnqueueDistinct(t *testing.T) {
+	db := setupRelayDB(t)
+	q := queue.New(db)
+	contexts := state.NewContextStore(db)
+	engine := setupRelayRouter(t, `
+pipelines:
+  - name: process-offsite-backup
+    on: backup.ready
+    steps:
+      - id: verify-backup
+        uses: echo
+`)
+
+	cfg := &config.Config{
+		Service: config.ServiceConfig{Name: "lab"},
+		RemoteIngress: &config.RemoteIngressConfig{
+			ListenPath:       "/ingest/peer",
+			AllowedClockSkew: 5 * time.Minute,
+			RequireKeyID:     true,
+			TrustedPeers: []config.RelayPeerConfig{
+				{Name: "home-primary", Enabled: true, SecretRef: "relay-lab-v1", KeyID: "v1", Accept: []string{"backup.ready"}},
+			},
+		},
+		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+	}
+	receiver, err := NewReceiver(cfg, q, engine, contexts, slog.Default())
+	if err != nil {
+		t.Fatalf("NewReceiver: %v", err)
+	}
+	server := setupRelayServer(t, receiver)
+	defer server.Close()
+
+	senderCfg := &config.Config{
+		Service: config.ServiceConfig{Name: "home-primary"},
+		RelayInstances: []config.RelayInstanceConfig{
+			{
+				Name:        "lab",
+				Enabled:     true,
+				BaseURL:     server.URL,
+				IngressPath: "/ingest/peer/home-primary",
+				SecretRef:   "relay-lab-v1",
+				KeyID:       "v1",
+				Timeout:     5 * time.Second,
+				Allow:       []string{"backup.ready"},
+			},
+		},
+		Tokens: []config.TokenEntry{{Name: "relay-lab-v1", Key: "shared-secret"}},
+	}
+	sender, err := NewSender(senderCfg)
+	if err != nil {
+		t.Fatalf("NewSender: %v", err)
+	}
+
+	first, err := sender.Send(context.Background(), "lab", Envelope{
+		Event:  EnvelopeEvent{Type: "backup.ready", Payload: map[string]any{"path": "/backups/a"}},
+		Origin: EnvelopeOrigin{EventID: "evt-distinct-001"},
+	})
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+
+	second, err := sender.Send(context.Background(), "lab", Envelope{
+		Event:  EnvelopeEvent{Type: "backup.ready", Payload: map[string]any{"path": "/backups/b"}},
+		Origin: EnvelopeOrigin{EventID: "evt-distinct-002"},
+	})
+	if err != nil {
+		t.Fatalf("second Send: %v", err)
+	}
+
+	if first.JobID == second.JobID {
+		t.Fatalf("distinct origin event IDs produced the same job ID %q", first.JobID)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM job_queue`).Scan(&count); err != nil {
+		t.Fatalf("count jobs: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("job count = %d, want 2 — distinct origin events must create distinct jobs", count)
+	}
+}

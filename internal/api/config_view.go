@@ -9,6 +9,11 @@ import (
 	"github.com/mattjoyce/ductile/internal/router/conditions"
 )
 
+// redactionSentinel replaces a sensitive value in the sanitized config
+// view. Local to this package — configsnapshot uses a different,
+// path-tagged sentinel deliberately; do not unify them.
+const redactionSentinel = "[REDACTED]"
+
 // sensitiveKeyPatterns are substrings that flag a plugin config key as sensitive.
 var sensitiveKeyPatterns = []string{"secret", "key", "token", "password", "api_key", "credential", "auth", "passwd"}
 
@@ -22,20 +27,52 @@ func isSensitiveKey(k string) bool {
 	return false
 }
 
-// sanitizePluginConfig redacts sensitive values from a plugin's config map.
+// sanitizePluginConfig redacts sensitive values from a plugin's config
+// map at every nesting depth. A sensitive key anywhere in the tree
+// (including under a non-sensitive parent, inside a nested map, or in a
+// list element) is replaced with the redaction sentinel. F-006.
 func sanitizePluginConfig(cfg map[string]any) map[string]any {
 	if cfg == nil {
 		return nil
 	}
-	out := make(map[string]any, len(cfg))
-	for k, v := range cfg {
-		if isSensitiveKey(k) {
-			out[k] = "[REDACTED]"
-		} else {
-			out[k] = v
-		}
-	}
+	out, _ := redactValue(cfg).(map[string]any)
 	return out
+}
+
+// redactValue returns a copy of v with sensitive map entries replaced by
+// the redaction sentinel, recursing through nested maps and slices. It
+// never mutates v: fresh containers are always allocated.
+func redactValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if isSensitiveKey(k) {
+				out[k] = redactionSentinel
+			} else {
+				out[k] = redactValue(val)
+			}
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if isSensitiveKey(k) {
+				out[k] = redactionSentinel
+			} else {
+				out[k] = val
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, elem := range t {
+			out[i] = redactValue(elem)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // -- Sanitized view types ----------------------------------------------------
