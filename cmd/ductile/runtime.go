@@ -591,6 +591,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 			RuntimeConfig:     cfg,
 			ReloadFunc:        reloadFunc,
 			RelayReceiver:     relayReceiver,
+			AllowedOrigins:    cfg.API.AllowedOrigins,
 		}
 		apiServer := api.New(apiConfig, q, registry, routerEngine, disp, contextStore, hub, log.WithComponent("api"))
 		rt.apiServer = apiServer
