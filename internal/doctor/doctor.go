@@ -171,7 +171,8 @@ func (d *Doctor) validateSingleScope(r *Result, scope, field string) {
 	p, ok := d.registry.Get(pluginName)
 	if !ok {
 		// Check if it's a known non-plugin resource
-		if pluginName == "jobs" || pluginName == "events" || pluginName == "healthz" || pluginName == "queue" {
+		if pluginName == "jobs" || pluginName == "events" || pluginName == "healthz" || pluginName == "queue" ||
+			pluginName == "system" || pluginName == "plugin" {
 			return
 		}
 		d.addError(r, "token_scopes", field,

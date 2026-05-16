@@ -703,9 +703,9 @@ func validate(cfg *Config) error {
 				}
 				return fmt.Errorf("api.auth.tokens[%d].token: unresolved environment variable", i)
 			}
-			if len(tok.Scopes) == 0 {
-				return fmt.Errorf("api.auth.tokens[%d].scopes must be non-empty", i)
-			}
+			// Empty scope list is valid: token authenticates but passes only
+			// scope-free endpoints (e.g. discovery). All operation endpoints
+			// require at least one matching scope via requireScopes.
 		}
 	}
 

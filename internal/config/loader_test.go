@@ -696,7 +696,7 @@ plugins:
 			},
 		},
 		{
-			name: "api token missing scopes fails validation",
+			name: "api token empty scopes is valid (discovery-only token)",
 			yaml: `
 service:
   tick_interval: 30s
@@ -715,7 +715,7 @@ plugins:
   test:
     enabled: false
 `,
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "api token with scopes is valid",
