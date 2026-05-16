@@ -162,6 +162,7 @@ func TestHandleOpenAPIPlugin_Found_NoAuth(t *testing.T) {
 	server := newTestServer(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/plugin/echo/openapi.json", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
@@ -189,6 +190,7 @@ func TestHandleOpenAPIPlugin_NotFound(t *testing.T) {
 	server := newTestServer(&mockRegistry{plugins: map[string]*plugin.Plugin{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/plugin/unknown/openapi.json", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
@@ -213,6 +215,7 @@ func TestHandleOpenAPIAll_NoAuth(t *testing.T) {
 	server := newTestServer(reg)
 
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	req.Header.Set("Authorization", "Bearer test-key-123")
 	rr := httptest.NewRecorder()
 	server.setupRoutes().ServeHTTP(rr, req)
 
