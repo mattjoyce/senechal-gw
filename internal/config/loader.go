@@ -72,6 +72,12 @@ func load(configPath string, verifyScopes bool, validateConfig bool) (*Config, e
 	if len(cfg.Include) > 0 {
 		configDir := filepath.Dir(absPath)
 		visited := make(map[string]bool)
+		// Seed the root config's own path so an include cycle that runs
+		// back through the root is detected at the first back-edge —
+		// naming the real cycle — instead of after a wasted re-merge of
+		// the root file (C-FRO-13: cycle/visited sets must include the
+		// origin).
+		visited[absPath] = true
 		if err := loadIncludes(cfg, cfg.Include, configDir, visited); err != nil {
 			return nil, err
 		}
@@ -180,6 +186,7 @@ func DiscoverScopeDirs(configPath string) ([]string, error) {
 	scopeDirs := make(map[string]struct{})
 	if len(cfg.Include) > 0 {
 		visited := make(map[string]bool)
+		visited[absPath] = true // see C-FRO-13 note in load()
 		if err := loadIncludes(cfg, cfg.Include, filepath.Dir(absPath), visited); err != nil {
 			return nil, err
 		}

@@ -1349,6 +1349,55 @@ plugin_roots:
 	}
 }
 
+// TestLoadCircularIncludeThroughRoot guards C-FRO-13. Verification note: the
+// claimed *silent token doubling* impact was NOT reproduced — the existing
+// child-file visited tracking already trips cycle detection and Load fails
+// safely (cfg=nil). The real defect is that the root config's own path was
+// not seeded into the visited set, so the cycle was caught one level too
+// late (after a wasted re-merge, with the error naming the child instead of
+// the root). This test pins the safe behaviour: an include cycle that runs
+// back through the root config is rejected with a circular-dependency error.
+func TestLoadCircularIncludeThroughRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// child.yaml includes the root config.yaml back -> cycle through root.
+	childYAML := `
+include:
+  - config.yaml
+state:
+  path: ./test.db
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "child.yaml"), []byte(childYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	configYAML := `
+include:
+  - child.yaml
+plugin_roots:
+  - ./plugins
+api:
+  auth:
+    tokens:
+      - token: root-secret
+        scopes: ["admin"]
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-fix: Load succeeds and the root is merged twice (tokens doubled).
+	// Post-fix: the cycle back through root is detected like any other.
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("Load() should have failed: include cycle through the root config")
+	}
+	if !contains(err.Error(), "circular dependency") {
+		t.Errorf("error should mention circular dependency, got: %v", err)
+	}
+}
+
 // contains checks if a string contains a substring (helper for tests).
 func contains(s, substr string) bool {
 	return len(substr) > 0 && len(s) >= len(substr) &&
