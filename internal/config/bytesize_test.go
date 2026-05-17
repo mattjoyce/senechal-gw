@@ -1,6 +1,27 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestParseByteSizeErrorPreservesOperatorInput reproduces C-FRO-12: the parse
+// error reported the code-transformed string (uppercased, suffix-trimmed)
+// instead of what the operator wrote, breaking config-error -> config-line
+// traceability.
+func TestParseByteSizeErrorPreservesOperatorInput(t *testing.T) {
+	const operatorInput = "12abKB"
+	_, err := ParseByteSize(operatorInput)
+	if err == nil {
+		t.Fatalf("ParseByteSize(%q): expected error", operatorInput)
+	}
+	if !strings.Contains(err.Error(), operatorInput) {
+		t.Fatalf("error %q does not contain operator input %q", err.Error(), operatorInput)
+	}
+	if strings.Contains(err.Error(), "12AB") {
+		t.Fatalf("error %q leaks the code-transformed string", err.Error())
+	}
+}
 
 func TestParseByteSize(t *testing.T) {
 	tests := []struct {

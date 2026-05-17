@@ -13,6 +13,10 @@ func ParseByteSize(size string) (int64, error) {
 	if size == "" {
 		return 0, fmt.Errorf("size is empty")
 	}
+	// Preserve what the operator actually wrote for error reporting; the
+	// parsing path uppercases and trims suffixes, and leaking that
+	// transformed form breaks config-error -> config-line traceability.
+	original := size
 
 	upper := strings.ToUpper(size)
 	multiplier := int64(1)
@@ -31,18 +35,20 @@ func ParseByteSize(size string) (int64, error) {
 
 	value, err := strconv.ParseInt(strings.TrimSpace(size), 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid size value: %w", err)
+		// Do not wrap the strconv error: it embeds the code-transformed
+		// substring, which is exactly the leak C-FRO-12 is about.
+		return 0, fmt.Errorf("invalid size value %q: not a valid byte size", original)
 	}
 	if value <= 0 {
-		return 0, fmt.Errorf("size must be positive")
+		return 0, fmt.Errorf("size %q must be positive", original)
 	}
 	if multiplier > 1 && value > (math.MaxInt64/multiplier) {
-		return 0, fmt.Errorf("size too large")
+		return 0, fmt.Errorf("size %q too large", original)
 	}
 
 	result := value * multiplier
 	if result < 0 {
-		return 0, fmt.Errorf("size too large")
+		return 0, fmt.Errorf("size %q too large", original)
 	}
 	return result, nil
 }
