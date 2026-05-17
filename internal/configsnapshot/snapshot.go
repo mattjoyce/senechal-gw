@@ -339,7 +339,7 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 		plugins[name] = map[string]any{
 			"enabled":               pluginConf.Enabled,
 			"uses":                  pluginConf.Uses,
-			"schedules":             renderSchedules(pluginConf.NormalizedSchedules()),
+			"schedules":             renderSchedules("plugins."+name+".schedules", pluginConf.NormalizedSchedules()),
 			"retry":                 renderRetry(pluginConf.Retry),
 			"timeouts":              renderTimeouts(pluginConf.Timeouts),
 			"circuit_breaker":       renderCircuitBreaker(pluginConf.CircuitBreaker),
@@ -384,7 +384,7 @@ func sanitizeConfig(cfg *config.Config) (map[string]any, []SecretUse) {
 		"plugins":      plugins,
 		"webhooks":     webhooks,
 		"tokens":       tokens,
-		"pipelines":    renderPipelines(cfg.Pipelines),
+		"pipelines":    renderPipelines("pipelines", cfg.Pipelines),
 	}, secretUses
 }
 
@@ -577,9 +577,10 @@ func renderCircuitBreaker(breaker *config.CircuitBreakerConfig) any {
 	}
 }
 
-func renderSchedules(schedules []config.ScheduleConfig) []map[string]any {
+func renderSchedules(path string, schedules []config.ScheduleConfig) []map[string]any {
 	out := make([]map[string]any, 0, len(schedules))
-	for _, schedule := range schedules {
+	for i, schedule := range schedules {
+		schedulePath := fmt.Sprintf("%s[%d]", path, i)
 		out = append(out, map[string]any{
 			"id":               schedule.ID,
 			"every":            schedule.Every,
@@ -593,20 +594,29 @@ func renderSchedules(schedules []config.ScheduleConfig) []map[string]any {
 			"timezone":         schedule.Timezone,
 			"not_on":           schedule.NotOn,
 			"command":          schedule.Command,
-			"payload":          schedule.Payload,
+			"payload":          redactSubtree(schedulePath+".payload", schedule.Payload),
 			"preferred_window": schedule.PreferredWindow,
 		})
 	}
 	return out
 }
 
-func renderPipelines(pipelines []config.PipelineEntry) []map[string]any {
+// redactSubtree runs an arbitrary config subtree through the same recursive
+// sanitizer used for plugin config, so sensitive keys are redacted at every
+// depth of the whole snapshot structure — not only plugins.<name>.config
+// (C-FRO-15, F-006 discipline with wider surface).
+func redactSubtree(path string, value any) any {
+	sanitized, _ := sanitizePluginConfig(path, value)
+	return sanitized
+}
+
+func renderPipelines(path string, pipelines []config.PipelineEntry) []map[string]any {
 	out := make([]map[string]any, 0, len(pipelines))
 	for _, pipeline := range pipelines {
 		out = append(out, map[string]any{
 			"name":           pipeline.Name,
 			"on":             pipeline.On,
-			"steps":          renderSteps(pipeline.Steps),
+			"steps":          renderSteps(path+"."+pipeline.Name+".steps", pipeline.Steps),
 			"execution_mode": string(pipeline.ExecutionMode),
 			"timeout":        durationString(pipeline.Timeout),
 		})
@@ -614,19 +624,35 @@ func renderPipelines(pipelines []config.PipelineEntry) []map[string]any {
 	return out
 }
 
-func renderSteps(steps []config.StepEntry) []map[string]any {
+func renderSteps(path string, steps []config.StepEntry) []map[string]any {
 	out := make([]map[string]any, 0, len(steps))
-	for _, step := range steps {
+	for i, step := range steps {
+		stepPath := fmt.Sprintf("%s[%d]", path, i)
 		out = append(out, map[string]any{
 			"id":      step.ID,
 			"uses":    step.Uses,
 			"call":    step.Call,
-			"relay":   step.Relay,
-			"steps":   renderSteps(step.Steps),
-			"split":   renderSteps(step.Split),
-			"with":    step.With,
-			"baggage": step.Baggage,
+			"relay":   renderRelayStep(stepPath+".relay", step.Relay),
+			"steps":   renderSteps(stepPath+".steps", step.Steps),
+			"split":   renderSteps(stepPath+".split", step.Split),
+			"with":    redactSubtree(stepPath+".with", step.With),
+			"baggage": redactSubtree(stepPath+".baggage", step.Baggage),
 		})
 	}
 	return out
+}
+
+// renderRelayStep redacts secret-bearing relay step subtrees (with/baggage)
+// rather than copying the *RelayStepEntry through verbatim (C-FRO-15).
+func renderRelayStep(path string, relay *config.RelayStepEntry) map[string]any {
+	if relay == nil {
+		return nil
+	}
+	return map[string]any{
+		"to":         relay.To,
+		"event":      relay.Event,
+		"dedupe_key": relay.DedupeKey,
+		"with":       redactSubtree(path+".with", relay.With),
+		"baggage":    redactSubtree(path+".baggage", relay.Baggage),
+	}
 }

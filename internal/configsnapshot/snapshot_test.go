@@ -86,6 +86,62 @@ func TestBuildRedactsSecretsAndHashesSecretChanges(t *testing.T) {
 	}
 }
 
+// TestBuildRedactsPipelineAndScheduleSecrets reproduces C-FRO-15: secret
+// redaction descended only plugins.<name>.config. Sibling subtrees —
+// pipeline step `with`/`baggage` and schedule `payload` — were copied
+// verbatim into the snapshot, leaking secrets in plaintext. Redaction must
+// apply to the whole snapshot structure (F-006 discipline, wider surface).
+func TestBuildRedactsPipelineAndScheduleSecrets(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("service:\n  name: ductile\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg := config.Defaults()
+	cfg.SourceFiles = map[string]*yaml.Node{configPath: {}}
+	cfg.Plugins["echo"] = config.PluginConf{
+		Enabled: true,
+		Schedules: []config.ScheduleConfig{
+			{Every: "5m", Payload: map[string]any{"api_key": "schedule-secret-leak"}},
+		},
+	}
+	cfg.Pipelines = []config.PipelineEntry{
+		{
+			Name: "p1",
+			On:   "echo.done",
+			Steps: []config.StepEntry{
+				{
+					ID:      "s1",
+					Uses:    "echo",
+					With:    map[string]string{"token": "step-with-secret-leak"},
+					Baggage: map[string]string{"auth_secret": "baggage-secret-leak"},
+				},
+			},
+		},
+	}
+
+	snap, err := Build(BuildInput{
+		Config:         cfg,
+		ConfigPath:     configPath,
+		ConfigSource:   "explicit",
+		Reason:         ReasonStartup,
+		DuctileVersion: "test-version",
+		BinaryPath:     "/tmp/ductile",
+		LoadedAt:       time.Date(2026, 5, 17, 1, 2, 3, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, leak := range []string{"step-with-secret-leak", "baggage-secret-leak", "schedule-secret-leak"} {
+		if strings.Contains(string(snap.SanitizedConfig), leak) {
+			t.Fatalf("sanitized config leaked %q: %s", leak, snap.SanitizedConfig)
+		}
+	}
+}
+
 func TestBuildRecordsExplicitBaggageSemantics(t *testing.T) {
 	t.Parallel()
 
