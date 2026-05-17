@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,29 +18,30 @@ import (
 	"github.com/mattjoyce/ductile/internal/protocol"
 )
 
-// gracefulPluginEntry runs from init() when this test binary is re-execed as a
-// plugin (see writeGracefulPlugin). Installing the SIGTERM ignore in init()
+// runawayPluginEntry runs from init() when this test binary is re-execed as a
+// plugin (see writeRunawayPlugin). Installing the SIGTERM ignore in init()
 // — before the testing framework parses flags — closes the startup race where
-// SIGTERM could arrive before the handler is in place. It models a well-behaved
-// plugin doing a clean shutdown: ignore SIGTERM, finish work within the grace
-// period, emit a valid response, exit 0. A Go helper is used because a /bin/sh
-// trap does not reliably survive SIGTERM on macOS.
+// SIGTERM could arrive before the handler is in place. It models a misbehaving
+// plugin that exceeds its configured timeout: ignore SIGTERM, run well past
+// the deadline, then emit a valid response during the grace period. A Go
+// helper is used because a /bin/sh trap does not reliably survive SIGTERM on
+// macOS.
 func init() {
-	if os.Getenv("DUCTILE_GRACEFUL_PLUGIN_HELPER") != "1" {
+	if os.Getenv("DUCTILE_RUNAWAY_PLUGIN_HELPER") != "1" {
 		return
 	}
 	signal.Ignore(syscall.SIGTERM)
-	// Sleep past the parent's timeout (3s) but well inside the 5s grace
-	// period so the process completes its work after the timeout fired.
+	// Sleep past the parent's timeout but inside the 5s grace period, then
+	// emit valid JSON. This output is produced AFTER the deadline and must
+	// not reclassify the timeout as success.
 	time.Sleep(3 * time.Second)
 	fmt.Println(`{"status":"ok","result":"slow-but-done"}`)
 	os.Exit(0)
 }
 
-// writeGracefulPlugin writes a shell shim that re-execs the test binary into
-// TestSubprocessExecutorGracefulPluginHelper, yielding an OS-independent plugin
-// that genuinely ignores SIGTERM.
-func writeGracefulPlugin(t *testing.T) string {
+// writeRunawayPlugin writes a shell shim that re-execs the test binary as a
+// plugin that genuinely ignores SIGTERM and overruns its timeout.
+func writeRunawayPlugin(t *testing.T) string {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -47,7 +49,7 @@ func writeGracefulPlugin(t *testing.T) string {
 	}
 	path := filepath.Join(t.TempDir(), "graceful-plugin.sh")
 	shim := fmt.Sprintf(
-		"#!/bin/sh\nexec env DUCTILE_GRACEFUL_PLUGIN_HELPER=1 %q -test.run=^$ -test.v=false\n",
+		"#!/bin/sh\nexec env DUCTILE_RUNAWAY_PLUGIN_HELPER=1 %q -test.run=^$ -test.v=false\n",
 		self)
 	if err := os.WriteFile(path, []byte(shim), 0o700); err != nil {
 		t.Fatalf("write plugin shim: %v", err)
@@ -55,36 +57,28 @@ func writeGracefulPlugin(t *testing.T) string {
 	return path
 }
 
-// TestSubprocessExecutorPrefersCompletedResultOverTimeout reproduces C-FRO-5:
-// a plugin that finishes its work successfully *within the SIGTERM grace
-// period* must have its response delivered, not discarded as a timeout. The
-// OPS-001 shape: completed work classified only after the timeout branch has
-// already won.
-func TestSubprocessExecutorPrefersCompletedResultOverTimeout(t *testing.T) {
+// TestSubprocessExecutorTimeoutNotReclassifiedByLateOutput pins the corrected
+// C-FRO-5 scope. C-FRO-5 is strictly the deadline-edge race: a result that is
+// ALREADY available when the timer fires must be preferred over a timeout
+// (handled by the non-blocking waitErr pre-check). It must NOT change timeout
+// semantics: a plugin that ignores SIGTERM, overruns its configured timeout,
+// and only emits valid JSON during the grace period is still a timeout — late
+// output must never reclassify it as success.
+func TestSubprocessExecutorTimeoutNotReclassifiedByLateOutput(t *testing.T) {
 	// Not parallel: re-execs this test binary as a child, whose startup
 	// latency under -race must stay below the parent timeout. Suite-wide
 	// parallel contention inflates that latency.
-
-	// A well-behaved plugin: ignores SIGTERM, finishes its work within the
-	// grace period, emits a valid response, exits 0. Its work completed —
-	// the timeout branch must deliver that result, not discard it.
-	scriptPath := writeGracefulPlugin(t)
+	scriptPath := writeRunawayPlugin(t)
 
 	executor := newSubprocessExecutor(nil)
-	req := &protocol.Request{Protocol: 2, JobID: "job-slow-done", Command: "poll"}
-	resp, _, _, _, _, exitCode, err := executor.execute(
-		context.Background(), "slow-done", scriptPath, req, 3*time.Second, slog.Default())
-	if err != nil {
-		t.Fatalf("execute error = %v, want nil (process completed successfully)", err)
+	req := &protocol.Request{Protocol: 2, JobID: "job-runaway", Command: "poll"}
+	resp, _, _, _, _, _, err := executor.execute(
+		context.Background(), "runaway", scriptPath, req, 1500*time.Millisecond, slog.Default())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("execute error = %v, want context.DeadlineExceeded (timeout must not be reclassified by post-deadline output)", err)
 	}
-	if resp == nil {
-		t.Fatal("response = nil, want completed response (result was discarded as timeout)")
-	}
-	if resp.Result != "slow-but-done" {
-		t.Fatalf("response result = %q, want %q", resp.Result, "slow-but-done")
-	}
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
+	if resp != nil {
+		t.Fatalf("response = %#v, want nil (a timed-out plugin's late output must be discarded)", resp)
 	}
 }
 

@@ -163,17 +163,14 @@ func (e *subprocessExecutor) execute(
 		defer grace.Stop()
 
 		select {
-		case err := <-waitErr:
-			// The process exited within the grace period. Deliver its
-			// result ONLY if it actually produced a valid response — a
-			// well-behaved plugin that flushed output on SIGTERM. A
-			// process we killed that produced nothing is still a timeout
-			// (OPS-001 fix must not reclassify genuine timeouts).
-			if resp, compat, raw, out, serr, code, derr := decodeCompletion(err); derr == nil && resp != nil {
-				logger.Info("plugin delivered a valid result within grace period, not a timeout")
-				return resp, compat, raw, out, serr, code, derr
-			}
-			logger.Info("plugin exited within grace period without a usable result, treating as timeout")
+		case <-waitErr:
+			// The process exited in response to SIGTERM. It still exceeded
+			// its configured timeout, so it is a timeout regardless of any
+			// output produced during the grace period — anything later than
+			// the deadline must not be reclassified as success. (C-FRO-5 is
+			// strictly the deadline-edge race handled by the non-blocking
+			// pre-check above; the grace period is not in scope.)
+			logger.Info("plugin exited after SIGTERM (still a timeout)")
 		case <-grace.C:
 			// Grace period expired, send SIGKILL. Only a process that had
 			// to be killed never produced a result — that is the timeout.
