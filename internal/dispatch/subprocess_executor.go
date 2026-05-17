@@ -93,10 +93,66 @@ func (e *subprocessExecutor) execute(
 		waitErr <- cmd.Wait()
 	}()
 
+	// decodeCompletion handles a process that finished (whether the timer
+	// fired or not). A process that produced its output and exited has done
+	// its work — the timeout branch must never discard that result. waitErr
+	// carries the exec.Cmd.Wait error (nil, *exec.ExitError, or fatal).
+	decodeCompletion := func(err error) (*protocol.Response, protocol.ResponseCompat, json.RawMessage, []byte, string, int, error) {
+		werr := <-writeErr
+
+		stdoutBytes := stdout.Bytes()
+		stderrStr := stderr.String()
+		if stderr.Truncated() {
+			logger.Warn("plugin stderr truncated", "limit_bytes", maxStderrBytes)
+		}
+		exitCode := 0
+
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+				logger.Warn("plugin exited with non-zero status", "exit_code", exitCode)
+			} else {
+				return nil, protocol.ResponseCompat{}, nil, stdoutBytes, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
+			}
+		}
+
+		if stdout.Truncated() {
+			logger.Error("plugin stdout exceeded capture limit", "limit_bytes", maxStdoutBytes)
+			return nil, protocol.ResponseCompat{}, json.RawMessage(stdoutBytes), stdoutBytes, stderrStr, exitCode, outputLimitError{stream: "stdout", limit: maxStdoutBytes}
+		}
+
+		resp, compat, rawBytes, decErr := protocol.DecodeResponseLenient(bytes.NewReader(stdoutBytes))
+		if decErr != nil {
+			if werr != nil {
+				logger.Warn("stdin write failed (process may not read stdin)", "error", werr)
+			}
+			logger.Error("failed to decode plugin response", "error", decErr, "stdout", string(rawBytes))
+			return nil, protocol.ResponseCompat{}, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, fmt.Errorf("decode response: %w", decErr)
+		}
+
+		// Some plugins don't read stdin and may exit before the write
+		// completes; not a failure if a valid response was produced.
+		if werr != nil {
+			logger.Debug("stdin write error (ignored, valid response received)", "error", werr)
+		}
+
+		return resp, compat, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, nil
+	}
+
 	// Wait for completion or timeout
 	select {
 	case <-timeoutTimer.C:
-		// Timeout occurred - enforce termination
+		// Timer fired — but the process may have completed in the same
+		// instant the timer expired (the OPS-001 race). Prefer a ready
+		// result over declaring a timeout.
+		select {
+		case err := <-waitErr:
+			logger.Debug("plugin completed at timeout edge, preferring result over timeout")
+			return decodeCompletion(err)
+		default:
+		}
+
+		// Genuinely still running - enforce termination.
 		logger.Warn("plugin execution timed out, sending SIGTERM")
 		if err := terminatePluginProcess(cmd); err != nil {
 			logger.Error("failed to send SIGTERM", "error", err)
@@ -107,11 +163,20 @@ func (e *subprocessExecutor) execute(
 		defer grace.Stop()
 
 		select {
-		case <-waitErr:
-			// Process exited gracefully
-			logger.Info("plugin exited after SIGTERM")
+		case err := <-waitErr:
+			// The process exited within the grace period. Deliver its
+			// result ONLY if it actually produced a valid response — a
+			// well-behaved plugin that flushed output on SIGTERM. A
+			// process we killed that produced nothing is still a timeout
+			// (OPS-001 fix must not reclassify genuine timeouts).
+			if resp, compat, raw, out, serr, code, derr := decodeCompletion(err); derr == nil && resp != nil {
+				logger.Info("plugin delivered a valid result within grace period, not a timeout")
+				return resp, compat, raw, out, serr, code, derr
+			}
+			logger.Info("plugin exited within grace period without a usable result, treating as timeout")
 		case <-grace.C:
-			// Grace period expired, send SIGKILL
+			// Grace period expired, send SIGKILL. Only a process that had
+			// to be killed never produced a result — that is the timeout.
 			logger.Warn("plugin did not exit after SIGTERM, sending SIGKILL")
 			if err := killPluginProcess(cmd); err != nil {
 				logger.Error("failed to send SIGKILL", "error", err)
@@ -129,49 +194,6 @@ func (e *subprocessExecutor) execute(
 		return nil, protocol.ResponseCompat{}, nil, stdout.Bytes(), stderrStr, 0, context.DeadlineExceeded
 
 	case err := <-waitErr:
-		// Process completed
-		werr := <-writeErr
-
-		stdoutBytes := stdout.Bytes()
-		stderrStr := stderr.String()
-		if stderr.Truncated() {
-			logger.Warn("plugin stderr truncated", "limit_bytes", maxStderrBytes)
-		}
-		exitCode := 0
-
-		// Check exit code
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-				logger.Warn("plugin exited with non-zero status", "exit_code", exitCode)
-			} else {
-				return nil, protocol.ResponseCompat{}, nil, stdoutBytes, stderrStr, 0, fmt.Errorf("wait for process: %w", err)
-			}
-		}
-
-		if stdout.Truncated() {
-			logger.Error("plugin stdout exceeded capture limit", "limit_bytes", maxStdoutBytes)
-			return nil, protocol.ResponseCompat{}, json.RawMessage(stdoutBytes), stdoutBytes, stderrStr, exitCode, outputLimitError{stream: "stdout", limit: maxStdoutBytes}
-		}
-
-		// Decode response from stdout
-		resp, compat, rawBytes, err := protocol.DecodeResponseLenient(bytes.NewReader(stdoutBytes))
-		if err != nil {
-			// If we also had a stdin write error, include it for diagnostics
-			if werr != nil {
-				logger.Warn("stdin write failed (process may not read stdin)", "error", werr)
-			}
-			logger.Error("failed to decode plugin response", "error", err, "stdout", string(rawBytes))
-			return nil, protocol.ResponseCompat{}, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, fmt.Errorf("decode response: %w", err)
-		}
-
-		// Log stdin write errors as warnings — some plugins don't read stdin
-		// and may exit before the write completes, which is not a failure if
-		// the process produced a valid response.
-		if werr != nil {
-			logger.Debug("stdin write error (ignored, valid response received)", "error", werr)
-		}
-
-		return resp, compat, json.RawMessage(rawBytes), stdoutBytes, stderrStr, exitCode, nil
+		return decodeCompletion(err)
 	}
 }
