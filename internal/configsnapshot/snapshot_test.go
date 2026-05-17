@@ -140,6 +140,46 @@ func TestBuildRedactsPipelineAndScheduleSecrets(t *testing.T) {
 			t.Fatalf("sanitized config leaked %q: %s", leak, snap.SanitizedConfig)
 		}
 	}
+
+	// Redacted secrets in these subtrees must still be fingerprinted so
+	// secret_fingerprints / ConfigHash track them (Codex finding 2): the
+	// audit value of redaction depends on drift tracking, not just absence
+	// of plaintext.
+	var uses []SecretUse
+	if err := json.Unmarshal(snap.SecretFingerprints, &uses); err != nil {
+		t.Fatalf("unmarshal secret uses: %v", err)
+	}
+	wantPurposes := map[string]bool{
+		"pipelines.p1.steps[0].with.token":          false,
+		"pipelines.p1.steps[0].baggage.auth_secret": false,
+		"plugins.echo.schedules[0].payload.api_key": false,
+	}
+	for _, u := range uses {
+		if _, ok := wantPurposes[u.Purpose]; ok {
+			wantPurposes[u.Purpose] = true
+		}
+	}
+	for purpose, seen := range wantPurposes {
+		if !seen {
+			t.Fatalf("secret %q not recorded in secret_fingerprints: %s", purpose, snap.SecretFingerprints)
+		}
+	}
+
+	// A secret-only change inside a redacted subtree must flip ConfigHash
+	// (secret drift is tracked, not silently lost).
+	cfg.Pipelines[0].Steps[0].With["token"] = "step-with-secret-rotated"
+	snap2, err := Build(BuildInput{
+		Config:       cfg,
+		ConfigPath:   configPath,
+		ConfigSource: "explicit",
+		Reason:       ReasonStartup,
+	})
+	if err != nil {
+		t.Fatalf("Build(second): %v", err)
+	}
+	if snap.ConfigHash == snap2.ConfigHash {
+		t.Fatal("ConfigHash unchanged after rotating a secret inside a pipeline step `with` (secret drift not tracked)")
+	}
 }
 
 func TestBuildRecordsExplicitBaggageSemantics(t *testing.T) {
