@@ -116,11 +116,46 @@ class IfClassifierTests(unittest.TestCase):
                 "event": {"payload": {"text": "x"}, "dedupe_key": "discord:summary:123"},
             }
         )
-        self.assertEqual(resp["events"][0]["dedupe_key"], "discord:summary:123")
+        # Propagated dedupe key is scoped by the matched emit type (C-FRO-7)
+        # so distinct classifications of the same source do not collide.
+        self.assertEqual(resp["events"][0]["dedupe_key"], "discord:summary:123:hit")
 
     def test_health_invalid(self):
         resp = run_plugin({"protocol": 2, "command": "health", "config": {}})
         self.assertEqual(resp["status"], "error")
+
+    # C-FRO-7: the emitted dedupe_key was the input key verbatim, independent
+    # of the matched emit type. Two different classifications of the same
+    # source event therefore collided downstream (one silently dropped). The
+    # emitted dedupe identity must include the emit type that distinguishes
+    # the work.
+    def _emit(self, emit_type):
+        resp = run_plugin(
+            {
+                "protocol": 2,
+                "command": "handle",
+                "config": {
+                    "field": "text",
+                    "checks": [{"contains": "x", "emit": emit_type}],
+                },
+                "event": {"payload": {"text": "x"}, "dedupe_key": "src-event:1"},
+            }
+        )
+        self.assertEqual(resp["events"][0]["type"], emit_type)
+        return resp["events"][0].get("dedupe_key")
+
+    def test_distinct_emit_types_get_distinct_dedupe_keys(self):
+        key_a = self._emit("classified-a")
+        key_b = self._emit("classified-b")
+        self.assertIsNotNone(key_a)
+        self.assertIsNotNone(key_b)
+        self.assertNotEqual(
+            key_a, key_b,
+            "distinct classifications of the same source must not share a dedupe key",
+        )
+
+    def test_same_emit_type_keeps_stable_dedupe_key(self):
+        self.assertEqual(self._emit("classified-a"), self._emit("classified-a"))
 
 
 if __name__ == "__main__":

@@ -161,7 +161,11 @@ def handle_command(config: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, A
             if match_condition(value, cond_type, cond_value):
                 output_event = {"type": emit, "payload": payload}
                 if input_dedupe_key:
-                    output_event["dedupe_key"] = input_dedupe_key
+                    # Scope the propagated dedupe key by the matched emit
+                    # type. Without this, two different classifications of
+                    # the same source event share one key and collide
+                    # downstream — one is silently dropped (C-FRO-7).
+                    output_event["dedupe_key"] = f"{input_dedupe_key}:{emit}"
                 result = f"matched {cond_type} -> {emit}"
                 return ok_response(
                     result,
