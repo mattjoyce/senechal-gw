@@ -71,6 +71,53 @@ func TestContextStoreCreateMergeAndLineage(t *testing.T) {
 	}
 }
 
+// TestContextStoreRouteMaxDepthCannotBeWidenedMidTree guards C-FRO-3.
+// Verification note: the claimed "route_max_depth silently widened mid-tree
+// by a later update" impact was NOT reproduced. WithRouteMaxDepth's own
+// guard only inspects the fresh updates map, but the accretion layer
+// enforces baggage-path immutability, so a hop that tries to raise an
+// inherited route_max_depth is rejected as a bounded error. Unlike
+// route_depth (which has a deliberate mutation exception in
+// deepAccreteRawMap so it can increment per hop), route_max_depth has no
+// such exception. This test pins that asymmetry so a future change cannot
+// silently make the loop-guard budget widenable.
+func TestContextStoreRouteMaxDepthCannotBeWidenedMidTree(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	cs := NewContextStore(db)
+
+	seed, err := WithRouteMaxDepth(nil, 5)
+	if err != nil {
+		t.Fatalf("WithRouteMaxDepth(5): %v", err)
+	}
+	root, err := cs.Create(context.Background(), nil, "p", "root", seed)
+	if err != nil {
+		t.Fatalf("Create(root): %v", err)
+	}
+	if got := RouteMaxDepthFromAccumulated(root.AccumulatedJSON); got != 5 {
+		t.Fatalf("root route_max_depth = %d, want 5", got)
+	}
+
+	widen, err := WithRouteMaxDepth(nil, 100)
+	if err != nil {
+		t.Fatalf("WithRouteMaxDepth(100): %v", err)
+	}
+	_, err = cs.Create(context.Background(), &root.ID, "p", "child", widen)
+	if err == nil {
+		t.Fatal("widening inherited route_max_depth must be a bounded error, got nil")
+	}
+	if !errors.Is(err, ErrBaggagePathImmutable) {
+		t.Fatalf("error = %v, want ErrBaggagePathImmutable", err)
+	}
+}
+
 // TestContextStoreNullSubtreeIsBoundedError reproduces C-FRO-8: a JSON null
 // inherited value was decoded as an object (nil map), and deep-accretion then
 // wrote into that nil map, panicking and killing the process. A null subtree
