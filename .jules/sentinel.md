@@ -1,0 +1,4 @@
+## 2025-05-17 - SQL Injection in PRAGMA table_info check
+**Vulnerability:** Found a SQL injection vulnerability in `internal/storage/sqlite.go` where `fmt.Sprintf` was used to interpolate table names into a `PRAGMA table_info(%s);` query dynamically.
+**Learning:** SQLite's `PRAGMA` statements historically didn't support parameterized inputs via standard `?` placeholders, which led developers to use string interpolation. However, SQLite introduced table-valued functions (like `pragma_table_info(?)`) that DO support parameters. Furthermore, `notnull` is a reserved keyword and must be explicitly double-quoted when querying columns explicitly.
+**Prevention:** Always use SQLite's table-valued PRAGMA functions (e.g., `SELECT * FROM pragma_table_info(?)`) instead of direct `PRAGMA` statements when user-input or variable data is involved in the schema lookup to allow proper parameter binding and prevent SQL injection.
