@@ -161,6 +161,14 @@ func (s *Store) RecordFact(ctx context.Context, fact PluginFact, compatibilityVi
 	}
 	fact.FactJSON = normalizedFact
 
+	// Enforce the size bound on every fact-write path, before the INSERT.
+	// Previously the gate lived only in upsertState, which is skipped when
+	// no compatibility view is declared — letting an oversized fact_json be
+	// persisted unbounded (C-FRO-9).
+	if err := s.checkStateSize(fact.FactJSON); err != nil {
+		return nil, false, err
+	}
+
 	createdAt := fact.CreatedAt.UTC()
 	if fact.CreatedAt.IsZero() {
 		createdAt = time.Now().UTC()
@@ -291,11 +299,20 @@ RETURNING value;
 	return seq, nil
 }
 
+// checkStateSize enforces the single max-size bound for any persisted
+// state-bearing JSON blob (plugin state or fact_json).
+func (s *Store) checkStateSize(blob json.RawMessage) error {
+	if len(blob) > s.maxStateBty {
+		return fmt.Errorf("plugin state exceeds max size (%d bytes)", s.maxStateBty)
+	}
+	return nil
+}
+
 func (s *Store) upsertState(ctx context.Context, execer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, plugin string, state json.RawMessage, updatedAt time.Time) error {
-	if len(state) > s.maxStateBty {
-		return fmt.Errorf("plugin state exceeds max size (%d bytes)", s.maxStateBty)
+	if err := s.checkStateSize(state); err != nil {
+		return err
 	}
 
 	_, err := execer.ExecContext(ctx, `
