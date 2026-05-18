@@ -26,7 +26,7 @@ func TestOpenSQLiteBootstrapsTables(t *testing.T) {
 	}
 
 	var jobIDColumn string
-	if err := db.QueryRow("SELECT name FROM pragma_table_info('job_log') WHERE name = 'job_id';").Scan(&jobIDColumn); err != nil {
+	if err := db.QueryRow("SELECT name FROM pragma_table_info(?) WHERE name = ?;", "job_log", "job_id").Scan(&jobIDColumn); err != nil {
 		t.Fatalf("job_log.job_id missing: %v", err)
 	}
 	if jobIDColumn != "job_id" {
@@ -34,7 +34,7 @@ func TestOpenSQLiteBootstrapsTables(t *testing.T) {
 	}
 
 	var seqColumn string
-	if err := db.QueryRow("SELECT name FROM pragma_table_info('plugin_facts') WHERE name = 'seq';").Scan(&seqColumn); err != nil {
+	if err := db.QueryRow("SELECT name FROM pragma_table_info(?) WHERE name = ?;", "plugin_facts", "seq").Scan(&seqColumn); err != nil {
 		t.Fatalf("plugin_facts.seq missing: %v", err)
 	}
 	if seqColumn != "seq" {
