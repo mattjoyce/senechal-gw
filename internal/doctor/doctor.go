@@ -43,6 +43,7 @@ func (d *Doctor) Validate() *Result {
 
 	d.validateServiceConfig(r)
 	d.validatePluginRefs(r)
+	d.validateUsesCycles(r)
 	d.validateAPIConfig(r)
 	d.validateTokenScopes(r)
 	d.validateWebhooks(r)
@@ -259,29 +260,63 @@ func (d *Doctor) validateRoutes(r *Result) {
 		graph[route.From] = append(graph[route.From], route.To)
 	}
 
-	// Cycle detection via DFS
-	visited := make(map[string]int) // 0=unvisited, 1=in-stack, 2=done
-	var hasCycle func(node string) bool
-	hasCycle = func(node string) bool {
-		visited[node] = 1
+	if node, cyclic := detectGraphCycle(graph); cyclic {
+		d.addError(r, "routes", "routes",
+			fmt.Sprintf("circular dependency detected involving plugin %q", node))
+	}
+}
+
+// detectGraphCycle runs a 3-color DFS over a directed adjacency graph and
+// returns a node on a cycle if one exists. Shared by route and uses
+// validation so both forms of circular dependency use the same machinery.
+func detectGraphCycle(graph map[string][]string) (string, bool) {
+	const (
+		unvisited = 0
+		inStack   = 1
+		done      = 2
+	)
+	visited := make(map[string]int)
+	var walk func(node string) bool
+	walk = func(node string) bool {
+		visited[node] = inStack
 		for _, next := range graph[node] {
-			if visited[next] == 1 {
+			if visited[next] == inStack {
 				return true
 			}
-			if visited[next] == 0 && hasCycle(next) {
+			if visited[next] == unvisited && walk(next) {
 				return true
 			}
 		}
-		visited[node] = 2
+		visited[node] = done
 		return false
 	}
-
 	for node := range graph {
-		if visited[node] == 0 && hasCycle(node) {
-			d.addError(r, "routes", "routes",
-				fmt.Sprintf("circular dependency detected involving plugin %q", node))
-			break
+		if visited[node] == unvisited && walk(node) {
+			return node, true
 		}
+	}
+	return "", false
+}
+
+// validateUsesCycles detects indirect cycles in the plugin `uses` graph
+// (a uses b, b uses a). Direct self-reference (uses == name) is reported
+// with a more specific message by validatePluginRefs and is excluded from
+// the graph here to avoid double reporting.
+func (d *Doctor) validateUsesCycles(r *Result) {
+	graph := make(map[string][]string)
+	for name, pc := range d.cfg.Plugins {
+		if !pc.Enabled {
+			continue
+		}
+		uses := strings.TrimSpace(pc.Uses)
+		if uses == "" || uses == name {
+			continue
+		}
+		graph[name] = append(graph[name], uses)
+	}
+	if node, cyclic := detectGraphCycle(graph); cyclic {
+		d.addError(r, "plugin_refs", "plugins",
+			fmt.Sprintf("circular uses dependency detected involving plugin %q", node))
 	}
 }
 

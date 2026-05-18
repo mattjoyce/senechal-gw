@@ -183,7 +183,19 @@ elif command == "handle":
         "content": content,
     }
     if markdown_tokens is not None:
-        payload["markdown_tokens"] = int(markdown_tokens)
+        # x-markdown-tokens is remote-controlled; a hostile or malformed
+        # value must produce a bounded protocol error, not an unhandled
+        # crash with no response (C-FRO-10).
+        try:
+            payload["markdown_tokens"] = int(markdown_tokens)
+        except (ValueError, TypeError):
+            respond(
+                "error",
+                error=f"invalid x-markdown-tokens header from {final_url}: {markdown_tokens!r}",
+                retry=False,
+                events=[{"type": "fetch.failed", "payload": {"url": url, "error": "invalid x-markdown-tokens header"}}],
+                logs=[{"level": "error", "message": f"invalid x-markdown-tokens header: {markdown_tokens!r}"}],
+            )
 
     respond(
         "ok",

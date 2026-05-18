@@ -1196,6 +1196,99 @@ func TestQueueEnqueueDedupeOverrideBlocksOutstanding(t *testing.T) {
 	}
 }
 
+// TestQueueEnqueueDedupeScopedByTarget reproduces C-FRO-16: the dedupe
+// lookups query WHERE dedupe_key = ? with no target scoping, so two
+// distinct targets that inherit the same dedupe key (e.g. fan-out siblings
+// inheriting the source event's key) silently collapse — one branch's work
+// is dropped while the parent still reports success. The dedupe namespace
+// must be scoped by the dimensions that distinguish the work (target
+// plugin + command). Two reproductions prove the common rule before the
+// seam is changed (workplan gate).
+func TestQueueEnqueueDedupeScopedByTarget(t *testing.T) {
+	t.Parallel()
+
+	overrideTTL := 1 * time.Minute
+	key := "src-event:abc123"
+
+	newQ := func(t *testing.T) *Queue {
+		t.Helper()
+		dbPath := filepath.Join(t.TempDir(), "state.db")
+		db, err := storage.OpenSQLite(context.Background(), dbPath)
+		if err != nil {
+			t.Fatalf("OpenSQLite: %v", err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
+		return New(db, WithLogger(slog.Default()), WithDedupeTTL(24*time.Hour))
+	}
+
+	t.Run("different plugin same key must not collapse", func(t *testing.T) {
+		t.Parallel()
+		q := newQ(t)
+		idA, err := q.Enqueue(context.Background(), EnqueueRequest{
+			Plugin: "branch-a", Command: "handle", SubmittedBy: "router",
+			DedupeKey: &key, DedupeTTL: &overrideTTL,
+		})
+		if err != nil {
+			t.Fatalf("enqueue branch-a: %v", err)
+		}
+		idB, err := q.Enqueue(context.Background(), EnqueueRequest{
+			Plugin: "branch-b", Command: "handle", SubmittedBy: "router",
+			DedupeKey: &key, DedupeTTL: &overrideTTL,
+		})
+		if err != nil {
+			t.Fatalf("distinct fan-out branch wrongly deduped: %v", err)
+		}
+		if idB == "" || idB == idA {
+			t.Fatalf("branch-b collapsed into branch-a (idA=%q idB=%q)", idA, idB)
+		}
+	})
+
+	t.Run("different command same key must not collapse", func(t *testing.T) {
+		t.Parallel()
+		q := newQ(t)
+		id1, err := q.Enqueue(context.Background(), EnqueueRequest{
+			Plugin: "echo", Command: "poll", SubmittedBy: "router",
+			DedupeKey: &key, DedupeTTL: &overrideTTL,
+		})
+		if err != nil {
+			t.Fatalf("enqueue poll: %v", err)
+		}
+		id2, err := q.Enqueue(context.Background(), EnqueueRequest{
+			Plugin: "echo", Command: "handle", SubmittedBy: "router",
+			DedupeKey: &key, DedupeTTL: &overrideTTL,
+		})
+		if err != nil {
+			t.Fatalf("distinct command wrongly deduped: %v", err)
+		}
+		if id2 == "" || id2 == id1 {
+			t.Fatalf("handle collapsed into poll (id1=%q id2=%q)", id1, id2)
+		}
+	})
+
+	t.Run("same target same key still dedupes", func(t *testing.T) {
+		t.Parallel()
+		q := newQ(t)
+		first, err := q.Enqueue(context.Background(), EnqueueRequest{
+			Plugin: "echo", Command: "poll", SubmittedBy: "router",
+			DedupeKey: &key, DedupeTTL: &overrideTTL,
+		})
+		if err != nil {
+			t.Fatalf("first enqueue: %v", err)
+		}
+		_, err = q.Enqueue(context.Background(), EnqueueRequest{
+			Plugin: "echo", Command: "poll", SubmittedBy: "router",
+			DedupeKey: &key, DedupeTTL: &overrideTTL,
+		})
+		var dedupeErr *DedupeDropError
+		if !errors.As(err, &dedupeErr) {
+			t.Fatalf("legitimate retry must still dedupe, got %T: %v", err, err)
+		}
+		if dedupeErr.ExistingJobID != first {
+			t.Fatalf("dedupe existing id = %q, want %q", dedupeErr.ExistingJobID, first)
+		}
+	})
+}
+
 func TestQueueEnqueueDedupeHitAfterSuccess(t *testing.T) {
 	t.Parallel()
 

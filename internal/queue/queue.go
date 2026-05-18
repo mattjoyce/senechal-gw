@@ -408,7 +408,7 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 		}
 		if dedupeKey != "" {
 			if req.DedupeTTL != nil {
-				existingID, found, err := q.findOutstandingByDedupeKey(ctx, dedupeKey)
+				existingID, found, err := q.findOutstandingByDedupeKey(ctx, req.Plugin, req.Command, dedupeKey)
 				if err != nil {
 					return "", fmt.Errorf("dedupe lookup: %w", err)
 				}
@@ -427,7 +427,7 @@ func (q *Queue) Enqueue(ctx context.Context, req EnqueueRequest) (string, error)
 			}
 
 			if dedupeTTL > 0 {
-				existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, dedupeKey, dedupeTTL)
+				existingID, found, err := q.findRecentSucceededByDedupeKey(ctx, req.Plugin, req.Command, dedupeKey, dedupeTTL)
 				if err != nil {
 					return "", fmt.Errorf("dedupe lookup: %w", err)
 				}
@@ -503,19 +503,21 @@ VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?);
 	return id, nil
 }
 
-func (q *Queue) findRecentSucceededByDedupeKey(ctx context.Context, dedupeKey string, ttl time.Duration) (string, bool, error) {
+func (q *Queue) findRecentSucceededByDedupeKey(ctx context.Context, plugin, command, dedupeKey string, ttl time.Duration) (string, bool, error) {
 	cutoff := time.Now().UTC().Add(-ttl).Format(time.RFC3339Nano)
 	var id string
 	err := q.db.QueryRowContext(ctx, `
 SELECT id
 FROM job_queue
 WHERE dedupe_key = ?
+  AND plugin = ?
+  AND command = ?
   AND status = ?
   AND completed_at IS NOT NULL
   AND completed_at >= ?
 ORDER BY completed_at DESC
 LIMIT 1;
-`, dedupeKey, StatusSucceeded, cutoff).Scan(&id)
+`, dedupeKey, plugin, command, StatusSucceeded, cutoff).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -525,16 +527,18 @@ LIMIT 1;
 	return id, true, nil
 }
 
-func (q *Queue) findOutstandingByDedupeKey(ctx context.Context, dedupeKey string) (string, bool, error) {
+func (q *Queue) findOutstandingByDedupeKey(ctx context.Context, plugin, command, dedupeKey string) (string, bool, error) {
 	var id string
 	err := q.db.QueryRowContext(ctx, `
 SELECT id
 FROM job_queue
 WHERE dedupe_key = ?
+  AND plugin = ?
+  AND command = ?
   AND status IN (?, ?)
 ORDER BY created_at DESC, rowid DESC
 LIMIT 1;
-`, dedupeKey, StatusQueued, StatusRunning).Scan(&id)
+`, dedupeKey, plugin, command, StatusQueued, StatusRunning).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}

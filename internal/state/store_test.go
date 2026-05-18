@@ -113,6 +113,51 @@ func TestStoreSetReplacesFullState(t *testing.T) {
 	}
 }
 
+// TestStoreRecordFactEnforcesSizeGateWithoutCompatibilityView reproduces
+// C-FRO-9: with compatibilityView == "" the size gate (which lived only in
+// upsertState) was never reached, so an oversized fact_json was INSERTed
+// unbounded. The gate must be enforced on every fact-write path, before the
+// state-changing INSERT.
+func TestStoreRecordFactEnforcesSizeGateWithoutCompatibilityView(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	s := NewStore(db)
+
+	big := make([]byte, DefaultMaxStateBytes+100_000)
+	for i := range big {
+		big[i] = 'a'
+	}
+	oversized := json.RawMessage(`{"blob":"` + string(big) + `"}`)
+
+	_, _, err = s.RecordFact(context.Background(), PluginFact{
+		ID:         "fact-oversized",
+		PluginName: "noisy",
+		FactType:   "noisy.snapshot",
+		JobID:      "job-1",
+		Command:    "poll",
+		FactJSON:   oversized,
+		CreatedAt:  time.Date(2026, 4, 22, 1, 2, 3, 0, time.UTC),
+	}, "") // no compatibility view -> upsertState path is skipped
+	if err == nil {
+		t.Fatal("RecordFact: expected size limit error, got nil")
+	}
+
+	facts, listErr := s.ListFacts(context.Background(), "noisy", "noisy.snapshot", 10)
+	if listErr != nil {
+		t.Fatalf("ListFacts: %v", listErr)
+	}
+	if len(facts) != 0 {
+		t.Fatalf("expected 0 persisted facts (INSERT must be gated), got %d", len(facts))
+	}
+}
+
 func TestStoreRecordFactFileWatchSnapshotUpdatesCompatibilityState(t *testing.T) {
 	t.Parallel()
 

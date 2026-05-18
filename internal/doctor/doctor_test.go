@@ -137,6 +137,26 @@ func TestValidate_UsesMissingBase(t *testing.T) {
 	assertHasError(t, r, "plugin_refs", "switch")
 }
 
+// TestValidate_UsesIndirectCycle reproduces C-FRO-17: only a direct
+// self-reference (uses == name) was rejected. An indirect uses cycle
+// (a uses b, b uses a) was never detected, even though a 3-color DFS cycle
+// detector already exists in this file for routes. The uses graph must run
+// through the same cycle detection.
+func TestValidate_UsesIndirectCycle(t *testing.T) {
+	t.Parallel()
+	cfg := validConfig()
+	cfg.Plugins = map[string]config.PluginConf{
+		"a": {Enabled: true, Uses: "b"},
+		"b": {Enabled: true, Uses: "a"},
+	}
+	d := New(cfg, registryWith(echoPlugin()))
+	r := d.Validate()
+	if r.Valid {
+		t.Fatal("expected invalid: indirect uses cycle a->b->a")
+	}
+	assertHasError(t, r, "plugin_refs", "circular")
+}
+
 func TestValidate_TokenScopeValidPlugin(t *testing.T) {
 	t.Parallel()
 	cfg := validConfig()

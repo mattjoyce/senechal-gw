@@ -321,6 +321,13 @@ func decodeRawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, false
 	}
+	// JSON null unmarshals into a nil map with no error. It is not a
+	// mergeable object; treating it as one let deep-accretion write into a
+	// nil map and panic (C-FRO-8). Report it as a non-object so it falls
+	// through to the immutability/replace path instead.
+	if obj == nil {
+		return nil, false
+	}
 	return obj, true
 }
 

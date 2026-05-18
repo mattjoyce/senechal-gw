@@ -4,13 +4,83 @@ package dispatch
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/mattjoyce/ductile/internal/protocol"
 )
+
+// runawayPluginEntry runs from init() when this test binary is re-execed as a
+// plugin (see writeRunawayPlugin). Installing the SIGTERM ignore in init()
+// — before the testing framework parses flags — closes the startup race where
+// SIGTERM could arrive before the handler is in place. It models a misbehaving
+// plugin that exceeds its configured timeout: ignore SIGTERM, run well past
+// the deadline, then emit a valid response during the grace period. A Go
+// helper is used because a /bin/sh trap does not reliably survive SIGTERM on
+// macOS.
+func init() {
+	if os.Getenv("DUCTILE_RUNAWAY_PLUGIN_HELPER") != "1" {
+		return
+	}
+	signal.Ignore(syscall.SIGTERM)
+	// Sleep past the parent's timeout but inside the 5s grace period, then
+	// emit valid JSON. This output is produced AFTER the deadline and must
+	// not reclassify the timeout as success.
+	time.Sleep(3 * time.Second)
+	fmt.Println(`{"status":"ok","result":"slow-but-done"}`)
+	os.Exit(0)
+}
+
+// writeRunawayPlugin writes a shell shim that re-execs the test binary as a
+// plugin that genuinely ignores SIGTERM and overruns its timeout.
+func writeRunawayPlugin(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate test binary: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "graceful-plugin.sh")
+	shim := fmt.Sprintf(
+		"#!/bin/sh\nexec env DUCTILE_RUNAWAY_PLUGIN_HELPER=1 %q -test.run=^$ -test.v=false\n",
+		self)
+	if err := os.WriteFile(path, []byte(shim), 0o700); err != nil {
+		t.Fatalf("write plugin shim: %v", err)
+	}
+	return path
+}
+
+// TestSubprocessExecutorTimeoutNotReclassifiedByLateOutput pins the corrected
+// C-FRO-5 scope. C-FRO-5 is strictly the deadline-edge race: a result that is
+// ALREADY available when the timer fires must be preferred over a timeout
+// (handled by the non-blocking waitErr pre-check). It must NOT change timeout
+// semantics: a plugin that ignores SIGTERM, overruns its configured timeout,
+// and only emits valid JSON during the grace period is still a timeout — late
+// output must never reclassify it as success.
+func TestSubprocessExecutorTimeoutNotReclassifiedByLateOutput(t *testing.T) {
+	// Not parallel: re-execs this test binary as a child, whose startup
+	// latency under -race must stay below the parent timeout. Suite-wide
+	// parallel contention inflates that latency.
+	scriptPath := writeRunawayPlugin(t)
+
+	executor := newSubprocessExecutor(nil)
+	req := &protocol.Request{Protocol: 2, JobID: "job-runaway", Command: "poll"}
+	resp, _, _, _, _, _, err := executor.execute(
+		context.Background(), "runaway", scriptPath, req, 1500*time.Millisecond, slog.Default())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("execute error = %v, want context.DeadlineExceeded (timeout must not be reclassified by post-deadline output)", err)
+	}
+	if resp != nil {
+		t.Fatalf("response = %#v, want nil (a timed-out plugin's late output must be discarded)", resp)
+	}
+}
 
 func TestSubprocessExecutorReturnsMalformedProtocolResponse(t *testing.T) {
 	t.Parallel()

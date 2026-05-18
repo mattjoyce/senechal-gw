@@ -33,6 +33,51 @@ func TestVerifyIntegrityAllValid(t *testing.T) {
 	}
 }
 
+// TestChecksumGenerationExcludesOwnDestination guards C-FRO-14.
+// Verification note: the claimed impact (integrity generation hashes the
+// whole tree including its own .checksums output, so the gate can never
+// match itself and trains operators to ignore it) was NOT reproduced.
+// Generation hashes an explicit curated file list (ConfigFiles.AllFiles),
+// not a directory walk, so .checksums is never swept into its own
+// manifest, and a regenerate->verify cycle is stable. This test pins that
+// the destination is excluded so a future switch to a directory walk
+// cannot silently reintroduce the self-inclusion instability.
+func TestChecksumGenerationExcludesOwnDestination(t *testing.T) {
+	tmpDir := t.TempDir()
+	setupIntegrityDir(t, tmpDir)
+
+	files, err := DiscoverConfigFiles(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateChecksumsFromDiscovery(files, false); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest, err := LoadChecksums(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadChecksums: %v", err)
+	}
+	for path := range manifest.Hashes {
+		if filepath.Base(path) == ".checksums" {
+			t.Fatalf(".checksums manifest contains its own destination %q (self-inclusion)", path)
+		}
+	}
+
+	// Regenerate then verify: must stay stable (no self-inclusion drift).
+	if err := GenerateChecksumsFromDiscovery(files, false); err != nil {
+		t.Fatalf("regenerate: %v", err)
+	}
+	result, err := VerifyIntegrity(tmpDir, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Passed || len(result.Warnings) > 0 {
+		t.Fatalf("verify unstable after regenerate: passed=%v errors=%v warnings=%v",
+			result.Passed, result.Errors, result.Warnings)
+	}
+}
+
 func TestVerifyIntegrityHighSecurityMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	setupIntegrityDir(t, tmpDir)

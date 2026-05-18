@@ -1,0 +1,21 @@
+plugins:
+  # echo-based plugin carrying:
+  #  - nested.api_key             -> F-006: /config/view must redact it
+  #  - schedules[0].payload.token -> C-FRO-15: the config snapshot must
+  #                                  redact AND fingerprint it (the live
+  #                                  C-FRO-15 surface — schedules come
+  #                                  from cfg.Plugins which IS populated;
+  #                                  pipeline with/baggage is NOT a live
+  #                                  runtime surface, see fixture README).
+  app:
+    uses: echo
+    enabled: true
+    config:
+      message: "app ran"
+      public: "visible-value"
+      nested:
+        api_key: "PLAINTEXT_PLUGIN_NESTED"
+    schedules:
+      - every: "1h"
+        payload:
+          token: "PLAINTEXT_SCHED_PAYLOAD"
