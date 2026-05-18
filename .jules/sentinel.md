@@ -1,0 +1,4 @@
+## 2025-02-26 - [Fix SQL Injection in pragma_table_info]
+**Vulnerability:** String formatting (fmt.Sprintf) was used to construct a SQL query calling the SQLite pragma_table_info function, allowing for potential SQL injection if the table name was user-controlled. The `sqliteColumnExists` function dynamically passed table names into `PRAGMA table_info(table);` but PRAGMAs cannot be parameterized. Tests also used unparameterized formats.
+**Learning:** SQLite's `PRAGMA` statements do not support prepared statement parameters (bound values). Therefore, dynamically building `PRAGMA` queries using string formatting is unsafe if input isn't strictly controlled, and it triggers automated security scan alerts. The table-valued function `pragma_table_info(?)` acts as a safe alternative.
+**Prevention:** Avoid string formatting for SQLite table metadata queries. Use the table-valued function `pragma_table_info(?)` which safely supports parameter binding.
