@@ -831,6 +831,14 @@ func (d *Dispatcher) routeEventsWithOptions(
 					)
 					continue
 				}
+				if errors.Is(err, queue.ErrSourceEventConflict) {
+					logger.Info("skipping routed job (source-event redelivery dedupe)",
+						"plugin", next.Plugin,
+						"command", next.Command,
+						"source_event_id", sourceEventID,
+					)
+					continue
+				}
 				return fmt.Errorf("enqueue routed job for plugin %q: %w", next.Plugin, err)
 			}
 

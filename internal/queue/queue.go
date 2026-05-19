@@ -490,6 +490,25 @@ VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?);
 	if err != nil {
 		return "", fmt.Errorf("enqueue job rows affected: %w", err)
 	}
+	if affected == 0 {
+		// INSERT OR IGNORE no-op. On the source-event path this means a row
+		// with the same (parent_job_id, source_event_id, plugin, command)
+		// identity already exists — a benign same-target redelivery. C-FRO-16:
+		// surface it instead of returning (id, nil) for a row never inserted.
+		if req.SourceEventID != nil && strings.TrimSpace(*req.SourceEventID) != "" {
+			parentJobID := ""
+			if req.ParentJobID != nil {
+				parentJobID = *req.ParentJobID
+			}
+			return "", &SourceEventConflictError{
+				ParentJobID:   parentJobID,
+				SourceEventID: *req.SourceEventID,
+				Plugin:        req.Plugin,
+				Command:       req.Command,
+			}
+		}
+	}
+
 	if affected > 0 {
 		if err := q.recordJobTransition(ctx, tx, id, nil, StatusQueued, nil, now); err != nil {
 			return "", err
