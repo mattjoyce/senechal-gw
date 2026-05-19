@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -2012,4 +2013,147 @@ func TestQueueEnqueueFanoutSourceEventScope(t *testing.T) {
 			t.Fatalf("expected exactly 1 row after redelivery, got %d", n)
 		}
 	})
+}
+
+// TestDequeueEligibleFanoutSiblingsNotStarvedByRunningSibling covers C-FRO-16
+// iteration 2: fan-out siblings inherit one source-event dedupe_key but go to
+// distinct targets. While one sibling runs, the others (distinct plugin/
+// command) must still be claimable — a raw same-dedupe_key running-exclusion
+// serialized and starved them behind a slow/stuck first sibling.
+func TestDequeueEligibleFanoutSiblingsNotStarvedByRunningSibling(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	parent := "emitter-job-1"
+	srcEvent := "work.ready:evt-1"
+	inherited := "src-event:evt-1" // one inherited dedupe_key for all siblings
+
+	want := map[string]bool{}
+	for i := range 4 {
+		plugin := fmt.Sprintf("consume-%d", i)
+		command := fmt.Sprintf("branch_%d", i)
+		id, err := q.Enqueue(ctx, EnqueueRequest{
+			Plugin: plugin, Command: command, SubmittedBy: "route",
+			ParentJobID: &parent, SourceEventID: &srcEvent, DedupeKey: &inherited,
+		})
+		if err != nil {
+			t.Fatalf("enqueue sibling %d: %v", i, err)
+		}
+		want[id] = true
+	}
+
+	// Claim sibling-0 and deliberately leave it running (simulating slow work).
+	got := map[string]bool{}
+	first, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("dequeue first: %v", err)
+	}
+	if first == nil {
+		t.Fatalf("first dequeue returned nil")
+	}
+	got[first.ID] = true
+
+	// The remaining 3 distinct-target siblings MUST be claimable while
+	// sibling-0 is still running. Pre-fix this returned nil (starvation).
+	for i := 1; i <= 3; i++ {
+		j, err := q.DequeueEligible(ctx, nil, nil)
+		if err != nil {
+			t.Fatalf("dequeue sibling %d: %v", i, err)
+		}
+		if j == nil {
+			t.Fatalf("sibling %d starved behind running sibling-0 (C-FRO-16 regression)", i)
+		}
+		if got[j.ID] {
+			t.Fatalf("sibling %d duplicate claim %s", i, j.ID)
+		}
+		got[j.ID] = true
+	}
+
+	if len(got) != 4 {
+		t.Fatalf("claimed %d distinct siblings, want 4", len(got))
+	}
+	for id := range want {
+		if !got[id] {
+			t.Fatalf("enqueued job %s was never claimed", id)
+		}
+	}
+
+	empty, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("dequeue empty: %v", err)
+	}
+	if empty != nil {
+		t.Fatalf("expected empty queue, got %s", empty.ID)
+	}
+}
+
+// TestDequeueEligibleSameKeySameTargetStillSerializes is the negative guard:
+// target-scoping must NOT weaken genuine same-resource serialization when the
+// shared dedupe_key really is the same target (same plugin+command).
+func TestDequeueEligibleSameKeySameTargetStillSerializes(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	db, err := storage.OpenSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q := New(db)
+	ctx := context.Background()
+
+	key := "repo:alpha"
+	id1, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "sync", Command: "handle", SubmittedBy: "test", DedupeKey: &key,
+	})
+	if err != nil {
+		t.Fatalf("enqueue 1: %v", err)
+	}
+	// Distinct row (different parent) but SAME target + SAME dedupe_key.
+	p := "p2"
+	id2, err := q.Enqueue(ctx, EnqueueRequest{
+		Plugin: "sync", Command: "handle", SubmittedBy: "test",
+		DedupeKey: &key, ParentJobID: &p,
+	})
+	if err != nil {
+		t.Fatalf("enqueue 2: %v", err)
+	}
+
+	first, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("dequeue first: %v", err)
+	}
+	if first == nil || first.ID != id1 {
+		t.Fatalf("first=%v want %s", first, id1)
+	}
+
+	blocked, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("dequeue blocked: %v", err)
+	}
+	if blocked != nil {
+		t.Fatalf("same key+target must serialize; got %s while %s running", blocked.ID, id1)
+	}
+
+	done := "ok"
+	if err := q.Complete(ctx, id1, StatusSucceeded, &done, nil); err != nil {
+		t.Fatalf("complete 1: %v", err)
+	}
+	resumed, err := q.DequeueEligible(ctx, nil, nil)
+	if err != nil {
+		t.Fatalf("dequeue resumed: %v", err)
+	}
+	if resumed == nil || resumed.ID != id2 {
+		t.Fatalf("resumed=%v want %s", resumed, id2)
+	}
 }
