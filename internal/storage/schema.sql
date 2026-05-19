@@ -28,8 +28,12 @@ CREATE INDEX IF NOT EXISTS job_queue_status_created_at_idx ON job_queue(status, 
 CREATE INDEX IF NOT EXISTS job_queue_plugin_command_status_idx ON job_queue(plugin, command, status);
 CREATE INDEX IF NOT EXISTS job_queue_dedupe_status_completed_idx ON job_queue(dedupe_key, status, completed_at);
 -- UNIQUE for integrity, not just speed: prevents duplicate child enqueue per
--- (parent, source-event). Removing this drops the data-integrity guarantee.
-CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id) WHERE source_event_id IS NOT NULL;
+-- (parent, source-event, target). The target dimension (plugin, command) is
+-- part of the identity so a single source event fanning out to N distinct
+-- consumers enqueues N jobs, while genuine same-target redelivery still
+-- dedupes (at-least-once idempotency). Dropping this drops the data-integrity
+-- guarantee. C-FRO-16: existing DBs need scripts/migrate-fanout-dedupe-index.py.
+CREATE UNIQUE INDEX IF NOT EXISTS job_queue_event_source_idx ON job_queue(parent_job_id, source_event_id, plugin, command) WHERE source_event_id IS NOT NULL;
 
 -- Hickey Sprint 1 branch hickey-sprint-1-job-lineage:
 -- append-only job lineage facts. job_queue.status and job_queue.attempt

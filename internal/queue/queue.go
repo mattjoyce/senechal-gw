@@ -490,6 +490,25 @@ VALUES(?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?);
 	if err != nil {
 		return "", fmt.Errorf("enqueue job rows affected: %w", err)
 	}
+	if affected == 0 {
+		// INSERT OR IGNORE no-op. On the source-event path this means a row
+		// with the same (parent_job_id, source_event_id, plugin, command)
+		// identity already exists — a benign same-target redelivery. C-FRO-16:
+		// surface it instead of returning (id, nil) for a row never inserted.
+		if req.SourceEventID != nil && strings.TrimSpace(*req.SourceEventID) != "" {
+			parentJobID := ""
+			if req.ParentJobID != nil {
+				parentJobID = *req.ParentJobID
+			}
+			return "", &SourceEventConflictError{
+				ParentJobID:   parentJobID,
+				SourceEventID: *req.SourceEventID,
+				Plugin:        req.Plugin,
+				Command:       req.Command,
+			}
+		}
+	}
+
 	if affected > 0 {
 		if err := q.recordJobTransition(ctx, tx, id, nil, StatusQueued, nil, now); err != nil {
 			return "", err
@@ -555,15 +574,21 @@ func (q *Queue) Dequeue(ctx context.Context) (*Job, error) {
 }
 
 // DequeueEligible claims the oldest queued job whose plugin is NOT in
-// skipPlugins and whose dedupe_key is neither in activeConcurrencyKeys nor
-// already running. This allows the dispatcher to skip plugins that have reached
-// their parallelism cap and prevents concurrent execution of jobs sharing a
-// concurrency key (e.g. same repo target) using job_queue as the source of
-// truth.
+// skipPlugins, whose dedupe_key is not in activeConcurrencyKeys, and for which
+// no job with the same (dedupe_key, plugin, command) is already running. This
+// lets the dispatcher skip plugins at their parallelism cap and serializes
+// jobs that share a concurrency key FOR THE SAME TARGET (e.g. same repo
+// target), using job_queue as the source of truth.
 //
-// Dequeue calls this with empty explicit filters; same-key running exclusion
-// still applies because job_queue is the concurrency-key source of truth.
-// Returns (nil, nil) when no eligible job exists.
+// The running-exclusion is target-scoped (plugin + command) on purpose
+// (C-FRO-16): fan-out siblings inherit one source-event dedupe_key but go to
+// distinct targets, so a raw same-dedupe_key exclusion serialized them and
+// starved later siblings behind a slow/stuck first one. The documented
+// contract is a per-target guard (docs/ZK_2026-03-04_concurrency-rollout.md).
+//
+// Dequeue calls this with empty explicit filters; same (key, target) running
+// exclusion still applies because job_queue is the concurrency source of
+// truth. Returns (nil, nil) when no eligible job exists.
 func (q *Queue) DequeueEligible(ctx context.Context, skipPlugins []string, activeConcurrencyKeys []string) (*Job, error) {
 	now := time.Now().UTC()
 	nowS := now.Format(time.RFC3339Nano)
@@ -604,6 +629,8 @@ WITH next AS (
         FROM job_queue AS running
         WHERE running.status = ?
           AND running.dedupe_key = candidate.dedupe_key
+          AND running.plugin = candidate.plugin
+          AND running.command = candidate.command
       )
     )
   ORDER BY candidate.created_at ASC, candidate.rowid ASC

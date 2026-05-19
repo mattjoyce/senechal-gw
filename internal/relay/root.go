@@ -71,6 +71,11 @@ func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAccep
 				}
 				continue
 			}
+			if errors.Is(err, queue.ErrSourceEventConflict) {
+				// Benign at-least-once redelivery of the same target;
+				// the original child already exists. Preserve idempotency.
+				continue
+			}
 			return "", fmt.Errorf("enqueue relay root job for plugin %q: %w", dispatch.Plugin, err)
 		}
 		if firstJobID == "" {

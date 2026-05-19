@@ -1,0 +1,12 @@
+log_level: info
+service:
+  strict_mode: false
+state:
+  path: "./state/ductile.db"
+plugin_roots:
+  - "../../../../../plugins"
+  - "../plugins"
+include:
+  - api.yaml
+  - plugins.yaml
+  - pipelines.yaml

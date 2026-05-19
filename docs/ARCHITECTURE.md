@@ -177,7 +177,7 @@ When a producer enqueues a job with a `dedupe_key`:
 4. If either check finds a match: do not enqueue. Log at `INFO`: dedupe_key, existing job ID.
 5. If no match is found: enqueue normally.
 
-During dispatch, queued jobs with a `dedupe_key` are also skipped while another job with the same key is `running`. That execution serialisation is query-backed by `job_queue`, not a separate durable state table.
+During dispatch, a queued job with a `dedupe_key` is skipped while another job with the same `dedupe_key` **and the same target (`plugin` + `command`)** is `running`. The guard is per-target by design: a single source event that fans out to multiple distinct targets inherits one `dedupe_key`, and those distinct-target siblings must still run concurrently rather than serialise (and starve) behind each other. That execution serialisation is query-backed by `job_queue`, not a separate durable state table.
 
 ---
 

@@ -219,6 +219,32 @@ func (e *DedupeDropError) Is(target error) bool {
 	return target == ErrDedupeDrop
 }
 
+// ErrSourceEventConflict reports that an INSERT OR IGNORE on the source-event
+// path was a no-op because a row with the same
+// (parent_job_id, source_event_id, plugin, command) identity already exists.
+// This is a benign at-least-once redelivery dedupe of the SAME fan-out target,
+// distinct from the DedupeKey path. C-FRO-16: before this existed, Enqueue
+// returned (id, nil) for a row it never inserted, silently losing work.
+var ErrSourceEventConflict = errors.New("job source-event conflict")
+
+type SourceEventConflictError struct {
+	ParentJobID   string
+	SourceEventID string
+	Plugin        string
+	Command       string
+}
+
+func (e *SourceEventConflictError) Error() string {
+	return fmt.Sprintf(
+		"job source-event conflict (parent %q, source_event %q, target %s/%s)",
+		e.ParentJobID, e.SourceEventID, e.Plugin, e.Command,
+	)
+}
+
+func (e *SourceEventConflictError) Is(target error) bool {
+	return target == ErrSourceEventConflict
+}
+
 // JobResult is a lightweight projection for API job retrieval.
 type JobResult struct {
 	JobID       string
