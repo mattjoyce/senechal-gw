@@ -41,6 +41,7 @@ func NewSender(cfg *config.Config) (*Sender, error) {
 			Secret:      secret,
 			KeyID:       strings.TrimSpace(entry.KeyID),
 			Timeout:     normalizeRequestTimeout(entry.Timeout),
+			SyncTimeout: entry.SyncTimeout,
 			Allow:       allowed,
 		}
 	}
@@ -60,6 +61,7 @@ func NewReceiver(
 	queue JobQueuer,
 	router EventRouter,
 	contexts EventContextStore,
+	waiter TreeWaiter,
 	logger *slog.Logger,
 ) (*Receiver, error) {
 	if cfg == nil {
@@ -103,7 +105,16 @@ func NewReceiver(
 			KeyID:       strings.TrimSpace(entry.KeyID),
 			Accept:      accept,
 			AllowedBags: allowedBags,
+			AllowSync:   entry.AllowSync,
 		}
+	}
+
+	sync := syncPolicy{}
+	syncMaxConcurrent := defaultRelaySyncMaxConcurrent
+	if s := cfg.RemoteIngress.Sync; s != nil {
+		sync.Enabled = s.Enabled
+		sync.MaxTimeout = normalizeSyncMaxTimeout(s.MaxTimeout)
+		syncMaxConcurrent = normalizeSyncMaxConcurrent(s.MaxConcurrent)
 	}
 
 	maxBodySize := int64(defaultRelayMaxBodySize)
@@ -122,12 +133,15 @@ func NewReceiver(
 			AllowedClockSkew: normalizeAllowedClockSkew(cfg.RemoteIngress.AllowedClockSkew),
 			RequireKeyID:     cfg.RemoteIngress.RequireKeyID,
 			Peers:            peers,
+			Sync:             sync,
 		},
 		queue:    queue,
 		router:   router,
 		contexts: contexts,
 		logger:   defaultLogger(logger).With("component", "relay"),
 		now:      nowUTC,
+		waiter:   waiter,
+		syncSem:  make(chan struct{}, syncMaxConcurrent),
 	}, nil
 }
 

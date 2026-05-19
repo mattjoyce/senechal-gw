@@ -19,9 +19,18 @@ type rootContextSeed struct {
 	Scope map[string]any
 }
 
-func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAcceptance) (string, error) {
+// rootEnqueue reports what the relay routing produced. DispatchCount and
+// PipelineName let the synchronous-reply path enforce the single-root guard
+// and resolve terminal steps without re-running the router.
+type rootEnqueue struct {
+	FirstJobID    string
+	DispatchCount int
+	PipelineName  string
+}
+
+func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAcceptance) (rootEnqueue, error) {
 	if r.router == nil {
-		return "", nil
+		return rootEnqueue{}, nil
 	}
 
 	dispatches, err := r.router.Next(ctx, router.Request{
@@ -29,11 +38,12 @@ func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAccep
 		Event:         accepted.LocalEvent,
 	})
 	if err != nil {
-		return "", fmt.Errorf("resolve relay root routes: %w", err)
+		return rootEnqueue{}, fmt.Errorf("resolve relay root routes: %w", err)
 	}
 	if len(dispatches) == 0 {
-		return "", nil
+		return rootEnqueue{}, nil
 	}
+	out := rootEnqueue{DispatchCount: len(dispatches), PipelineName: dispatches[0].PipelineName}
 
 	rootSeeds := make(map[string]rootContextSeed)
 	admittedBaggage := r.admitBaggage(accepted.Peer, accepted.Envelope.Baggage)
@@ -41,12 +51,12 @@ func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAccep
 	for _, dispatch := range dispatches {
 		contextID, err := r.createEntryContext(ctx, rootSeeds, dispatch, admittedBaggage)
 		if err != nil {
-			return "", err
+			return rootEnqueue{}, err
 		}
 
 		payload, err := marshalDispatchPayload(dispatch.Event, dispatch.Command)
 		if err != nil {
-			return "", fmt.Errorf("marshal relay dispatch payload: %w", err)
+			return rootEnqueue{}, fmt.Errorf("marshal relay dispatch payload: %w", err)
 		}
 
 		sourceEventID := accepted.LocalEvent.EventID
@@ -76,14 +86,15 @@ func (r *Receiver) enqueueRootDispatches(ctx context.Context, accepted rootAccep
 				// the original child already exists. Preserve idempotency.
 				continue
 			}
-			return "", fmt.Errorf("enqueue relay root job for plugin %q: %w", dispatch.Plugin, err)
+			return rootEnqueue{}, fmt.Errorf("enqueue relay root job for plugin %q: %w", dispatch.Plugin, err)
 		}
 		if firstJobID == "" {
 			firstJobID = jobID
 		}
 	}
 
-	return firstJobID, nil
+	out.FirstJobID = firstJobID
+	return out, nil
 }
 
 func (r *Receiver) createEntryContext(

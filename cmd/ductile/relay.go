@@ -50,8 +50,9 @@ func printRelayNounHelp(w *os.File) {
 }
 
 func printRelaySendHelp() {
-	fmt.Println("Usage: ductile relay send <instance> --event TYPE [--payload JSON|--payload-file PATH] [--baggage JSON|--baggage-file PATH] [--dedupe-key KEY] [--origin-plugin NAME] [--origin-job-id ID] [--origin-event-id ID] [--config PATH | --config-dir PATH] [--json]")
+	fmt.Println("Usage: ductile relay send <instance> --event TYPE [--payload JSON|--payload-file PATH] [--baggage JSON|--baggage-file PATH] [--dedupe-key KEY] [--origin-plugin NAME] [--origin-job-id ID] [--origin-event-id ID] [--wait [--timeout DUR]] [--config PATH | --config-dir PATH] [--json]")
 	fmt.Println("Send one authenticated relay event to a configured remote instance.")
+	fmt.Println("With --wait the receiver blocks on the triggered pipeline tree and returns its result (requires receiver-side sync policy + peer allow_sync).")
 }
 
 func runRelaySend(args []string) int {
@@ -67,6 +68,8 @@ func runRelaySend(args []string) int {
 	originEventID := fs.String("origin-event-id", "", "Optional origin event id")
 	configPath := fs.String("config", "", "Path to configuration file")
 	configDir := fs.String("config-dir", "", "Path to configuration directory")
+	wait := fs.Bool("wait", false, "Request a synchronous reply: block until the receiver's pipeline tree settles")
+	waitTimeout := fs.String("timeout", "", "Requested wait budget for --wait (e.g. 30s); receiver clamps to its own maximum")
 	jsonOut := fs.Bool("json", false, "Output acceptance JSON")
 	// Support both <instance>-first (per usage string) and flags-first orderings
 	// by lifting a leading positional out before flag.Parse, since the standard
@@ -126,6 +129,14 @@ func runRelaySend(args []string) int {
 		return 1
 	}
 
+	var reply *relay.EnvelopeReply
+	if *wait {
+		reply = &relay.EnvelopeReply{
+			Mode:    relay.SyncReplyMode,
+			Timeout: strings.TrimSpace(*waitTimeout),
+		}
+	}
+
 	accepted, err := sender.Send(context.Background(), instanceName, relay.Envelope{
 		Event: relay.EnvelopeEvent{
 			Type:      strings.TrimSpace(*eventType),
@@ -138,6 +149,7 @@ func runRelaySend(args []string) int {
 			EventID: strings.TrimSpace(*originEventID),
 		},
 		Baggage: baggageValues,
+		Reply:   reply,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Relay send failed: %v\n", err)
@@ -158,6 +170,19 @@ func runRelaySend(args []string) int {
 	fmt.Printf("Receiver event id: %s\n", accepted.ReceiverEventID)
 	if strings.TrimSpace(accepted.JobID) != "" {
 		fmt.Printf("Receiver job id: %s\n", accepted.JobID)
+	}
+	if *wait {
+		if accepted.TimedOut {
+			fmt.Printf("Status: %s (wait timed out after %dms — outcome unknown; safe to retry only if dedupe-keyed)\n", accepted.Status, accepted.DurationMs)
+			return 2
+		}
+		fmt.Printf("Status: %s (%dms)\n", accepted.Status, accepted.DurationMs)
+		if len(accepted.Result) > 0 {
+			fmt.Printf("Result: %s\n", string(accepted.Result))
+		}
+		if accepted.Status != "succeeded" {
+			return 1
+		}
 	}
 	return 0
 }

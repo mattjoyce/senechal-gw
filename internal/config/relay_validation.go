@@ -62,6 +62,9 @@ func validateRelayConfig(cfg *Config) error {
 		if instance.Timeout < 0 {
 			return fmt.Errorf("instances[%d] (%s): timeout must be >= 0", i, name)
 		}
+		if instance.SyncTimeout < 0 {
+			return fmt.Errorf("instances[%d] (%s): sync_timeout must be >= 0", i, name)
+		}
 		if err := validateEventTypeList(fmt.Sprintf("instances[%d] (%s).allow", i, name), instance.Allow); err != nil {
 			return err
 		}
@@ -110,6 +113,18 @@ func validateRelayConfig(cfg *Config) error {
 			if strings.TrimSpace(baggageKey) == "" {
 				return fmt.Errorf("remote_ingress.peers[%d] (%s).baggage.allow[%d] must be non-empty", i, name, j)
 			}
+		}
+		if peer.AllowSync && (cfg.RemoteIngress.Sync == nil || !cfg.RemoteIngress.Sync.Enabled) {
+			return fmt.Errorf("remote_ingress.peers[%d] (%s): allow_sync requires remote_ingress.sync.enabled", i, name)
+		}
+	}
+
+	if s := cfg.RemoteIngress.Sync; s != nil {
+		if s.MaxTimeout < 0 {
+			return fmt.Errorf("remote_ingress.sync.max_timeout must be >= 0")
+		}
+		if s.MaxConcurrent < 0 {
+			return fmt.Errorf("remote_ingress.sync.max_concurrent must be >= 0")
 		}
 	}
 

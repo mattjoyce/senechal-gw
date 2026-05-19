@@ -203,6 +203,11 @@ type RelayInstanceConfig struct {
 	SecretRef   string        `yaml:"secret_ref"`
 	KeyID       string        `yaml:"key_id,omitempty"`
 	Timeout     time.Duration `yaml:"timeout,omitempty"`
+	// SyncTimeout bounds the HTTP client when this instance is sent a
+	// synchronous-reply event. It must exceed the receiver's wait budget,
+	// otherwise the client aborts before the receiver can answer. Zero falls
+	// back to Timeout (the async budget), which is usually too short for sync.
+	SyncTimeout time.Duration `yaml:"sync_timeout,omitempty"`
 	Allow       []string      `yaml:"allow,omitempty"`
 }
 
@@ -213,6 +218,24 @@ type RemoteIngressConfig struct {
 	AllowedClockSkew time.Duration     `yaml:"allowed_clock_skew,omitempty"`
 	RequireKeyID     bool              `yaml:"require_key_id,omitempty"`
 	TrustedPeers     []RelayPeerConfig `yaml:"peers"`
+	// Sync, when present and enabled, allows opted-in peers to request a
+	// synchronous reply that blocks on the triggered local pipeline tree.
+	// Nil means relay stays strictly fire-and-forget (the default).
+	Sync *RelayIngressSyncConfig `yaml:"sync,omitempty"`
+}
+
+// RelayIngressSyncConfig is the receiver-authoritative policy for
+// synchronous-reply relay. The receiver owns the timeout and concurrency
+// budget so a slow or hostile peer cannot dictate local resource use.
+type RelayIngressSyncConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxTimeout clamps the caller-requested wait budget. Zero uses a
+	// conservative built-in default.
+	MaxTimeout time.Duration `yaml:"max_timeout,omitempty"`
+	// MaxConcurrent caps in-flight synchronous relay waits. This semaphore is
+	// dedicated to relay and is intentionally separate from the local API's
+	// sync budget: a remote peer must not be able to starve local callers.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
 }
 
 // RelayPeerConfig defines one trusted inbound relay peer.
@@ -223,6 +246,9 @@ type RelayPeerConfig struct {
 	KeyID     string            `yaml:"key_id,omitempty"`
 	Accept    []string          `yaml:"accept,omitempty"`
 	Baggage   RelayBaggageRules `yaml:"baggage,omitempty"`
+	// AllowSync opts this peer into requesting synchronous replies. Requires
+	// remote_ingress.sync.enabled. Default false: the peer may only fire-and-forget.
+	AllowSync bool `yaml:"allow_sync,omitempty"`
 }
 
 // RelayBaggageRules defines which remote baggage keys may seed local root context.

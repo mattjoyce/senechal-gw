@@ -241,11 +241,94 @@ The signature covers:
 
 ---
 
+## Synchronous Reply (opt-in)
+
+By default relay is fire-and-forget: the receiver accepts the event, enqueues
+local work, and answers `202` immediately. A sender may instead ask the
+receiver to **block on the triggered pipeline tree and return its result on the
+same connection**. This is a thin layer on top of acceptance — it does not
+replace at-least-once, and the receiver still owns all processing.
+
+It is strictly opt-in on both sides:
+
+- Receiver `relay-ingress.yaml`:
+
+  ```yaml
+  remote_ingress:
+    listen_path: /ingest/peer
+    sync:
+      enabled: true
+      max_timeout: 60s        # receiver-authoritative ceiling on the wait
+      max_concurrent: 4       # relay-dedicated budget, separate from the local API
+    peers:
+      - name: home-primary
+        enabled: true
+        secret_ref: relay-lab-v1
+        accept: [report.request]
+        allow_sync: true       # this peer may request sync; default false
+  ```
+
+- Sender `relay-instances.yaml`:
+
+  ```yaml
+  instances:
+    - name: lab
+      enabled: true
+      base_url: https://lab.example
+      ingress_path: /ingest/peer/home-primary
+      secret_ref: relay-lab-v1
+      timeout: 10s
+      sync_timeout: 90s        # HTTP client budget for sync sends; MUST exceed
+                               # the receiver's max_timeout + network slack
+      allow: [report.request]
+  ```
+
+- Wire: the envelope carries `reply` **inside the signed body** (never an
+  unauthenticated header):
+
+  ```json
+  { "event": { "type": "report.request", "payload": {} },
+    "reply": { "mode": "sync", "timeout": "30s" } }
+  ```
+
+  The receiver clamps `reply.timeout` to its own `max_timeout`; the receiver is
+  authoritative. An absent or unparseable timeout uses `max_timeout`.
+
+- CLI: `ductile relay send lab --event report.request --payload '{}' --wait --timeout 30s`
+
+### Sync responses
+
+- `200` — the tree settled. Body is the one `AcceptanceResponse` shape with
+  `status` (`succeeded`/`failed`/`timed_out`/`dead`), `result` (the terminal
+  step's result, else the root's — identical rule to the local sync API), and
+  `tree`.
+- `202` with `timed_out: true`, `status: "running"` — the wait budget elapsed
+  before the tree settled. The job keeps running on the receiver; the sender
+  does **not** know the outcome.
+- `422` — sync was requested but policy forbids it (peer lacks `allow_sync`, or
+  `sync.enabled` is false), the relayed event matched no local pipeline, or it
+  fanned out to more than one entry dispatch (sync requires exactly one root,
+  mirroring the local sync API). The enqueued jobs, if any, still run.
+- `503` — the relay-dedicated sync budget is exhausted, or the dispatcher is
+  not wired. A slow or hostile peer hitting this ceiling cannot starve local
+  synchronous API callers, which use an entirely separate budget.
+
+### Idempotency and the dedupe-collision case
+
+A retried sync send with the same `dedupe_key` (or derivable origin identity)
+does not enqueue a second job — it attaches to the existing job's tree and
+returns that run's result. Sync reply therefore composes with at-least-once
+rather than fighting it.
+
 ## Failure Semantics
 
 - If delivery fails before acceptance, the sender owns the failure.
 - If the receiver accepts the event and downstream work later fails, the receiver owns that failure.
 - Delivery remains at-least-once. Duplicate safe behavior still matters.
+- A sync `202`/`timed_out` means the outcome is **unknown** to the sender. It
+  is safe to retry **only** when the send is dedupe-keyed; otherwise a retry
+  may double-run the work. A non-dedupe-keyed sync send that times out must be
+  reconciled out of band (e.g. via the returned `job_id`), not blindly retried.
 
 ---
 

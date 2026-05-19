@@ -544,7 +544,7 @@ func buildRuntime(cfg *config.Config, configPath string, configSource string, re
 	disp := dispatch.New(q, st, contextStore, routerEngine, registry, hub, cfg)
 	rt.dispatcher = disp
 
-	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, log.WithComponent("relay"))
+	relayReceiver, err := relay.NewReceiver(cfg, q, routerEngine, contextStore, disp, log.WithComponent("relay"))
 	if err != nil {
 		logger.Error("failed to configure relay receiver", "error", err)
 		return nil, err

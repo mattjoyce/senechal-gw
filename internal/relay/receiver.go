@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/mattjoyce/ductile/internal/jobtree"
 	"github.com/mattjoyce/ductile/internal/protocol"
+	"github.com/mattjoyce/ductile/internal/router/dsl"
 )
 
 type requestError struct {
@@ -31,6 +34,13 @@ type Receiver struct {
 	contexts EventContextStore
 	logger   *slog.Logger
 	now      func() time.Time
+
+	// waiter blocks on a settled job tree for synchronous replies. Nil when
+	// the dispatcher is not wired (sync replies are then refused, not silently
+	// downgraded). syncSem is a relay-dedicated concurrency budget, kept
+	// separate from the local API's sync semaphore on purpose.
+	waiter  TreeWaiter
+	syncSem chan struct{}
 }
 
 // RoutePattern returns the chi route pattern for peer-specific relay ingress.
@@ -54,7 +64,7 @@ func (r *Receiver) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	jobID, err := r.enqueueRootDispatches(ctx, *accepted)
+	enq, err := r.enqueueRootDispatches(ctx, *accepted)
 	if err != nil {
 		r.logger.Error("relay enqueue failed",
 			"peer", accepted.Peer.Name,
@@ -70,19 +80,115 @@ func (r *Receiver) HandleHTTP(w http.ResponseWriter, req *http.Request) {
 		"peer", accepted.Peer.Name,
 		"event_type", accepted.LocalEvent.Type,
 		"receiver_event_id", accepted.LocalEvent.EventID,
-		"job_id", jobID,
+		"job_id", enq.FirstJobID,
 		"origin_instance", accepted.Envelope.Origin.Instance,
 		"origin_job_id", accepted.Envelope.Origin.JobID,
 		"origin_event_id", accepted.Envelope.Origin.EventID,
 	)
 
-	r.respondJSON(w, http.StatusAccepted, AcceptanceResponse{
+	base := AcceptanceResponse{
 		Status:          "accepted",
 		Peer:            accepted.Peer.Name,
 		EventType:       accepted.LocalEvent.Type,
 		ReceiverEventID: accepted.LocalEvent.EventID,
-		JobID:           jobID,
-	})
+		JobID:           enq.FirstJobID,
+	}
+
+	if syncRequested(accepted.Envelope) {
+		r.serveSyncReply(w, req, *accepted, enq, base)
+		return
+	}
+
+	r.respondJSON(w, http.StatusAccepted, base)
+}
+
+// serveSyncReply blocks on the triggered pipeline tree and answers on the
+// same connection. The enqueue has already happened: if the sender asked for
+// sync but policy forbids it, or the event fanned out, we fail explicitly
+// rather than silently degrade to fire-and-forget — the sender is waiting and
+// deserves a definite answer. The enqueued jobs still run (at-least-once is
+// preserved); the receiver owns them as always.
+func (r *Receiver) serveSyncReply(w http.ResponseWriter, req *http.Request, accepted rootAcceptance, enq rootEnqueue, base AcceptanceResponse) {
+	if !r.cfg.Sync.Enabled || !accepted.Peer.AllowSync {
+		r.respondJSON(w, http.StatusUnprocessableEntity, ErrorResponse{Error: "synchronous reply not permitted for peer"})
+		return
+	}
+	if r.waiter == nil {
+		r.respondJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "synchronous reply unavailable"})
+		return
+	}
+	if enq.FirstJobID == "" {
+		r.respondJSON(w, http.StatusUnprocessableEntity, ErrorResponse{Error: "relayed event matched no local pipeline"})
+		return
+	}
+	if enq.DispatchCount != 1 {
+		r.respondJSON(w, http.StatusUnprocessableEntity, ErrorResponse{Error: "synchronous reply requires exactly one entry dispatch"})
+		return
+	}
+
+	select {
+	case r.syncSem <- struct{}{}:
+		defer func() { <-r.syncSem }()
+	default:
+		r.respondJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "too many concurrent synchronous relay requests"})
+		return
+	}
+
+	budget := clampSyncTimeout(accepted.Envelope.Reply, r.cfg.Sync.MaxTimeout)
+	start := time.Now()
+
+	results, err := r.waiter.WaitForJobTree(req.Context(), enq.FirstJobID, budget)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+			base.Status = "running"
+			base.TimedOut = true
+			base.DurationMs = time.Since(start).Milliseconds()
+			r.respondJSON(w, http.StatusAccepted, base)
+			return
+		}
+		r.logger.Error("relay sync wait failed",
+			"peer", accepted.Peer.Name,
+			"job_id", enq.FirstJobID,
+			"error", err,
+		)
+		r.respondJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "failed to wait for relay pipeline"})
+		return
+	}
+
+	terminalSteps := r.terminalSteps(enq.PipelineName)
+	outcome := jobtree.Aggregate(results, enq.FirstJobID, terminalSteps)
+
+	base.Status = outcome.Status
+	base.Result = outcome.FinalResult
+	base.Tree = outcome.Tree
+	base.DurationMs = time.Since(start).Milliseconds()
+	r.respondJSON(w, http.StatusOK, base)
+}
+
+func (r *Receiver) terminalSteps(pipelineName string) map[string]struct{} {
+	out := make(map[string]struct{})
+	if r.router == nil || strings.TrimSpace(pipelineName) == "" {
+		return out
+	}
+	for _, route := range r.router.GetCompiledRoutes(pipelineName) {
+		if route.Destination.Kind != dsl.CompiledRouteDestinationTerminal {
+			continue
+		}
+		if stepID := strings.TrimSpace(route.Source.StepID); stepID != "" {
+			out[stepID] = struct{}{}
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	if info := r.router.GetPipelineByName(pipelineName); info != nil {
+		for _, stepID := range info.TerminalStepIDs {
+			if stepID = strings.TrimSpace(stepID); stepID != "" {
+				out[stepID] = struct{}{}
+			}
+		}
+	}
+	return out
 }
 
 func (r *Receiver) accept(req *http.Request) (*rootAcceptance, error) {

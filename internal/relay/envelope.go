@@ -10,10 +10,54 @@ import (
 )
 
 const (
-	defaultRelayMaxBodySize      = 1024 * 1024
-	defaultRelayRequestTimeout   = 10 * time.Second
-	defaultRelayAllowedClockSkew = 5 * time.Minute
+	defaultRelayMaxBodySize       = 1024 * 1024
+	defaultRelayRequestTimeout    = 10 * time.Second
+	defaultRelayAllowedClockSkew  = 5 * time.Minute
+	defaultRelaySyncMaxTimeout    = 60 * time.Second
+	defaultRelaySyncMaxConcurrent = 4
 )
+
+// syncRequested reports whether the signed envelope asks for a synchronous
+// reply. Mode comparison is case-insensitive; anything other than "sync"
+// (including absent) means fire-and-forget.
+func syncRequested(env Envelope) bool {
+	return env.Reply != nil && strings.EqualFold(strings.TrimSpace(env.Reply.Mode), SyncReplyMode)
+}
+
+// clampSyncTimeout resolves the wait budget. The receiver is authoritative:
+// the caller may ask for less than the receiver's maximum but never more, and
+// an absent or unparseable request falls back to the receiver's maximum.
+func clampSyncTimeout(reply *EnvelopeReply, max time.Duration) time.Duration {
+	if max <= 0 {
+		max = defaultRelaySyncMaxTimeout
+	}
+	if reply == nil {
+		return max
+	}
+	raw := strings.TrimSpace(reply.Timeout)
+	if raw == "" {
+		return max
+	}
+	requested, err := time.ParseDuration(raw)
+	if err != nil || requested <= 0 || requested > max {
+		return max
+	}
+	return requested
+}
+
+func normalizeSyncMaxTimeout(d time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return defaultRelaySyncMaxTimeout
+}
+
+func normalizeSyncMaxConcurrent(n int) int {
+	if n > 0 {
+		return n
+	}
+	return defaultRelaySyncMaxConcurrent
+}
 
 var (
 	eventTypePattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)

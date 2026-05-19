@@ -70,13 +70,25 @@ func (s *Sender) Send(ctx context.Context, instanceName string, envelope Envelop
 			return &http.Client{Timeout: timeout}
 		}
 	}
-	resp, err := doer(instance.Timeout).Do(req)
+	// A synchronous reply blocks the receiver for the duration of the
+	// pipeline. The HTTP client timeout must outlast the receiver's wait
+	// budget or the client aborts before the answer arrives. SyncTimeout is
+	// configured per instance for exactly this; fall back to the async
+	// timeout only if it is unset.
+	requestTimeout := instance.Timeout
+	if syncRequested(envelope) && instance.SyncTimeout > 0 {
+		requestTimeout = instance.SyncTimeout
+	}
+	resp, err := doer(requestTimeout).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("deliver relay request to %s: %w", instanceName, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusAccepted {
+	// 200 carries a settled synchronous result; 202 is either a
+	// fire-and-forget acceptance or a synchronous wait that timed out
+	// (TimedOut set). Both decode into the one AcceptanceResponse shape.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		var failure ErrorResponse
 		if err := json.NewDecoder(resp.Body).Decode(&failure); err == nil && strings.TrimSpace(failure.Error) != "" {
 			return nil, fmt.Errorf("relay receiver rejected request: %s", failure.Error)

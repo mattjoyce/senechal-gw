@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mattjoyce/ductile/internal/auth"
 	"github.com/mattjoyce/ductile/internal/baggage"
+	"github.com/mattjoyce/ductile/internal/jobtree"
 	"github.com/mattjoyce/ductile/internal/plugin"
 	"github.com/mattjoyce/ductile/internal/protocol"
 	"github.com/mattjoyce/ductile/internal/queue"
@@ -265,47 +266,31 @@ func (s *Server) handlePipelineTrigger(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Process results for synchronous pipeline responses.
-		var tree []JobResultData
-		var rootResult json.RawMessage
-		finalStatus := string(queue.StatusSucceeded)
-		var terminalResult json.RawMessage
+		// Fold the settled tree into an outcome. The same pure function backs
+		// the remote relay sync path, so the two transports cannot disagree
+		// about success or which result is "final".
 		terminalSteps := terminalStepSet(s.router.GetCompiledRoutes(pipelineName), pipeline.TerminalStepIDs)
+		outcome := jobtree.Aggregate(results, firstJobID, terminalSteps)
 
-		for _, res := range results {
-			if res.JobID == firstJobID {
-				rootResult = res.Result
-			}
-			// If any job failed, the overall tree status is failed (for the purpose of the response)
-			if res.Status == queue.StatusFailed || res.Status == queue.StatusTimedOut || res.Status == queue.StatusDead {
-				finalStatus = string(res.Status)
-			}
-
-			if _, ok := terminalSteps[res.StepID]; ok {
-				terminalResult = res.Result
-			}
+		tree := make([]JobResultData, 0, len(outcome.Tree))
+		for _, n := range outcome.Tree {
 			tree = append(tree, JobResultData{
-				JobID:       res.JobID,
-				Plugin:      res.Plugin,
-				Command:     res.Command,
-				Status:      string(res.Status),
-				Result:      res.Result,
-				LastError:   res.LastError,
-				StartedAt:   res.StartedAt,
-				CompletedAt: res.CompletedAt,
+				JobID:       n.JobID,
+				Plugin:      n.Plugin,
+				Command:     n.Command,
+				Status:      n.Status,
+				Result:      n.Result,
+				LastError:   n.LastError,
+				StartedAt:   n.StartedAt,
+				CompletedAt: n.CompletedAt,
 			})
-		}
-
-		finalResult := terminalResult
-		if finalResult == nil {
-			finalResult = rootResult
 		}
 
 		respondJSON(w, http.StatusOK, SyncResponse{
 			JobID:      firstJobID,
-			Status:     finalStatus,
+			Status:     outcome.Status,
 			DurationMs: time.Since(startTime).Milliseconds(),
-			Result:     finalResult,
+			Result:     outcome.FinalResult,
 			Tree:       tree,
 		})
 		return
