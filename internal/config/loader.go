@@ -501,6 +501,15 @@ func deepMergeConfig(dst, src *Config) error {
 		if len(src.RemoteIngress.TrustedPeers) > 0 {
 			dst.RemoteIngress.TrustedPeers = append(dst.RemoteIngress.TrustedPeers, src.RemoteIngress.TrustedPeers...)
 		}
+		// Sync policy must be propagated too. Without this, an operator who
+		// follows the documented layout (remote_ingress split into
+		// relay-ingress.yaml) gets sync silently dropped, and any peer with
+		// allow_sync: true then trips validation with "allow_sync requires
+		// remote_ingress.sync.enabled" even though the operator clearly set
+		// it. See ductile-9lx.
+		if src.RemoteIngress.Sync != nil {
+			dst.RemoteIngress.Sync = src.RemoteIngress.Sync
+		}
 	}
 
 	// Merge webhooks

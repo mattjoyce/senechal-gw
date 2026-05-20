@@ -1825,6 +1825,101 @@ remote_ingress:
 	}
 }
 
+// TestLoadPreservesSyncFromIncludedRelayIngress exercises the regression
+// closed by ductile-9lx: when remote_ingress is split into its own included
+// file (the layout REMOTE_EVENT_RELAY.md recommends), the merge in loader.go
+// must propagate the Sync block. The earlier TestLoadAcceptsRelayConfigIncludes
+// did not set sync: in the included file, so the merge silently dropped it
+// and any peer with allow_sync: true tripped validation at startup.
+func TestLoadPreservesSyncFromIncludedRelayIngress(t *testing.T) {
+	tmpDir := t.TempDir()
+	configYAML := `
+include:
+  - tokens.yaml
+  - relay-ingress.yaml
+
+service:
+  name: lab
+  tick_interval: 60s
+state:
+  path: ./test.db
+plugin_roots:
+  - ./plugins
+plugins:
+  echo:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte(configYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scopes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "scopes", "relay.json"), []byte("[\"*\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tokensYAML := `
+tokens:
+  - name: relay-lab-v1
+    key: test-secret
+    scopes_file: scopes/relay.json
+    scopes_hash: blake3:dummy
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "tokens.yaml"), []byte(tokensYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both sync: and allow_sync: true live in the included file. Before the
+	// fix, the merge dropped sync, leaving the validator to reject allow_sync.
+	ingressYAML := `
+remote_ingress:
+  listen_path: /ingest/peer
+  allowed_clock_skew: 5m
+  sync:
+    enabled: true
+    max_timeout: 30s
+    max_concurrent: 4
+  peers:
+    - name: home-primary
+      enabled: true
+      secret_ref: relay-lab-v1
+      accept:
+        - report.request
+      allow_sync: true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "relay-ingress.yaml"), []byte(ingressYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := GenerateChecksumsWithReport(tmpDir, []string{"tokens.yaml"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(tmpDir)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.RemoteIngress == nil {
+		t.Fatalf("cfg.RemoteIngress is nil")
+	}
+	if cfg.RemoteIngress.Sync == nil {
+		t.Fatalf("cfg.RemoteIngress.Sync is nil — merge dropped the included sync block")
+	}
+	if !cfg.RemoteIngress.Sync.Enabled {
+		t.Fatalf("cfg.RemoteIngress.Sync.Enabled = false, want true")
+	}
+	if cfg.RemoteIngress.Sync.MaxTimeout != 30*time.Second {
+		t.Fatalf("cfg.RemoteIngress.Sync.MaxTimeout = %v, want 30s", cfg.RemoteIngress.Sync.MaxTimeout)
+	}
+	if cfg.RemoteIngress.Sync.MaxConcurrent != 4 {
+		t.Fatalf("cfg.RemoteIngress.Sync.MaxConcurrent = %d, want 4", cfg.RemoteIngress.Sync.MaxConcurrent)
+	}
+	if len(cfg.RemoteIngress.TrustedPeers) != 1 || !cfg.RemoteIngress.TrustedPeers[0].AllowSync {
+		t.Fatalf("cfg.RemoteIngress.TrustedPeers[0].AllowSync not set as expected: %+v", cfg.RemoteIngress.TrustedPeers)
+	}
+}
+
 func TestLoadRejectsDuplicateRelayInstanceNames(t *testing.T) {
 	tmpDir := t.TempDir()
 	configYAML := `
