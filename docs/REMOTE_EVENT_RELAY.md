@@ -169,6 +169,36 @@ pipelines:
 
 ---
 
+## Before First Start
+
+`tokens.yaml` is a **scope file**, so the integrity manifest must include it
+before the service will boot. The `scopes_hash:` values shown in the examples
+above are placeholders — they need to be regenerated against your real token
+material:
+
+```bash
+ductile config lock --config-dir /etc/ductile
+```
+
+Run this on **both** sides after the initial config is written and after any
+change to `tokens.yaml` or to a plugin manifest/entrypoint. Without it the
+service fails to start with:
+
+```
+Failed to load config: ... Scope files (tokens.yaml, webhooks.yaml) require hash verification.
+Run: ductile config lock --config-dir <dir>
+```
+
+The sender side runs `ductile relay send` as a one-shot CLI; it does **not**
+need its own running service to deliver an event — only valid config that the
+CLI can load (default search: `$DUCTILE_CONFIG_DIR`, `~/.config/ductile`,
+`/etc/ductile`). The receiver side does need `ductile system start` to be
+running with its API listener up.
+
+See `CONFIG_REFERENCE.md § 2.1` for the full integrity model.
+
+---
+
 ## End-to-End Example
 
 Expected flow:
@@ -334,9 +364,36 @@ rather than fighting it.
 
 ## What To Check When It Fails
 
-- `service.name` matches the sender identity used on the wire.
+General:
+
+- `service.name` matches the sender identity used on the wire (and is
+  lower-case hyphenated — relay validation rejects other forms).
 - `secret_ref` resolves to the same shared secret on both sides.
 - `key_id` matches if `require_key_id: true`.
 - `allowed_clock_skew` is large enough for the two clocks.
 - `accept` includes the event type being relayed.
 - `api.listen` is reachable at the receiver.
+- `ductile config lock` has been run after the most recent edit to
+  `tokens.yaml` or any plugin manifest/entrypoint (see *Before First Start*).
+
+Synchronous-reply specific:
+
+- Receiver returns `422` on a `--wait` send →
+  - `remote_ingress.sync.enabled: true` is set on the receiver,
+  - **and** `peers[<sender>].allow_sync: true` is set for that peer,
+  - **and** the relayed event matches **exactly one** local pipeline (sync
+    requires a single-root dispatch — multiple matches or zero matches both
+    fail with 422; the underlying enqueue, if any, still runs).
+- Sender HTTP client aborts before the receiver answers →
+  `instances[<target>].sync_timeout` must exceed the receiver's
+  `remote_ingress.sync.max_timeout` plus network slack. Zero falls back to
+  `timeout` (the async budget), which is almost always too short for sync.
+- Receiver returns `503` → either the relay-dedicated sync semaphore
+  (`remote_ingress.sync.max_concurrent`) is exhausted, or the dispatcher is
+  not wired. The local sync API uses a **separate** budget, so a 503 here
+  cannot be caused by local sync API load.
+- Response is `202` with `timed_out: true` and `status: "running"` → the
+  receiver's wait budget elapsed before the tree settled. The job keeps
+  running on the receiver; the outcome is **unknown** to the sender. Only
+  retry blindly if the send was dedupe-keyed (the retry attaches to the same
+  job's tree); otherwise reconcile via the returned `job_id`.
