@@ -266,6 +266,7 @@ instances:
     secret_ref: relay-lab-v1
     key_id: v1
     timeout: 10s
+    sync_timeout: 90s        # HTTP client budget when --wait is used
     allow:
       - backup.ready
       - report.generated
@@ -276,6 +277,12 @@ Notes:
 - `base_url` must be an absolute `http` or `https` URL.
 - `ingress_path` is the receiver path that accepts the trusted relay request.
 - `secret_ref` points at a `tokens.yaml` entry used as the shared HMAC secret.
+- `timeout` bounds fire-and-forget (async) sends.
+- `sync_timeout` bounds sends with `--wait` (synchronous reply). It MUST
+  exceed the receiver's `remote_ingress.sync.max_timeout` plus network slack,
+  otherwise the client aborts before the receiver can answer. Zero falls back
+  to `timeout`, which is usually too short for sync. See
+  [REMOTE_EVENT_RELAY.md](REMOTE_EVENT_RELAY.md) § *Synchronous Reply*.
 - `allow` is an optional sender-side event-type allowlist.
 
 ---
@@ -290,6 +297,10 @@ remote_ingress:
   max_body_size: 1MB
   allowed_clock_skew: 5m
   require_key_id: true
+  sync:                          # opt-in synchronous-reply policy
+    enabled: true
+    max_timeout: 60s             # receiver-authoritative ceiling on --wait
+    max_concurrent: 4            # relay-dedicated, separate from local sync API
   peers:
     - name: home-primary
       enabled: true
@@ -297,6 +308,7 @@ remote_ingress:
       key_id: v1
       accept:
         - backup.ready
+      allow_sync: true           # this peer may request --wait; default false
       baggage:
         allow:
           - trace_id
@@ -308,7 +320,16 @@ Notes:
 - Relay ingress listens on `api.listen`; it does not introduce a separate listener address in Phase 1.
 - `allowed_clock_skew` controls timestamp validation for replay-window hardening.
 - `require_key_id` requires `X-Ductile-Key-Id` on inbound requests.
+- `sync` is **opt-in** and **receiver-authoritative**. Without it, relay is
+  strictly fire-and-forget — the receiver answers `202` on acceptance and
+  any `--wait` request is rejected with `422`. When enabled, the receiver
+  clamps the caller-requested timeout to `max_timeout`, and `max_concurrent`
+  caps in-flight sync waits using a semaphore that is intentionally separate
+  from the local API's sync budget (a remote peer cannot starve local
+  callers).
 - `peers[].accept` is an optional receiver-side event-type allowlist.
+- `peers[].allow_sync` opts an individual peer into requesting synchronous
+  replies. Requires `remote_ingress.sync.enabled: true`. Default `false`.
 - `peers[].baggage.allow` is a local policy for which remote baggage keys may seed new local root context.
 
 Accepted relay requests are treated as fresh local root ingress events:
